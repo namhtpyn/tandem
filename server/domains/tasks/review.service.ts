@@ -38,7 +38,7 @@ import {
   hasPendingAnswerHolder,
   cancelOrphanAnswerObligations,
 } from './obligations.service';
-import { dispatchTask, type DispatchOpts } from './runner.service';
+import { dispatchTask, replayLostSettle, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
@@ -1104,11 +1104,18 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
         // no live turn on the task
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
         // the reviewer was never dispatched in this round — a reviewer that already had
-        // a turn is owned by the verdict-less-correction / park machinery. RESIDUAL: a run
-        // that wrote DONE but whose settle was lost to a hard crash (nothing re-runs the
-        // settle; the reaper scans RUNNING only) matches this predicate and stays stuck —
-        // a pre-existing settle-loss window, tracked in #402, not created by this sweep.
+        // a turn is owned by the verdict-less-correction / park machinery.
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.employee_id = ${taskReviews.reviewerId} and tr.started_at >= ${taskReviews.createdAt})`,
+        // LOST-SETTLE GUARD (#402 r4): a task carrying a DONE run whose settle was lost
+        // (PENDING current-round AI row + that reviewer's NEWEST run in the round is
+        // DONE) belongs to the settle-replay arm — minting the NEXT reviewer's turn here
+        // would mask the replay forever (the lazy mint after that turn's verdict opens a
+        // later run for the crashed reviewer). The round stays sequential: replay first.
+        // The predicate MIRRORS lostSettleScan exactly (live AI reviewer, reviewer not the
+        // assignee, current round, the reviewer's NEWEST run in the round is DONE): a shape
+        // the replay refuses must never be suppressed here, or the round wedges with no
+        // healer at all (#402 r5).
+        sql`not exists (select 1 from task_reviews r4 join ai_employees a4 on a4.user_id = r4.reviewer_id join task_runs tr4 on tr4.employee_id = r4.reviewer_id join task_messages tm4 on tm4.id = tr4.message_id and tm4.task_id = ${tasks.id} where r4.task_id = ${tasks.id} and r4.status = ${REVIEW_STATUS.PENDING} and r4.reviewer_id is not null and (${tasks.assigneeId} is null or r4.reviewer_id <> ${tasks.assigneeId}) and r4.round = (select max(r5.round) from task_reviews r5 where r5.task_id = ${tasks.id}) and tr4.status = ${RUN_STATUS.DONE} and tr4.started_at >= r4.created_at and not exists (select 1 from task_runs tr5 join task_messages tm5 on tm5.id = tr5.message_id where tm5.task_id = ${tasks.id} and tr5.employee_id = r4.reviewer_id and (tr5.started_at, tr5.id) > (tr4.started_at, tr4.id)))`,
       ),
     )
     .orderBy(taskReviews.createdAt)
@@ -1186,6 +1193,24 @@ async function reviewerRunAtOrAfter(taskId: string, reviewerId: string, at: Date
   return rows[0]?.startedAt ?? null;
 }
 
+/** the reviewer's newest run this round — id + status, for the settle-replay decision
+ *  (#402): the lost settle is only the shape while that run IS the DONE row the scan
+ *  picked (a later run means the settle landed and minted it) */
+async function reviewerNewestRun(
+  taskId: string,
+  reviewerId: string,
+  at: Date,
+): Promise<{ id: string; status: string } | null> {
+  const rows = await db
+    .select({ id: taskRuns.id, status: taskRuns.status })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId), gte(taskRuns.startedAt, at)))
+    .orderBy(desc(taskRuns.startedAt), desc(taskRuns.id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 /** tick arm: re-fire rounds left with a pending AI reviewer and no turn in flight.
  *  Never rejects (a failed tick means try again next tick). Returns the count. */
 export async function sweepStalledReviewTurns(): Promise<number> {
@@ -1251,6 +1276,215 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
     }
   }
   return refired;
+}
+
+/** SETTLE-REPLAY SWEEP (#402): a review turn whose run row reached DONE but whose
+ *  settle never landed — a hard crash or deploy kill between finish()'s guarded
+ *  RUNNING→DONE write and its settleDoneRun call — leaves DONE run + PENDING row +
+ *  no later run + no park. Nothing recovered that shape: reapStaleRuns scans RUNNING
+ *  only, the queue retry re-enters finish() and returns at the 0-row guard, the
+ *  verdict-less correction lives in the settle that never ran, the boot heal keys on
+ *  FK-voided rows, and the #397 sweep above deliberately excludes a reviewer that
+ *  already had a turn. For a WORK run the liveness sweep bounces the idle task; the
+ *  exposure is review-only.
+ *
+ *  The run row carries the settle's own inputs (its stored output, start stamp and
+ *  employee), so the arm REPLAYS the settle instead of burning a fresh turn: the
+ *  reviewer's real verdict lands. The replay binds through every existing settle
+ *  guard, so a concurrent winner makes it a quiet no-op.
+ *
+ *  Discriminators (no legal write path produces the shape):
+ *  - the task sits in an in_review-category status (a manual move out of review
+ *    legally leaves PENDING rows behind — those are not lost settles);
+ *  - the row is the CURRENT round's PENDING AI reviewer row;
+ *  - no RUNNING run on the task (a live turn owns the round);
+ *  - the reviewer's NEWEST run in this round is that DONE run and finished more than
+ *    SETTLE_REPLAY_GRACE_MS ago (a settle lands within milliseconds; a landed settle
+ *    either resolves the row or mints the next turn — so a later run, or a resolved
+ *    row, never matches);
+ *  - the run is bounded: SETTLE_REPLAY_MAX_ATTEMPTS replays in-process, then the round
+ *    parks REARMABLE on the owner with a settle-loss note (never an infinite retry).
+ *  Bounded + best-effort like every other tick arm; at most one action per task per
+ *  tick. */
+export const SETTLE_REPLAY_GRACE_MS = 60_000;
+export const SETTLE_REPLAY_MAX_ATTEMPTS = 2;
+/** warn throttle (module law: a persistent fault warns once per window, never per 5s
+ *  tick) */
+export const lostSettleWarnState = { lastAt: 0 };
+const LOST_SETTLE_WARN_INTERVAL_MS = 5 * 60_000;
+function warnLostSettle(msg: string, e: unknown) {
+  const now = Date.now();
+  if (now - lostSettleWarnState.lastAt < LOST_SETTLE_WARN_INTERVAL_MS) return;
+  lostSettleWarnState.lastAt = now;
+  log.warn(msg, e instanceof Error ? e.message : e);
+}
+
+export type LostSettleCandidate = {
+  taskId: string;
+  round: number;
+  reviewerId: string;
+  createdAt: Date;
+  runId: string;
+  finishedAt: Date | null;
+};
+
+/** the sweep's bounded read: the shape's SQL discriminators ride the query so the
+ *  LIMIT applies to true candidates only. One row per (task, reviewer) — the
+ *  no-later-run clause keeps exactly the reviewer's newest DONE run. */
+export function lostSettleScan(ex: DbExecutor, cutoff: Date) {
+  return asDb(ex)
+    .select({
+      taskId: taskReviews.taskId,
+      round: taskReviews.round,
+      reviewerId: taskReviews.reviewerId,
+      createdAt: taskReviews.createdAt,
+      runId: taskRuns.id,
+      finishedAt: taskRuns.finishedAt,
+    })
+    .from(taskReviews)
+    .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .innerJoin(aiEmployees, eq(aiEmployees.userId, taskReviews.reviewerId))
+    .innerJoin(taskMessages, eq(taskMessages.taskId, tasks.id))
+    .innerJoin(taskRuns, and(eq(taskRuns.messageId, taskMessages.id), eq(taskRuns.employeeId, taskReviews.reviewerId)))
+    .where(
+      and(
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        eq(taskRuns.status, RUN_STATUS.DONE),
+        lt(taskRuns.finishedAt, cutoff),
+        gte(taskRuns.startedAt, taskReviews.createdAt),
+        // RUN-KIND DISCRIMINATOR (#402 r4): work runs are minted for the ASSIGNEE, so a
+        // reviewer that is also the assignee makes the run ambiguous — replaying a work
+        // turn as a review settle would rewrite its bubble with the review parser and
+        // burn a review turn on a work result. Never replayed (the probe arm excludes it
+        // too, so the residual never alerts).
+        or(isNull(tasks.assigneeId), ne(taskReviews.reviewerId, tasks.assigneeId)),
+        // CURRENT round only (mirrors the #397 scan: a manual move out of review leaves
+        // PENDING rows behind and a re-entry brings them along)
+        sql`${taskReviews.round} = (select max(r2.round) from task_reviews r2 where r2.task_id = ${taskReviews.taskId})`,
+        // no live turn on the task
+        sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
+        // the DONE run is the reviewer's NEWEST in this round: a later run means the
+        // settle landed (verdict-less correction minted the retry) and owns the round
+        sql`not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = ${tasks.id} and tr2.employee_id = ${taskReviews.reviewerId} and (tr2.started_at, tr2.id) > (${taskRuns.startedAt}, ${taskRuns.id}))`,
+      ),
+    )
+    .orderBy(taskReviews.createdAt)
+    .limit(STALLED_REVIEW_SCAN_LIMIT);
+}
+
+/** pure decision for one candidate: replay the lost settle, or park the round once the
+ *  run's replay attempts are exhausted. `null` = not the shape (a concurrent write
+ *  moved the round on). */
+export function lostSettleAction(
+  candidate: Pick<LostSettleCandidate, 'round'>,
+  probe: { round: number; liveRun: boolean; inReview: boolean; runStatus: string; runIsNewest: boolean },
+  attempts: number,
+): 'replay' | 'park' | null {
+  if (!probe.inReview) return null; // the task left in-review (manual move/park/settle)
+  if (probe.round !== candidate.round) return null; // a superseded round is never replayed
+  if (probe.liveRun) return null; // a live turn owns the round
+  if (probe.runStatus !== RUN_STATUS.DONE || !probe.runIsNewest) return null; // settled or superseded
+  return attempts >= SETTLE_REPLAY_MAX_ATTEMPTS ? 'park' : 'replay';
+}
+
+/** per-run replay attempts (in-process: a restart grants one fresh attempt, the only
+ *  bound that survives a crash loop without a schema change). An entry is kept for the
+ *  process lifetime: a replay that reports 'settled' but leaves the shape standing (the
+ *  settle's own mint no-ops) must burn the bound too, never replay every tick. */
+const lostSettleAttempts = new Map<string, number>();
+/** single-flight per run: the tick fires with `void` every 5s, so a pass slower than the
+ *  interval overlaps the next one — two replays of the same run would race each other
+ *  (the loser's refusal is a no-op, but the double work is pointless and the second
+ *  settle's publish storm is real) */
+const lostSettleInFlight = new Set<string>();
+/** exposed for tests: the attempt map is module state and must reset between cases */
+export const lostSettleAttemptState = lostSettleAttempts;
+
+/** bounded map: evict the OLDEST entry only — a blanket clear() would wipe live
+ *  counters, including a wedge sitting at the bound that is due to park (#402 r2) */
+export function pruneLostSettleAttempts(keep: string) {
+  if (lostSettleAttempts.size <= 500) return;
+  for (const [runId, count] of lostSettleAttempts) {
+    // never evict a wedge sitting at the bound — it is due to park this tick
+    if (runId === keep || count >= SETTLE_REPLAY_MAX_ATTEMPTS) continue;
+    lostSettleAttempts.delete(runId);
+    return;
+  }
+}
+
+/** tick arm: replay review turns left DONE with their settle lost. Never rejects (a
+ *  failed tick means try again next tick). Returns the healed count. */
+export async function sweepLostReviewSettles(): Promise<number> {
+  try {
+    return await sweepLostReviewSettlesInner();
+  } catch (e) {
+    warnLostSettle('lost-settle sweep failed:', e);
+    return 0;
+  }
+}
+
+async function sweepLostReviewSettlesInner(): Promise<number> {
+  const candidates = await lostSettleScan(db, new Date(Date.now() - SETTLE_REPLAY_GRACE_MS));
+  const attempted = new Set<string>();
+  let healed = 0;
+  for (const candidate of candidates) {
+    if (!candidate.reviewerId || attempted.has(candidate.taskId)) continue;
+    try {
+      const probe = { round: 0, liveRun: false, inReview: false, runStatus: '', runIsNewest: false };
+      probe.round = await currentRound(candidate.taskId);
+      if (probe.round === candidate.round) {
+        probe.liveRun = await taskHasLiveRun(candidate.taskId);
+        if (!probe.liveRun) {
+          // decision-time re-check of the run shape: the scan→replay window is not atomic
+          const newest = await reviewerNewestRun(candidate.taskId, candidate.reviewerId, candidate.createdAt);
+          probe.runStatus = newest?.status ?? '';
+          probe.runIsNewest = newest?.id === candidate.runId;
+          if (probe.runIsNewest) probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
+        }
+      }
+      if (lostSettleInFlight.has(candidate.runId)) continue;
+      const attempts = lostSettleAttempts.get(candidate.runId) ?? 0;
+      const action = lostSettleAction(candidate, probe, attempts);
+      if (!action) continue;
+      attempted.add(candidate.taskId);
+      lostSettleAttempts.set(candidate.runId, attempts + 1);
+      pruneLostSettleAttempts(candidate.runId);
+      if (action === 'park') {
+        const parked = await parkRound(
+          candidate.taskId,
+          'review turn finished but its settle was lost — the round needs a human',
+          { rearmable: true },
+        );
+        if (parked) {
+          healed += 1;
+          log.info(`lost-settle sweep: parked task ${candidate.taskId} after ${attempts} replay attempts`);
+        }
+        continue;
+      }
+      lostSettleInFlight.add(candidate.runId);
+      let outcome: 'settled' | 'backoff' | 'skipped';
+      try {
+        outcome = await replayLostSettle(candidate.runId);
+      } finally {
+        lostSettleInFlight.delete(candidate.runId);
+      }
+      // the attempt count is NEVER cleared: a 'settled' that left the shape standing
+      // (the settle's mint no-oped) burns the bound and parks, instead of replaying
+      // every tick forever
+      // the settle itself threw: its failure arm already parked the round on the
+      // REARM ladder (an infra failure keeps its own diagnosis), so this tick ends here
+      // — 'backoff' is terminal for the scan; the arm only sees a park that lost its race
+      if (outcome === 'backoff') continue;
+      if (outcome === 'skipped') continue; // the winner owns the outcome — quiet no-op
+      healed += 1;
+      log.info(`lost-settle sweep: replayed the lost settle of run ${candidate.runId} on task ${candidate.taskId}`);
+    } catch (e) {
+      warnLostSettle(`lost-settle sweep: could not replay task ${candidate.taskId}:`, e);
+    }
+  }
+  return healed;
 }
 
 /** BOOT HEAL (#365): settle every in-review round left with a void pending row and
@@ -1381,6 +1615,25 @@ export async function dispatchAiReviewTurns(
  *  target when it names one (#397 r2), and — for the verdict-less correction — only that
  *  reviewer's own row (#276 r5; row-order ties would otherwise hand the retry to a
  *  different first-turn reviewer). */
+type RunMark = { startedAt: number; status: string };
+/** reviewer → NEWEST run mark for the round starting at `roundStart` (one bounded read;
+ *  the mint's settle-owned ordering and nothing else) */
+async function newestRunsByReviewer(taskId: string, roundStart: Date): Promise<Map<string, RunMark>> {
+  const runRows = await db
+    .select({ employeeId: taskRuns.employeeId, status: taskRuns.status, startedAt: taskRuns.startedAt })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), gte(taskRuns.startedAt, roundStart)));
+  const marks = new Map<string, RunMark>();
+  for (const run of runRows) {
+    if (!run.employeeId) continue;
+    const startedAt = run.startedAt.getTime();
+    const prev = marks.get(run.employeeId);
+    if (!prev || startedAt > prev.startedAt) marks.set(run.employeeId, { startedAt, status: run.status });
+  }
+  return marks;
+}
+
 function reviewRowMintable(
   row: { reviewerId: string | null },
   aiIds: Set<string>,
@@ -1454,7 +1707,20 @@ async function dispatchAiReviewTurnsUnlocked(
   // the round's next pending AI reviewer must still get its turn (escalate to a human used
   // to fall through to the plain mint; targeting must not suppress it — #397 r6)
   const target = opts?.targetReviewerId && aiIds.has(opts.targetReviewerId) ? opts.targetReviewerId : null;
-  for (const row of rows) {
+  // SETTLE-OWNED ORDERING (#402 r5): a reviewer whose NEWEST run this round already
+  // reached DONE had its turn — the settle owns them (a landed settle resolves the row or
+  // mints the next turn; a LOST settle is replayed by the settle-replay arm). They go
+  // LAST so a mint can never open a later run that masks the replay; the fallback keeps
+  // every existing flow (a round whose only remaining reviewer already had a turn still
+  // gets it). Targeted/correction mints are unaffected (their row filter already pins one).
+  const roundStart = rows[0]?.createdAt;
+  const newestRun = roundStart ? await newestRunsByReviewer(taskId, roundStart) : new Map<string, RunMark>();
+  const settleOwned = (reviewerId: string | null) =>
+    reviewerId !== null && newestRun.get(reviewerId)?.status === RUN_STATUS.DONE;
+  const mintOrder = [...rows]
+    .filter((row) => opts?.skipSettled !== true || !settleOwned(row.reviewerId))
+    .sort((a, b) => Number(settleOwned(a.reviewerId)) - Number(settleOwned(b.reviewerId)));
+  for (const row of mintOrder) {
     // the `!row.reviewerId` half ALSO narrows the type for everything below (reviewBy, the
     // note, the park body) — the helper alone cannot narrow the caller's view
     if (!row.reviewerId || !reviewRowMintable(row, aiIds, target, opts?.verdictlessReviewerId)) continue;
@@ -1773,7 +2039,10 @@ async function settleRound(
       },
       source,
     );
-    await dispatchAiReviewTurns(taskId);
+    // LAZY MINT (#402 r6): skip a reviewer whose turn already reached DONE — a mint here
+    // would open a later run and mask the settle-replay arm for a crashed settle. The
+    // recovery callers keep the fallback, so no round strands.
+    await dispatchAiReviewTurns(taskId, undefined, { skipSettled: true });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'waiting' };
   }
