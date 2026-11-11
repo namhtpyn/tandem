@@ -1137,6 +1137,26 @@ async function taskCategory(taskId: string): Promise<string | null> {
   return await categoryOf(row.status);
 }
 
+/** does the REVIEW FLOW still own a turn on this task? (#401) In review, or in a
+ *  GATING auto-block whose recorded pre-block origin resolves to an in-review status:
+ *  a child-derived block does not stop the round — refusing its turn would drop the
+ *  verdict-less correction with a PENDING row, no run and no recovery (the stalled
+ *  sweep excludes a reviewer that already had a run this round). A PARK is the round's
+ *  OWN stop (no job + no turn until the owner resumes; the park restore re-fires), and
+ *  an owner move out of review owns the task outright. */
+async function reviewTurnAllowed(taskId: string): Promise<boolean> {
+  const row = (
+    await db
+      .select({ status: tasks.status, parkFromStatus: tasks.parkFromStatus, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+  )[0];
+  if (!row) return false;
+  if ((await categoryOf(row.status)) === CATEGORY.IN_REVIEW) return true;
+  if (row.status !== BLOCKED_STATUS || row.parkFromStatus !== null || row.preBlockStatus === null) return false;
+  return (await categoryOf(row.preBlockStatus)) === CATEGORY.IN_REVIEW;
+}
+
 /** is a run live on the task? (review turns never claim the task, so the run row is the
  *  only liveness signal) */
 async function taskHasLiveRun(taskId: string): Promise<boolean> {
@@ -1198,10 +1218,11 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         // last read before the mint: the task should still be in review. This NARROWS the
         // scan→mint window; it cannot close it — review turns take no DB claim, so a move
         // landing inside the mint's own reads still mints a turn. The settle is what
-        // enforces the owner's move: the end-of-round flip refuses ANY status outside the
-        // in-review category (#401), so the verdict lands as audit history and the owner's
-        // status stands. (The mint's own category gate in dispatchAiReviewTurns refuses the
-        // common case before the dispatch; this probe keeps the sweep's own decision honest.)
+        // enforces the owner's move: the end-of-round flip refuses any status outside the
+        // in-review category unless a machine block recorded the round's in-review home
+        // (#401), so the verdict lands as audit history and the owner's status stands.
+        // (The mint's own gate in dispatchAiReviewTurns refuses the common case before the
+        // dispatch; this probe keeps the sweep's own decision honest.)
         probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
@@ -1390,16 +1411,17 @@ async function dispatchAiReviewTurnsUnlocked(
 ): Promise<boolean> {
   const round = await currentRound(taskId);
   if (round === 0) return false;
-  // IN-REVIEW MINT GATE (#401): a review turn is owed only while the task still sits in
-  // an in-review-category status. Review turns take no dispatch claim, so nothing else
-  // refuses a turn minted for a task a manual move (or a park) took out of review while
-  // the caller's reads ran. Every mint caller dispatches AFTER an in-review landing —
-  // the submit's post-commit round-open dispatch, the verdict's lazy mint, a correction
-  // re-dispatch, an unblock resume, a park restore, a removal re-fire, the stalled
-  // sweep — so this read never refuses a legitimate turn; it narrows the read→insert
-  // window only, and the end-of-round flip's write-time gate (flipTask) stays the
-  // arbiter for a move landing inside it.
-  if ((await taskCategory(taskId)) !== CATEGORY.IN_REVIEW) return false;
+  // REVIEW-TURN MINT GATE (#401): a turn is owed only while the review flow still owns
+  // the task — in review, or gating-auto-blocked from an in-review origin (see
+  // reviewTurnAllowed: a park and an owner move own the task instead). Review turns take
+  // no dispatch claim, so nothing else refuses a turn minted for a task a manual move
+  // took out of review while the caller's reads ran. Every mint caller dispatches after
+  // the task's own landing — the submit's post-commit round-open dispatch, the verdict's
+  // lazy mint, a correction re-dispatch, an unblock resume, a park restore, a removal
+  // re-fire, the stalled sweep — so this read refuses no legitimate turn; it narrows the
+  // read→insert window only, and the end-of-round flip's write-time gate (flipTask)
+  // stays the arbiter for a move landing inside it.
+  if (!(await reviewTurnAllowed(taskId))) return false;
   // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
   // while ANY run of the task is RUNNING is a no-op — without this, a removal that
   // voids a third reviewer's row would skip the running reviewer and mint the NEXT

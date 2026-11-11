@@ -49,7 +49,10 @@ vi.mock('../../server/db/index', async () => {
       select: (cols?: Record<string, unknown>) => ({
         from: (table: unknown) => {
           const resolve = (): Array<Record<string, unknown>> => {
-            if (table === tasks && cols && 'status' in cols) return [{ status: h.task.status }];
+            if (table === tasks && cols && 'status' in cols)
+              return [
+                { status: h.task.status, parkFromStatus: h.task.parkFromStatus, preBlockStatus: h.task.preBlockStatus },
+              ];
             if (table === taskRuns) return []; // no live run on the task
             if (table === taskReviews) {
               if (cols && 'round' in cols) return [{ round: 1 }];
@@ -100,7 +103,17 @@ vi.mock('../../server/db/index', async () => {
                 ((parkArm ? paramsOf(parkArm[1]!).includes(h.task.parkFromStatus ?? '') : false) ||
                   (preArm ? paramsOf(preArm[1]!).includes(h.task.preBlockStatus ?? '') : false));
               const gated = Boolean(inArm) || machineArm;
-              const allowed = gated ? inReviewAllows || machineAllows : true;
+              // the TOP-LEVEL connector decides how the two arms compose; an `and` here
+              // would refuse every in-review task that is not machine-blocked
+              let allowed = true;
+              if (gated) {
+                if (inArm && statusEq) {
+                  const between = rendered.sql.slice(inArm.index + inArm[0].length, statusEq.index);
+                  allowed = /\bor\b/.test(between) ? inReviewAllows || machineAllows : inReviewAllows && machineAllows;
+                } else {
+                  allowed = inReviewAllows || machineAllows;
+                }
+              }
               if (!allowed) return [];
               if (typeof set.status === 'string') h.task.status = set.status;
               return [{ id: h.task.id }];
@@ -298,6 +311,20 @@ describe('review-turn mint gate (#401)', () => {
     await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(true);
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.reviewBy).toBe('rev-1');
+  });
+
+  it('mints on a GATING auto-block (child-derived): the correction turn is never dropped', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.inReview };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(true);
+    expect(h.dispatched).toHaveLength(1);
+  });
+
+  it('mints nothing for a gating block whose origin is NOT in review (a stale origin)', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.todo };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
+    expect(h.dispatched).toHaveLength(0);
   });
 
   it('mints nothing for a parked task (blocked/paused) — the park owns the round', async () => {
