@@ -1,9 +1,10 @@
 // E2E (#199): a review round whose reviewer turn dies mid-flight parks on the owner,
 // and the owner's unblock re-fires the parked reviewer. The failure is injected at
-// the SQL level because the fake runner cannot fail per-test: a stale RUNNING review
-// run (started 2h ago) is inserted BEFORE submit — the sequential-turn law then
-// suppresses the real mint while it is RUNNING, and the REAL reaper (run timeout +
-// grace < 2h) reaps it mid-round. That is the exact production class: a reviewer
+// the SQL level because the fake runner cannot fail per-test: a RUNNING review run is
+// inserted BEFORE submit (fresh, so no sweep can reap it pre-submit) and backdated
+// past the reaper cutoff only AFTER the round opens (#375) — the sequential-turn law
+// then suppresses the real mint while it is RUNNING, and the REAL reaper (run timeout
+// + grace < 2h) reaps it mid-round. That is the exact production class: a reviewer
 // host dies with the turn live, the reaper fires, the round must park — never the
 // work ladder's todo-flip, which would yank an in-review task out of its open round.
 // The second half proves the recovery loop: unblock (status -> in-review) re-fires
@@ -40,28 +41,46 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
 }
 
 /**
- * The submit's In-review state is NOT observable on the client: the submit gesture's
- * round opens server-side, and the reaper's 5s sweep can park the round before the
- * client's first post-submit fetch lands — the badge legitimately goes Doing →
- * Blocked and never renders "In review" (#375: the old `toHaveText('In review')`
- * assert lost that race in 2 gate runs). The contract is the ROUND OPEN, not a
- * transient render, so pin it in the DB: a review row for the round exists only
- * after the submit won the in-review flip (#394/#292 arbitration).
+ * #375: TWO flake classes lived in this file, both from seeding/reaping order.
+ *
+ * (1) The submit's In-review state is NOT observable on the client: the round opens
+ * server-side and the reaper's 5s sweep can park it before the client's first
+ * post-submit fetch lands — the badge legitimately goes Doing → Blocked and never
+ * renders "In review" (the old `toHaveText('In review')` lost that race in 2 gate
+ * runs). The contract is the ROUND OPEN, not a transient render: pin it in the DB —
+ * a PENDING review row appears only after a WON in-review flip (#394/#292) — and
+ * assert the DELTA against the pre-click baseline, never an absolute row count.
+ *
+ * (2) The injected review turn must be seeded FRESH and backdated only AFTER the
+ * round opened: a 2h-old RUNNING row is past the reaper cutoff from the millisecond
+ * it commits, so a 5s tick landing before the submit click reaps it while the task is
+ * still Doing and bounces it to To do (the verb vanishes; the submit never runs).
  */
-async function expectRoundOpened(taskId: string, round = 1): Promise<void> {
+async function pendingReviewRows(taskId: string): Promise<number> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
-    await expect
-      .poll(
-        async () => {
-          const rows = await sql`
-            select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${round}
-          `;
-          return Number(rows[0]!.n);
-        },
-        { timeout: 15_000, intervals: [250, 250, 500, 1000] },
-      )
-      .toBe(1);
+    const rows = await sql`
+      select count(*)::int as n from task_reviews where task_id = ${taskId} and status = 'PENDING'
+    `;
+    return Number(rows[0]!.n);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** poll the round-open delta: THIS submit adds exactly one PENDING row to the baseline. */
+async function expectRoundOpened(taskId: string, baseline: number): Promise<void> {
+  await expect
+    .poll(() => pendingReviewRows(taskId), { timeout: 15_000, intervals: [250, 250, 500, 1000] })
+    .toBe(baseline + 1);
+}
+
+/** backdate the seeded RUNNING turn past the reaper cutoff — only once the round is
+ *  open, so the reap (and its park) is strictly post-round-open. */
+async function backdateReviewRun(runId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    await sql`update task_runs set started_at = now() - interval '2 hours' where id = ${runId}`;
   } finally {
     await sql.close();
   }
@@ -88,9 +107,12 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   await page.getByRole('option', { name: 'Doing' }).click();
   await expect(tasks.rowFor(taskTitle)).toContainText('Doing', { timeout: 10_000 });
 
-  // inject the stale RUNNING review turn (the exact reaped-mid-turn shape)
+  // inject the RUNNING review turn (the exact reaped-mid-turn shape). Seeded FRESH and
+  // backdated only after the round opens (#375) — stale at insert, a sweep tick could
+  // reap it while the task is still Doing and bounce it to To do before the submit.
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   let injectedTaskId = '';
+  let injectedRunId = '';
   try {
     const inserted = await sql`
       insert into task_messages (id, task_id, author_id, body, created_at)
@@ -103,12 +125,15 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
     const messageId = inserted[0]!.id as string;
     injectedTaskId = inserted[0]!.task_id as string;
     expect(injectedTaskId).toBeTruthy();
-    await sql`
+    const run = await sql`
       insert into task_runs (id, message_id, employee_id, status, output, started_at)
-      select gen_random_uuid()::text, m.id, u.id, 'RUNNING', '[e2e] reviewer host died mid-turn', now() - interval '2 hours'
+      select gen_random_uuid()::text, m.id, u.id, 'RUNNING', '[e2e] reviewer host died mid-turn', now()
       from task_messages m, "user" u
       where m.id = ${messageId} and u.name = ${botName}
+      returning id
     `;
+    injectedRunId = run[0]!.id as string;
+    expect(injectedRunId).toBeTruthy();
   } finally {
     await sql.close();
   }
@@ -118,8 +143,10 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
+  const roundsBefore = await pendingReviewRows(injectedTaskId);
   await verbs.getByTestId('task-verb-submit').click();
-  await expectRoundOpened(injectedTaskId);
+  await expectRoundOpened(injectedTaskId, roundsBefore);
+  await backdateReviewRun(injectedRunId);
 
   // the reaper reaps the stale turn (next 5s tick) and parks the round on the owner
   await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
@@ -134,14 +161,20 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   await expect(tasks.rowFor(taskTitle)).toContainText('Done', { timeout: 45_000 });
 
   // the only park on this path is the reaper's infra park; the corrected re-dispatch
-  // settled the round instead of parking again (decision parks are unit-pinned)
+  // settled the round instead of parking again (decision parks are unit-pinned).
+  // The predicate names the REAPER's cause: a submit-time dispatch-failure park is the
+  // same shape otherwise (#375) and would make this spec green on the wrong parker.
   const sql2 = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const notes = await sql2`
-      select count(*)::int as n from task_messages
-      where task_id = ${injectedTaskId} and body like 'review parked —%'
+      select
+        (select count(*)::int from task_messages
+          where task_id = ${injectedTaskId}
+            and body like 'review parked — review turn timed out — reaped after %') as reaped,
+        (select status from task_runs where id = ${injectedRunId}) as run_status
     `;
-    expect(Number(notes[0]!.n)).toBe(1);
+    expect(Number(notes[0]!.reaped)).toBe(1);
+    expect(notes[0]!.run_status).toBe('FAILED');
   } finally {
     await sql2.close();
   }
@@ -174,9 +207,11 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   await page.getByRole('option', { name: 'Doing' }).click();
   await expect(tasks.rowFor(taskTitle)).toContainText('Doing', { timeout: 10_000 });
 
-  // inject the stale RUNNING review turn — the reaper's park is infra-class (#211)
+  // inject the RUNNING review turn — the reaper's park is infra-class (#211). Seeded
+  // FRESH and backdated after the round opens (#375), same law as the test above.
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   let taskId = '';
+  let runId = '';
   try {
     const inserted = await sql`
       insert into task_messages (id, task_id, author_id, body, created_at)
@@ -188,12 +223,15 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     expect(inserted.length).toBe(1);
     taskId = inserted[0]!.task_id as string;
     expect(taskId).toBeTruthy();
-    await sql`
+    const run = await sql`
       insert into task_runs (id, message_id, employee_id, status, output, started_at)
-      select gen_random_uuid()::text, m.id, u.id, 'RUNNING', '[e2e] reviewer host died mid-turn', now() - interval '2 hours'
+      select gen_random_uuid()::text, m.id, u.id, 'RUNNING', '[e2e] reviewer host died mid-turn', now()
       from task_messages m, "user" u
       where m.id = ${inserted[0]!.id} and u.name = ${botName}
+      returning id
     `;
+    runId = run[0]!.id as string;
+    expect(runId).toBeTruthy();
   } finally {
     await sql.close();
   }
@@ -202,8 +240,10 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
+  const roundsBefore = await pendingReviewRows(taskId);
   await verbs.getByTestId('task-verb-submit').click();
-  await expectRoundOpened(taskId);
+  await expectRoundOpened(taskId, roundsBefore);
+  await backdateReviewRun(runId);
 
   // the reaper parks the round — the park write carries the re-arm ledger
   await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
@@ -215,6 +255,14 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     `;
     expect(Number(ledger[0]!.attempts)).toBe(1);
     expect(ledger[0]!.scheduled).toBe(true);
+
+    // the PARKER is the reaper — a submit-time dispatch-failure park carries the same
+    // ledger shape (#375), so name the cause instead of matching any park note
+    const parked = await sql3`
+      select count(*)::int as n from task_messages
+      where task_id = ${taskId} and body like 'review parked — review turn timed out — reaped after %'
+    `;
+    expect(Number(parked[0]!.n)).toBe(1);
 
     // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action
     await sql3`update tasks set park_rearm_after = now() - interval '1 second' where id = ${taskId}`;
