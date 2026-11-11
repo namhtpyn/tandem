@@ -1365,7 +1365,13 @@ export async function settleReviewVerdict(
     // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
       columns: { id: true, startedAt: true, status: true, prompt: true },
-      where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
+      // BOUNDED to the round (#380): the marker check below only needs this round's turns —
+      // an unbounded read would load every brief the reviewer ever had on the task
+      where: {
+        employeeId: { eq: reviewerId },
+        message: { taskId: { eq: taskId } },
+        startedAt: { gte: binding.createdAt },
+      },
     });
     // COMPLETED turns this round BEFORE this one: the settling run is already DONE
     // and must not count itself — the corrected retry is consumed only by a prior
@@ -1394,10 +1400,19 @@ export async function settleReviewVerdict(
       return;
     }
     const { dropReviewMintIntent } = await import('./review.service');
-    // SPENT only if the block was DELIVERED (#380): a prior DONE turn minted PLAIN (the
-    // lock-loss half the carry could not reach) must leave the intent parked — its restore
-    // is the only remaining chance to send the CORRECTION block at all
-    if (priorDone.some((r) => r.prompt?.includes(REVIEW_CORRECTION_MARKER))) dropReviewMintIntent(taskId, reviewerId);
+    // SPENT only if the block was DELIVERED (#380): the SETTLING turn IS the correction turn
+    // in the #276 shape (one plain turn, then the retry), so the check covers every DONE turn
+    // of the round INCLUDING this one — and matches the marker as a LINE, never a substring
+    // (the brief embeds the result body and other verdicts verbatim, so an echoed mention
+    // must not read as a delivery). A plain turn's blockless settle leaves the intent parked:
+    // its restore is the only remaining chance to send the CORRECTION block at all.
+    const delivered = reviewRuns.some(
+      (r) =>
+        r.status === RUN_STATUS.DONE &&
+        r.startedAt !== null &&
+        r.prompt?.split('\n').some((line) => line.startsWith(REVIEW_CORRECTION_MARKER)) === true,
+    );
+    if (delivered) dropReviewMintIntent(taskId, reviewerId);
     await parkReviewTurnFailure(
       taskId,
       reviewerId,

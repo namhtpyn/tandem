@@ -86,7 +86,7 @@ import { settleReviewVerdict } from '../../server/domains/tasks/runner.service';
 
 const roundOpen = new Date('2026-11-03T00:00:00Z');
 const run = (id: string, at: Date, status = 'DONE', prompt?: string) => ({ id, startedAt: at, status, prompt });
-const CORRECTED_BRIEF = 'review brief … CORRECTION (verdict-less re-dispatch) …';
+const CORRECTED_BRIEF = 'review brief …\nCORRECTION (verdict-less re-dispatch)\nprevious turn produced no verdict …';
 const self = new Date(roundOpen.getTime() + 5000); // the settling run's start
 
 beforeEach(() => {
@@ -132,7 +132,8 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
   });
 
   it('a PRIOR completed turn this round -> decision park (the corrected retry already failed)', async () => {
-    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000), 'DONE', CORRECTED_BRIEF), run('self', self)];
+    // the SETTLING turn is the correction turn in the #276 shape: its brief carries the block
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000)), run('self', self, 'DONE', CORRECTED_BRIEF)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
@@ -147,6 +148,18 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     // the lock-loss half the carry could not reach: dropping here would make the loss
     // permanent, so the intent survives for the restore's re-fire (#380)
     h.runs = [run('r1', new Date(roundOpen.getTime() + 1000), 'DONE', 'plain first-turn brief'), run('self', self)];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(1);
+    expect(h.drops).toEqual([]);
+  });
+
+  it('an ECHOED marker mid-line is not a delivery — the intent stays parked', async () => {
+    // the brief embeds the result body and verdicts verbatim: a quoted mention must not be
+    // read as a dispatched CORRECTION block (that would delete a live, never-sent retry)
+    h.runs = [
+      run('r1', new Date(roundOpen.getTime() + 1000)),
+      run('self', self, 'DONE', 'the reviewer asked about CORRECTION (verdict-less re-dispatch) twice'),
+    ];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.parks).toHaveLength(1);
     expect(h.drops).toEqual([]);
