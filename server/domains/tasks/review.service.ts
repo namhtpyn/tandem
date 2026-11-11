@@ -1138,12 +1138,14 @@ async function taskCategory(taskId: string): Promise<string | null> {
 }
 
 /** does the REVIEW FLOW still own a turn on this task? (#401) In review, or in a
- *  GATING auto-block whose recorded pre-block origin resolves to an in-review status:
- *  a child-derived block does not stop the round — refusing its turn would drop the
- *  verdict-less correction with a PENDING row, no run and no recovery (the stalled
- *  sweep excludes a reviewer that already had a run this round). A PARK is the round's
- *  OWN stop (no job + no turn until the owner resumes; the park restore re-fires), and
- *  an owner move out of review owns the task outright. */
+ *  GATING auto-block (a PAUSED-category block whose pre-block origin resolves to an
+ *  in-review id): a child-derived block does not stop the round, and its turn is the
+ *  ONLY retry a verdict-less correction gets — the stalled sweep never even scans a
+ *  blocked row and excludes any reviewer that already had a turn this round, and the
+ *  gating restore re-mints only a PARKED round, so a refused mint would leave the
+ *  PENDING row with no run and no re-fire. A PARK is the round's OWN stop: no job, no
+ *  turn until the owner resumes (the park restore re-fires it). An owner move out of
+ *  review owns the task outright. */
 async function reviewTurnAllowed(taskId: string): Promise<boolean> {
   const row = (
     await db
@@ -1152,8 +1154,10 @@ async function reviewTurnAllowed(taskId: string): Promise<boolean> {
       .where(eq(tasks.id, taskId))
   )[0];
   if (!row) return false;
-  if ((await categoryOf(row.status)) === CATEGORY.IN_REVIEW) return true;
-  if (row.status !== BLOCKED_STATUS || row.parkFromStatus !== null || row.preBlockStatus === null) return false;
+  const cat = await categoryOf(row.status);
+  if (cat === CATEGORY.IN_REVIEW) return true;
+  if (cat !== CATEGORY.PAUSED) return false;
+  if (row.parkFromStatus !== null || row.preBlockStatus === null) return false;
   return (await categoryOf(row.preBlockStatus)) === CATEGORY.IN_REVIEW;
 }
 
@@ -1412,15 +1416,15 @@ async function dispatchAiReviewTurnsUnlocked(
   const round = await currentRound(taskId);
   if (round === 0) return false;
   // REVIEW-TURN MINT GATE (#401): a turn is owed only while the review flow still owns
-  // the task — in review, or gating-auto-blocked from an in-review origin (see
-  // reviewTurnAllowed: a park and an owner move own the task instead). Review turns take
-  // no dispatch claim, so nothing else refuses a turn minted for a task a manual move
-  // took out of review while the caller's reads ran. Every mint caller dispatches after
-  // the task's own landing — the submit's post-commit round-open dispatch, the verdict's
-  // lazy mint, a correction re-dispatch, an unblock resume, a park restore, a removal
-  // re-fire, the stalled sweep — so this read refuses no legitimate turn; it narrows the
-  // read→insert window only, and the end-of-round flip's write-time gate (flipTask)
-  // stays the arbiter for a move landing inside it.
+  // the task (reviewTurnAllowed: in review, or a gating block from an in-review origin —
+  // a park and an owner move own the task instead). Review turns take no dispatch claim,
+  // so nothing else refuses a turn minted for a task a manual move took out of review
+  // while the caller's reads ran. The callers: the submit's post-commit round-open
+  // dispatch, the verdict's lazy mint, a correction re-dispatch, an unblock resume, a
+  // park restore, a removal re-fire, an escalation's replacement turn and the
+  // stalled-review sweep. This read narrows the read→insert window only; the
+  // end-of-round flip's write-time gate (flipTask) stays the arbiter for a move landing
+  // inside it.
   if (!(await reviewTurnAllowed(taskId))) return false;
   // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
   // while ANY run of the task is RUNNING is a no-op — without this, a removal that
@@ -1507,30 +1511,36 @@ async function logVerdict(
   });
 }
 
-/** in-review-category status ids, resolved fresh so the flip predicate is evaluated
- *  in SQL at WRITE time — never a stale read and never seeded ids only (#260). */
-async function inReviewStatusIds(): Promise<string[]> {
+/** the flip's status scope, resolved fresh so the predicate is evaluated in SQL at
+ *  WRITE time and keyed on CATEGORIES, never seeded ids (CATEGORY-GATE LAW, #336/#260):
+ *  the task must still sit in review, or in a PAUSED-category block whose recorded
+ *  origin (park_from_status / pre_block_status) resolves to an in-review id. */
+async function flipScopeIds(): Promise<{ inReview: string[]; paused: string[] }> {
   const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
-  return statuses.filter((s) => s.category === CATEGORY.IN_REVIEW).map((s) => s.id);
+  return {
+    inReview: statuses.filter((s) => s.category === CATEGORY.IN_REVIEW).map((s) => s.id),
+    paused: statuses.filter((s) => s.category === CATEGORY.PAUSED).map((s) => s.id),
+  };
 }
 
 /** END-OF-ROUND FLIP CAS (#260, #401): the settle flip is a conditional write that
- * REQUIRES the task to still sit in an in-review-category status — OR in a MACHINE
- * block whose recorded origin (park_from_status / pre_block_status) RESOLVES to an
- * in-review-category id, which is not an owner move and must never strand a decided
- * round: the deny-list let such a settle land, and the block's own restore arm cannot
- * settle an already-decided round (roundLive=false, no void row). A bare origin id is
- * NOT enough — gating records whatever status the task held and pre_block_status
- * survives manual moves — and a task the owner moved out of review keeps its status
+ * REQUIRES the task to still sit in an in-review-category status — OR in a PAUSED-
+ * category block whose recorded origin (park_from_status / pre_block_status) RESOLVES
+ * to an in-review id. A block is not an owner move, and refusing it would strand a
+ * decided round: the block's own restore arm settles only a LIVE or an EXTINGUISHED
+ * round, never a decided one (roundLive=false and no void row). A bare origin id is NOT
+ * enough (gating records whatever status the task held; a manual move clears both
+ * origins, router-side), and a task the owner moved out of review keeps its status
  * (terminal, waiting_answer and a plain re-queue/block alike); its verdict becomes a
  * recorded-but-superseded audit row (returns false). #288: the refused waiting_answer flip is re-checked by the hold
  * arm below, which parks instead of superseding. */
 async function flipTask(taskId: string, status: string): Promise<boolean> {
   // the machine-block carve-out must prove the ROUND's home: the recorded origin has to
   // RESOLVE to an in-review-category id (a bare non-null origin is not enough — gating
-  // records whatever status the task held, and pre_block_status survives manual moves,
-  // so a stale/owner-moved origin would reopen the #401 hole this gate closes)
-  const inReview = await inReviewStatusIds();
+  // records whatever status the task held, and a stale origin would let a hand-made block
+  // look machine-recorded, reopening the #401 hole this gate closes; a manual move clears
+  // both origins, see tasks.router setStatus)
+  const { inReview, paused } = await flipScopeIds();
   const flipped = await db
     .update(tasks)
     .set({ status, updatedAt: new Date() })
@@ -1540,7 +1550,7 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
         or(
           inArray(tasks.status, inReview),
           and(
-            eq(tasks.status, BLOCKED_STATUS),
+            inArray(tasks.status, paused),
             or(inArray(tasks.parkFromStatus, inReview), inArray(tasks.preBlockStatus, inReview)),
           ),
         ),

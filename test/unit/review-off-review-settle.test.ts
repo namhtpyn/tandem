@@ -88,27 +88,28 @@ vi.mock('../../server/db/index', async () => {
               // predicate without either arm allows everything (the un-gated shape).
               const paramsOf = (placeholders: string) =>
                 (placeholders.match(/\$(\d+)/g) ?? []).map((t) => rendered.params[Number(t.slice(1)) - 1]);
-              const inArm = /"tasks"\."status" in \(([^)]*)\)/.exec(rendered.sql);
-              const statusEq = /"tasks"\."status" = \$(\d+)/.exec(rendered.sql);
+              // [0] = the in-review arm, [1] = the paused (block) arm
+              const statusArms = [...rendered.sql.matchAll(/"tasks"\."status" in \(([^)]*)\)/g)];
               // the carve-out must check the origin VALUE, not merely its presence: the
               // rendered origin lists are what the mock honors
               const parkArm = /"tasks"\."park_from_status" in \(([^)]*)\)/.exec(rendered.sql);
               const preArm = /"tasks"\."pre_block_status" in \(([^)]*)\)/.exec(rendered.sql);
               const machineArm = Boolean(parkArm) || Boolean(preArm);
-              const inReviewAllows = inArm ? paramsOf(inArm[1]!).includes(h.task.status) : false;
+              const inReviewAllows = statusArms[0] ? paramsOf(statusArms[0][1]!).includes(h.task.status) : false;
               const machineAllows =
-                Boolean(statusEq) &&
+                Boolean(statusArms[1]) &&
                 machineArm &&
-                rendered.params[Number(statusEq![1]) - 1] === h.task.status &&
+                paramsOf(statusArms[1]![1]!).includes(h.task.status) &&
                 ((parkArm ? paramsOf(parkArm[1]!).includes(h.task.parkFromStatus ?? '') : false) ||
                   (preArm ? paramsOf(preArm[1]!).includes(h.task.preBlockStatus ?? '') : false));
-              const gated = Boolean(inArm) || machineArm;
+              const gated = Boolean(statusArms[0]) || machineArm;
               // the TOP-LEVEL connector decides how the two arms compose; an `and` here
               // would refuse every in-review task that is not machine-blocked
               let allowed = true;
               if (gated) {
-                if (inArm && statusEq) {
-                  const between = rendered.sql.slice(inArm.index + inArm[0].length, statusEq.index);
+                const second = statusArms[1];
+                if (statusArms[0] && second) {
+                  const between = rendered.sql.slice(statusArms[0].index! + statusArms[0][0].length, second.index);
                   allowed = /\bor\b/.test(between) ? inReviewAllows || machineAllows : inReviewAllows && machineAllows;
                 } else {
                   allowed = inReviewAllows || machineAllows;
@@ -257,8 +258,8 @@ describe('off-review settle refusal (#401)', () => {
   });
 
   it('refuses a machine block whose recorded origin is NOT an in-review status (a stale pre_block_status)', async () => {
-    // gating records whatever status the task held; pre_block_status also survives a
-    // manual move — a bare non-null origin must never unlock the flip (#401 r2)
+    // gating records whatever status the task held, so a STALE in-review origin must never
+    // unlock the flip (the owner's manual move also clears both origins, router-side)
     h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.todo };
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'superseded' });
@@ -284,7 +285,8 @@ describe('off-review settle refusal (#401)', () => {
     expect(flip?.sql).toContain('"tasks"."status" in (');
     expect(flip?.sql).not.toMatch(/\bnot in\b/);
     expect(flip?.params.slice(0, 3)).toEqual(['task-1', STATUS.inReview, 'st-review-custom']);
-    expect(flip?.params).toContain(STATUS.blocked);
+    expect(flip?.params).toContain(STATUS.blocked); // the paused arm's id (one status in this fixture)
+    expect(flip?.sql.match(/"tasks"\."status" in \(/g)).toHaveLength(2); // in-review arm + paused arm
     expect(flip?.params).not.toContain(STATUS.todo);
     expect(flip?.params).not.toContain(STATUS.done);
     // the machine-blocked carve-out is part of the predicate and it checks the origin
@@ -320,6 +322,13 @@ describe('review-turn mint gate (#401)', () => {
     expect(h.dispatched).toHaveLength(1);
   });
 
+  it('mints nothing for a re-queued task carrying a stale in-review origin (the block landing is what gates)', async () => {
+    h.task = { ...h.task, status: STATUS.todo, preBlockStatus: STATUS.inReview };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
   it('mints nothing for a gating block whose origin is NOT in review (a stale origin)', async () => {
     h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.todo };
     h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
@@ -328,7 +337,9 @@ describe('review-turn mint gate (#401)', () => {
   });
 
   it('mints nothing for a parked task (blocked/paused) — the park owns the round', async () => {
-    h.task = { ...h.task, status: STATUS.blocked, parkFromStatus: STATUS.inReview };
+    // parkFromStatus set AND a valid in-review pre-block origin: only the PARK term can
+    // refuse, so deleting it turns this test red
+    h.task = { ...h.task, status: STATUS.blocked, parkFromStatus: STATUS.inReview, preBlockStatus: STATUS.inReview };
     h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
     await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
     expect(h.dispatched).toHaveLength(0);
