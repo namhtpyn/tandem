@@ -1662,9 +1662,12 @@ function settleReviewMintIntent(taskId: string, round: number, reviewerId: strin
 }
 
 /** a correction caller bound to a round that is no longer live (#380): its CORRECTION
- *  block may never ride a new round's first-turn brief, so the mint is a no-op */
+ *  block may never ride a new round's first-turn brief, so the mint is a no-op. A
+ *  correction that names NO round cannot prove liveness either — the settle's round is
+ *  required for the retry, never guessed. */
 function staleSettleRound(opts: DispatchOpts | undefined, round: number): boolean {
-  return typeof opts?.round === 'number' && opts.round !== round;
+  if (opts?.verdictCorrection !== true) return false;
+  return typeof opts.round !== 'number' || opts.round !== round;
 }
 
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
@@ -1689,6 +1692,12 @@ export async function dispatchAiReviewTurns(
   reviewMintInFlight.add(taskId);
   try {
     return await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
+  } catch (e) {
+    // EVERY throw site parks the correction intent (#380), not just the dispatch: a settle
+    // whose mint dies in a plan/read fails the settle, and the re-arm ladder re-fires a
+    // PLAIN turn — the retry would be burned without ever carrying the CORRECTION block
+    parkReviewMintIntent(taskId, opts);
+    throw e;
   } finally {
     reviewMintInFlight.delete(taskId);
   }

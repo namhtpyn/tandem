@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   gate: null as Promise<void> | null,
   roundGate: null as Promise<void> | null,
   failNextDispatch: false,
+  failRoundRead: false,
 }));
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -47,7 +48,10 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
     const c = (cols ?? {}) as Record<string, unknown>;
     // the IN-REVIEW MINT GATE's task-status read (#401)
     if (isTaskRow && 'status' in c) return [{ status: 'st-review' }];
-    if ('round' in c) return [{ round: h.round }];
+    if ('round' in c) {
+      if (h.failRoundRead) throw new Error('round read exploded');
+      return [{ round: h.round }];
+    }
     if ('resultBody' in c) return [{ resultBody: 'submitted work' }];
     if ('id' in c) return [];
     // the mint's settle-owned ordering read (#402 r5): reviewer → newest run mark
@@ -105,7 +109,7 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   return { ...mod, insertActivityMessage: async () => {} };
 });
 
-import { dispatchAiReviewTurns } from '../../server/domains/tasks/review.service';
+import { dispatchAiReviewTurns, dropReviewMintIntent } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
   h.dispatchCalls = [];
@@ -117,6 +121,7 @@ beforeEach(() => {
   h.gate = null;
   h.roundGate = null;
   h.failNextDispatch = false;
+  h.failRoundRead = false;
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
@@ -124,6 +129,7 @@ describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
     await dispatchAiReviewTurns('task-1', 'submitted work', {
       verdictCorrection: true,
       verdictlessReviewerId: 'rev-1',
+      round: 1,
     });
     expect(h.dispatchCalls).toHaveLength(1);
     expect(h.dispatchCalls[0]?.verdictCorrection).toBe(true);
@@ -137,6 +143,7 @@ describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
     await dispatchAiReviewTurns('task-1', 'submitted work', {
       verdictCorrection: true,
       verdictlessReviewerId: 'someone-else',
+      round: 1,
     });
     expect(h.dispatchCalls).toHaveLength(0);
   });
@@ -246,36 +253,79 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     expect(h.dispatchCalls.every((c: Record<string, unknown>) => c.verdictCorrection === false)).toBe(true);
   });
 
-  it('a correction without the settle round parks nothing (the round is never guessed)', async () => {
+  it('a correction without its settle round mints nothing (liveness is never guessed)', async () => {
     h.rows = [row('rev-1', minted)];
     h.aiIds = ['rev-1'];
-    const release = gateMint();
-    const plain = dispatchAiReviewTurns('task-noround', 'submitted work');
-    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    // unlocked: the caller would otherwise be the one minting — it must refuse instead
     expect(
       await dispatchAiReviewTurns('task-noround', undefined, {
         verdictCorrection: true,
         verdictlessReviewerId: 'rev-1',
       }),
     ).toBe(false);
+    expect(h.dispatchCalls).toHaveLength(0);
+    // and a locked-out one parks no intent either: the winner's turn stays plain
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-noround2', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    expect(
+      await dispatchAiReviewTurns('task-noround2', undefined, {
+        verdictCorrection: true,
+        verdictlessReviewerId: 'rev-1',
+      }),
+    ).toBe(false);
     release();
     await plain;
-    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false); // nothing parked: the winner's turn is plain
-    await dispatchAiReviewTurns('task-noround', 'submitted work');
-    expect(h.dispatchCalls).toHaveLength(2);
-    expect(h.dispatchCalls[1]?.verdictCorrection).toBe(false);
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
   });
 
-  it("the correction's OWN mint failing parks its intent for the restore re-fire", async () => {
-    // no lock contention: the correction caller wins the lock, its dispatch throws, the mint
-    // parks the round — the restore must re-fire WITH the block, not a plain retry
+  it('a STALE park landing after the prune never carries (the carry gate is the round match)', async () => {
+    // the winner pruned at its start, then a loser whose settle round already closed parks
+    // an intent while the winner is mid-reads — only the round comparison can refuse it
+    h.round = 2;
     h.rows = [row('rev-1', minted)];
     h.aiIds = ['rev-1'];
-    h.failNextDispatch = true;
-    await expect(correction('task-ownfail', 'rev-1')).rejects.toBeTruthy(); // park path has no db here
-    await dispatchAiReviewTurns('task-ownfail', 'submitted work');
-    expect(h.dispatchCalls).toHaveLength(2);
-    expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-gate', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await correction('task-gate', 'rev-1', 1); // round-1 intent, live round 2
+    release();
+    await plain;
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
+  });
+
+  it('a throw BEFORE the dispatch still parks the retry (any throw site)', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    h.failRoundRead = true; // the mint dies in its very first read
+    await expect(correction('task-throw', 'rev-1')).rejects.toBeTruthy();
+    h.failRoundRead = false;
+    // the failure's re-arm re-fires plain — it must carry the block instead
+    await dispatchAiReviewTurns('task-throw', 'submitted work');
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
+  });
+
+  it('a spent-retry drop removes the parked intent for good', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const first = dispatchAiReviewTurns('task-drop', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await correction('task-drop', 'rev-1');
+    release();
+    await first; // the winner carries it and consumes it
+    // re-park one (a fresh lock loss), then drop it as the spent-retry arm does
+    const release2 = gateMint();
+    const second = dispatchAiReviewTurns('task-drop', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(2));
+    await correction('task-drop', 'rev-1');
+    dropReviewMintIntent('task-drop', 'rev-1');
+    release2();
+    await second;
+    expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: false });
+    // and the drop left nothing behind for the NEXT mint either
+    await dispatchAiReviewTurns('task-drop', 'submitted work');
+    expect(h.dispatchCalls[2]?.verdictCorrection).toBe(false);
   });
 
   it('parks SYNCHRONOUSLY with the lock check — a gated round read cannot reorder it', async () => {
