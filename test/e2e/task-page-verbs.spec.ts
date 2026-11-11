@@ -6,9 +6,12 @@
 // runner settles it), the human working task shows Submit/Cancel (never
 // Dispatch), submit fires from the page, and cancel confirms inline.
 import { expect, test } from './helpers/cleanup';
-import { TasksPage } from './pages/tasks.page.ts';
+import { TasksPage, createTaskWithHeldScan } from './pages/tasks.page.ts';
 
-async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
+async function seedAiEmployee(
+  page: import('@playwright/test').Page,
+  tag: string,
+): Promise<{ id: string; name: string }> {
   const env = await page.request.post('/rpc/environments/create', {
     data: { json: { name: `E2E Env ${tag}`, host: '127.0.0.1', port: '22', username: 'e2e' } },
   });
@@ -28,7 +31,9 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
     },
   });
   expect(emp.status()).toBe(200);
-  return `E2E Bot ${tag}`;
+  const id = ((await emp.json()) as { json?: { id?: string } }).json?.id;
+  expect(id, 'employee create returns the user id').toBeTruthy();
+  return { id: id as string, name: `E2E Bot ${tag}` };
 }
 
 async function openTaskPage(page: import('@playwright/test').Page, tasks: TasksPage, title: string): Promise<void> {
@@ -40,14 +45,13 @@ async function openTaskPage(page: import('@playwright/test').Page, tasks: TasksP
 test('AI-assigned ready task: Dispatch now fires from the page in one click (#177)', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
-  const botName = await seedAiEmployee(page, tag);
+  const bot = await seedAiEmployee(page, tag);
   const taskTitle = `VBS AI ${tag}`;
 
-  await tasks.navigate('/tasks');
-  await tasks.openCreateModal();
-  await tasks.fillTaskForm({ title: taskTitle, assignee: botName });
-  await tasks.saveTask();
-  await expect(tasks.rowFor(taskTitle)).toBeVisible({ timeout: 15_000 });
+  // born-ineligible seeding (#391): a task created WITH the AI assignee is
+  // scanner-eligible at insert — the 5s tick claims it while the page settles and
+  // the dispatch verb unmounts under the click
+  await createTaskWithHeldScan(page, tasks, taskTitle, bot.id);
 
   await openTaskPage(page, tasks, taskTitle);
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
