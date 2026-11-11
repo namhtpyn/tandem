@@ -84,7 +84,7 @@ export async function rowTaskIdFromLink(link: Locator): Promise<string> {
   await expect(async () => {
     href = (await link.getAttribute('href')) ?? '';
     expect(href, 'row links to the task page').toMatch(taskLink);
-  }).toPass();
+  }).toPass({ timeout: 10_000 });
   const taskId = href.split('?')[0]!.split('/').pop() as string;
   expect(taskId, 'task id from the row link').toBeTruthy();
   return taskId;
@@ -103,14 +103,15 @@ export async function attachAssignee(page: Page, taskId: string, employeeId: str
 
 /** BORN-INELIGIBLE SEED (#297, #387, #391): hold the scan, attach the AI
  *  assignee through the RPC edge, then re-hold immediately. The attach is the
- *  write that makes a ready task scanner-eligible, so the hold has to be live
- *  across it; the re-hold is unconditional (the leaner of the two repairs — a
- *  read-then-repair only ever adds a statement on the same connection) and leaves
- *  a window of one fresh SQL connection + one statement (single-digit ms, well
- *  under the 5s tick). The window is SHRUNK, not closed: a claim that lands in it
- *  keeps dispatch_after and the assignee, which is why the read-back also asserts
- *  the task is still ready-category with no live run — the claim's own fingerprints.
- *  Whether an attach preserves dispatch_after stays unpinned (unspecced detail). */
+ *  write that makes a ready task scanner-eligible, so a hold has to be live across
+ *  it. The re-hold is unconditional and as tight as the RPC round-trip allows —
+ *  its own cost is one statement on a fresh connection (single-digit ms). The
+ *  read-back then asserts the END state (hold margin, assignee, AI kind, still
+ *  ready-category, no live run), which catches a claim that COMMITTED before the
+ *  read. A claim committing between that read and the spec's own click is not
+ *  detectable here — it is the window every spec has; in this codebase the attach
+ *  does not touch dispatch_after, so the first hold already spans it, and the
+ *  re-hold exists so the seed never DEPENDS on that unspecced detail. */
 export async function attachAssigneeHeld(page: Page, taskId: string, employeeId: string): Promise<void> {
   await holdDispatchScan(taskId);
   await attachAssignee(page, taskId, employeeId);
