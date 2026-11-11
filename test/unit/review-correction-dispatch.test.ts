@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   roundGate: null as Promise<void> | null,
   failNextDispatch: false,
   failRoundRead: false,
+  statuses: [{ id: 'st-review', category: 'in_review' }] as Array<{ id: string; category: string }>,
 }));
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -47,7 +48,7 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
   const resolve = (): unknown[] => {
     const c = (cols ?? {}) as Record<string, unknown>;
     // the IN-REVIEW MINT GATE's task-status read (#401)
-    if (isTaskRow && 'status' in c) return [{ status: 'st-review' }];
+    if (isTaskRow && 'status' in c) return [{ status: h.statuses[0]?.id }];
     if ('round' in c) {
       if (h.failRoundRead) throw new Error('round read exploded');
       return [{ round: h.round }];
@@ -93,7 +94,7 @@ vi.mock('../../server/db/index', async () => {
         },
         // the IN-REVIEW MINT GATE (#401) resolves the task's status category before
         // any dispatch; every case here mints on an in-review task
-        taskStatuses: { findMany: async () => [{ id: 'st-review', category: 'in_review' }] },
+        taskStatuses: { findMany: async () => h.statuses },
       },
     },
   };
@@ -122,6 +123,7 @@ beforeEach(() => {
   h.roundGate = null;
   h.failNextDispatch = false;
   h.failRoundRead = false;
+  h.statuses = [{ id: 'st-review', category: 'in_review' }];
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
@@ -292,6 +294,19 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     release();
     await plain;
     expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
+  });
+
+  it('parks the retry when the mint no-ops on the mint gate (a waiting-answer turn)', async () => {
+    // the reviewer asked a question mid-turn, then its turn ended verdict-less: the mint
+    // gate refuses (waiting_answer), and the answer's plain re-fire must still carry the block
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    h.statuses = [{ id: 'st-waiting', category: 'waiting_answer' }];
+    expect(await correction('task-mintgate', 'rev-1')).toBe(false);
+    expect(h.dispatchCalls).toHaveLength(0);
+    h.statuses = [{ id: 'st-review', category: 'in_review' }]; // the answer returned it
+    await dispatchAiReviewTurns('task-mintgate', 'submitted work');
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
   });
 
   it('a throw BEFORE the dispatch still parks the retry (any throw site)', async () => {

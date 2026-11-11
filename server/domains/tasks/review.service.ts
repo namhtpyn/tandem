@@ -1683,21 +1683,16 @@ export async function dispatchAiReviewTurns(
   resultBody?: string,
   opts?: DispatchOpts,
 ): Promise<boolean> {
-  if (reviewMintInFlight.has(taskId)) {
-    // a locked-out CORRECTION parks its intent (synchronously) for the in-flight mint to
-    // carry (#380)
-    parkReviewMintIntent(taskId, opts);
-    return false;
-  }
+  // PARK FIRST (#380): every correction caller records its retry before any await, so
+  // whichever guard no-ops this mint (the lock, the mint gate, a live run) or whichever
+  // read/dispatch throws, the retry stays on record for that reviewer's next mint — and a
+  // landed dispatch consumes it below. Parking after a guard would drop the retry exactly
+  // when the guard defers it.
+  parkReviewMintIntent(taskId, opts);
+  if (reviewMintInFlight.has(taskId)) return false;
   reviewMintInFlight.add(taskId);
   try {
     return await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
-  } catch (e) {
-    // EVERY throw site parks the correction intent (#380), not just the dispatch: a settle
-    // whose mint dies in a plan/read fails the settle, and the re-arm ladder re-fires a
-    // PLAIN turn — the retry would be burned without ever carrying the CORRECTION block
-    parkReviewMintIntent(taskId, opts);
-    throw e;
   } finally {
     reviewMintInFlight.delete(taskId);
   }
@@ -1839,9 +1834,6 @@ async function dispatchAiReviewTurnsUnlocked(
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      // the correction's OWN mint failing must not burn the retry either (#380): park its
-      // intent so the park restore's re-fire carries the CORRECTION block
-      parkReviewMintIntent(taskId, opts);
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn failed to dispatch: ${reason}`, {
         reviewTurnFailed: true,
         reviewerId: row.reviewerId,
