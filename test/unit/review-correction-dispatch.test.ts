@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   dispatchCalls: [] as Array<Record<string, unknown>>,
+  rows: [] as Array<Record<string, unknown>>,
+  runMarks: [] as Array<Record<string, unknown>>,
+  aiIds: [] as string[],
 }));
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -38,6 +41,9 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
     if ('round' in c) return [{ round: 1 }];
     if ('resultBody' in c) return [{ resultBody: 'submitted work' }];
     if ('id' in c) return [];
+    // the mint's settle-owned ordering read (#402 r5): reviewer → newest run mark
+    if ('employeeId' in c) return h.runMarks;
+    if (h.rows.length) return h.rows;
     return [{ reviewerId: 'rev-1', round: 1, status: 'PENDING', createdAt: new Date() }];
   };
   const ch: Chain = {
@@ -57,7 +63,7 @@ vi.mock('../../server/db/index', async () => {
     db: {
       select: (cols?: unknown) => ({ from: (table: unknown) => mkChain(cols, table === tasks) }),
       query: {
-        aiEmployees: { findMany: async () => [{ userId: 'rev-1' }] },
+        aiEmployees: { findMany: async () => (h.aiIds.length ? h.aiIds : ['rev-1']).map((userId) => ({ userId })) },
         // the IN-REVIEW MINT GATE (#401) resolves the task's status category before
         // any dispatch; every case here mints on an in-review task
         taskStatuses: { findMany: async () => [{ id: 'st-review', category: 'in_review' }] },
@@ -80,6 +86,9 @@ import { dispatchAiReviewTurns } from '../../server/domains/tasks/review.service
 
 beforeEach(() => {
   h.dispatchCalls = [];
+  h.rows = [];
+  h.runMarks = [];
+  h.aiIds = [];
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
@@ -108,5 +117,41 @@ describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
     await dispatchAiReviewTurns('task-1', 'submitted work');
     expect(h.dispatchCalls).toHaveLength(1);
     expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
+  });
+});
+
+describe('dispatchAiReviewTurns settle-owned ordering (#402 r5)', () => {
+  const minted = new Date('2026-11-11T00:00:00Z');
+  const row = (reviewerId: string, createdAt: Date) => ({ reviewerId, round: 1, status: 'PENDING', createdAt });
+
+  it('mints the reviewer who never had a turn before one whose newest run is DONE', async () => {
+    // A's turn reached DONE but its settle was lost — the settle-replay arm owns A. A mint
+    // that picked A first would open a later run and mask the replay, so B goes first.
+    h.rows = [row('rev-A', minted), row('rev-B', new Date(minted.getTime() + 1000))];
+    h.runMarks = [{ employeeId: 'rev-A', status: 'DONE', startedAt: new Date(minted.getTime() + 500) }];
+    h.aiIds = ['rev-A', 'rev-B'];
+    await dispatchAiReviewTurns('task-1', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(1);
+    expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-B');
+  });
+
+  it('falls back to the completed-turn reviewer when it is the only pending AI row', async () => {
+    // the ordering must never strand a round whose only remaining reviewer already had a
+    // turn (a parked verdict-less correction resumed by the owner, a removal re-queue)
+    h.rows = [row('rev-A', minted)];
+    h.runMarks = [{ employeeId: 'rev-A', status: 'DONE', startedAt: new Date(minted.getTime() + 500) }];
+    h.aiIds = ['rev-A'];
+    await dispatchAiReviewTurns('task-1', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(1);
+    expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-A');
+  });
+
+  it('a targeted mint ignores the ordering (the #397 sweep names its reviewer)', async () => {
+    h.rows = [row('rev-A', minted), row('rev-B', new Date(minted.getTime() + 1000))];
+    h.runMarks = [{ employeeId: 'rev-A', status: 'DONE', startedAt: new Date(minted.getTime() + 500) }];
+    h.aiIds = ['rev-A', 'rev-B'];
+    await dispatchAiReviewTurns('task-1', 'submitted work', { targetReviewerId: 'rev-A' });
+    expect(h.dispatchCalls).toHaveLength(1);
+    expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-A');
   });
 });

@@ -1111,7 +1111,11 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
         // DONE) belongs to the settle-replay arm — minting the NEXT reviewer's turn here
         // would mask the replay forever (the lazy mint after that turn's verdict opens a
         // later run for the crashed reviewer). The round stays sequential: replay first.
-        sql`not exists (select 1 from task_reviews r4 join task_runs tr4 on tr4.employee_id = r4.reviewer_id join task_messages tm4 on tm4.id = tr4.message_id and tm4.task_id = ${tasks.id} where r4.task_id = ${tasks.id} and r4.status = ${REVIEW_STATUS.PENDING} and r4.reviewer_id is not null and r4.round = (select max(r5.round) from task_reviews r5 where r5.task_id = ${tasks.id}) and tr4.status = ${RUN_STATUS.DONE} and tr4.started_at >= r4.created_at and not exists (select 1 from task_runs tr5 join task_messages tm5 on tm5.id = tr5.message_id where tm5.task_id = ${tasks.id} and tr5.employee_id = r4.reviewer_id and (tr5.started_at, tr5.id) > (tr4.started_at, tr4.id)))`,
+        // The predicate MIRRORS lostSettleScan exactly (live AI reviewer, reviewer not the
+        // assignee, current round, the reviewer's NEWEST run in the round is DONE): a shape
+        // the replay refuses must never be suppressed here, or the round wedges with no
+        // healer at all (#402 r5).
+        sql`not exists (select 1 from task_reviews r4 join ai_employees a4 on a4.user_id = r4.reviewer_id join task_runs tr4 on tr4.employee_id = r4.reviewer_id join task_messages tm4 on tm4.id = tr4.message_id and tm4.task_id = ${tasks.id} where r4.task_id = ${tasks.id} and r4.status = ${REVIEW_STATUS.PENDING} and r4.reviewer_id is not null and (${tasks.assigneeId} is null or r4.reviewer_id <> ${tasks.assigneeId}) and r4.round = (select max(r5.round) from task_reviews r5 where r5.task_id = ${tasks.id}) and tr4.status = ${RUN_STATUS.DONE} and tr4.started_at >= r4.created_at and not exists (select 1 from task_runs tr5 join task_messages tm5 on tm5.id = tr5.message_id where tm5.task_id = ${tasks.id} and tr5.employee_id = r4.reviewer_id and (tr5.started_at, tr5.id) > (tr4.started_at, tr4.id)))`,
       ),
     )
     .orderBy(taskReviews.createdAt)
@@ -1611,6 +1615,25 @@ export async function dispatchAiReviewTurns(
  *  target when it names one (#397 r2), and — for the verdict-less correction — only that
  *  reviewer's own row (#276 r5; row-order ties would otherwise hand the retry to a
  *  different first-turn reviewer). */
+type RunMark = { startedAt: number; status: string };
+/** reviewer → NEWEST run mark for the round starting at `roundStart` (one bounded read;
+ *  the mint's settle-owned ordering and nothing else) */
+async function newestRunsByReviewer(taskId: string, roundStart: Date): Promise<Map<string, RunMark>> {
+  const runRows = await db
+    .select({ employeeId: taskRuns.employeeId, status: taskRuns.status, startedAt: taskRuns.startedAt })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), gte(taskRuns.startedAt, roundStart)));
+  const marks = new Map<string, RunMark>();
+  for (const run of runRows) {
+    if (!run.employeeId) continue;
+    const startedAt = run.startedAt.getTime();
+    const prev = marks.get(run.employeeId);
+    if (!prev || startedAt > prev.startedAt) marks.set(run.employeeId, { startedAt, status: run.status });
+  }
+  return marks;
+}
+
 function reviewRowMintable(
   row: { reviewerId: string | null },
   aiIds: Set<string>,
@@ -1684,7 +1707,18 @@ async function dispatchAiReviewTurnsUnlocked(
   // the round's next pending AI reviewer must still get its turn (escalate to a human used
   // to fall through to the plain mint; targeting must not suppress it — #397 r6)
   const target = opts?.targetReviewerId && aiIds.has(opts.targetReviewerId) ? opts.targetReviewerId : null;
-  for (const row of rows) {
+  // SETTLE-OWNED ORDERING (#402 r5): a reviewer whose NEWEST run this round already
+  // reached DONE had its turn — the settle owns them (a landed settle resolves the row or
+  // mints the next turn; a LOST settle is replayed by the settle-replay arm). They go
+  // LAST so a mint can never open a later run that masks the replay; the fallback keeps
+  // every existing flow (a round whose only remaining reviewer already had a turn still
+  // gets it). Targeted/correction mints are unaffected (their row filter already pins one).
+  const roundStart = rows[0]?.createdAt;
+  const newestRun = roundStart ? await newestRunsByReviewer(taskId, roundStart) : new Map<string, RunMark>();
+  const settleOwned = (reviewerId: string | null) =>
+    reviewerId !== null && newestRun.get(reviewerId)?.status === RUN_STATUS.DONE;
+  const mintOrder = [...rows].sort((a, b) => Number(settleOwned(a.reviewerId)) - Number(settleOwned(b.reviewerId)));
+  for (const row of mintOrder) {
     // the `!row.reviewerId` half ALSO narrows the type for everything below (reviewBy, the
     // note, the park body) — the helper alone cannot narrow the caller's view
     if (!row.reviewerId || !reviewRowMintable(row, aiIds, target, opts?.verdictlessReviewerId)) continue;
