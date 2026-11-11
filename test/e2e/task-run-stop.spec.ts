@@ -5,21 +5,8 @@
 // task Doing; the drawer verb renders only while the run is live; a second
 // stop is an idempotent ok; cancel (the RUN LOCK's other half) lands cancelled
 // once the run is settled — the exact sequence #223 refused pre-stop.
-import { SQL } from 'bun';
-
 import { expect, test } from './helpers/cleanup';
-import { E2E_DATABASE_URL } from './helpers/env';
-import { TasksPage } from './pages/tasks.page.ts';
-
-/** hold the dispatcher scan off the fresh ready AI task: the tick would claim it
- *  mid-test (create → drawer → manual dispatch crosses the 5s scan) and the run
- *  settles Done before the spec's own click. The MANUAL verb ignores
- *  dispatch_after — only the scan respects it — so the spec's dispatch fires. */
-async function holdScan(taskId: string) {
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
-  await sql.close();
-}
+import { TasksPage, attachAssignee, holdDispatchScan, rowTaskId, rowTaskIdFromLink } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
   const env = await page.request.post('/rpc/environments/create', {
@@ -46,29 +33,6 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
   return { name: `E2E Bot ${tag}`, id: id as string };
 }
 
-async function rowTaskIdFromLink(link: ReturnType<import('@playwright/test').Locator['first']>): Promise<string> {
-  const href = await link.getAttribute('href');
-  expect(href, 'row links to the task page').toBeTruthy();
-  return (href as string).split('/').pop() as string;
-}
-
-async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> {
-  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
-  expect(href, 'row links to the task page').toBeTruthy();
-  return (href as string).split('/').pop() as string;
-}
-
-/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
- *  ineligible (no assignee), so the 5s scan can never claim it mid-test. The
- *  scan AND the note path respect dispatch_after; the manual dispatch verb
- *  ignores it — which is what these specs exercise */
-async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
-  const res = await page.request.post('/rpc/tasks/update', {
-    data: { json: { id: taskId, assigneeId: employeeId } },
-  });
-  expect(res.status()).toBe(200);
-}
-
 // MOBILE FIRST: the task-page stop fires at a phone viewport (390×844, the
 // info sheet); the drawer stop below runs at the desktop default.
 test.describe('task page stop at a phone viewport', () => {
@@ -90,7 +54,7 @@ test.describe('task page stop at a phone viewport', () => {
     const cardLink = page.getByRole('link', { name: taskTitle }).first();
     await expect(cardLink).toBeVisible({ timeout: 15_000 });
     // born ineligible: hold the scan, then attach the AI assignee
-    await holdScan(await rowTaskIdFromLink(cardLink));
+    await holdDispatchScan(await rowTaskIdFromLink(cardLink));
     await attachAssignee(page, await rowTaskIdFromLink(cardLink), bot.id);
     await cardLink.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
@@ -153,7 +117,7 @@ test('drawer stop: renders only while live, settles the run, then cancel complet
   await expect(row).toBeVisible({ timeout: 15_000 });
   const taskId = await rowTaskId(row);
   // born ineligible: hold the scan, then attach the AI assignee
-  await holdScan(taskId);
+  await holdDispatchScan(taskId);
   await attachAssignee(page, taskId, bot.id);
 
   const drawer = await tasks.openWorkflowDrawer(row);

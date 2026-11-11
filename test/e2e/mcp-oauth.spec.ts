@@ -23,7 +23,7 @@ import { SQL } from 'bun';
 import { expect, test as cleanupTest } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { waitForHydration } from './pages/base.page.ts';
-import { TasksPage } from './pages/tasks.page.ts';
+import { TasksPage, createTaskWithHeldScan } from './pages/tasks.page.ts';
 
 const test = cleanupTest.extend<{ mcpSweep: void }>({
   // auto fixture, teardown-ordered BEFORE the shared dbCleanup sweep (fixtures
@@ -406,22 +406,12 @@ test.describe('mcp oauth per binding', () => {
 
       // dispatch: the fake runner prints the plan the real runner would wire
       const taskTitle = `MCPO ${tag}`;
-      await tasks.navigate('/tasks');
-      await tasks.openCreateModal();
-      await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
-      await tasks.saveTask();
-      const row = tasks.rowFor(taskTitle);
-      await expect(row).toBeVisible({ timeout: 15_000 });
+      // born-ineligible seeding (#391): the auto-dispatch-on-create race this
+      // spec used to swallow in a try/catch is the seed's job, not the assertion's
+      const row = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
       const drawer = await tasks.openWorkflowDrawer(row);
-      const dispatch = drawer.getByTestId('drawer-verb-dispatch');
-      // auto-dispatch-on-create races this verb: when the task auto-fired the
-      // drawer shows the live run instead — either way the run completes
-      try {
-        await dispatch.click({ timeout: 20_000, force: true });
-        await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });
-      } catch {
-        /* already dispatched — the run is streaming */
-      }
+      await drawer.getByTestId('drawer-verb-dispatch').click({ timeout: 20_000 });
+      await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });
       await expect(drawer.getByText(/Run completed/i)).toBeVisible({ timeout: 45_000 });
 
       // run output names the oauth-bound server (SPEC fake-runner parity) —

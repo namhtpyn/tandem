@@ -15,7 +15,7 @@ import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
-import { TasksPage } from './pages/tasks.page.ts';
+import { TasksPage, attachAssignee, holdDispatchScan, rowTaskId } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(
   page: import('@playwright/test').Page,
@@ -43,23 +43,6 @@ async function seedAiEmployee(
   return { name: `E2E Bot ${tag}`, id: id as string };
 }
 
-async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> {
-  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
-  expect(href, 'row links to the task page').toBeTruthy();
-  return (href as string).split('/').pop() as string;
-}
-
-/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
- *  ineligible (no assignee), so the 5s scan can never claim it mid-test. The
- *  scan AND the note path respect dispatch_after; the manual dispatch verb
- *  ignores it — which is what these specs exercise */
-async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
-  const res = await page.request.post('/rpc/tasks/update', {
-    data: { json: { id: taskId, assigneeId: employeeId } },
-  });
-  expect(res.status()).toBe(200);
-}
-
 async function seedRunningRun(taskId: string) {
   // one message per run turn (the thread's message→run relation is 1:1); ids are
   // explicit — schema defaults are app-side (drizzle), not SQL DEFAULTs
@@ -68,14 +51,6 @@ async function seedRunningRun(taskId: string) {
   await sql`insert into task_messages (id, task_id, body, created_at) values (${msgId}, ${taskId}, 'run-lock probe turn', now())`;
   await sql`insert into task_runs (id, message_id, status, output, started_at)
     values (${crypto.randomUUID()}, ${msgId}, 'RUNNING', '', now())`;
-  await sql.close();
-}
-
-/** hold the dispatcher scan off a fresh ready AI task (the 5s tick would claim
- *  it mid-test; the manual verb ignores dispatch_after — only the scan does) */
-async function holdScan(taskId: string) {
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
   await sql.close();
 }
 
@@ -188,7 +163,7 @@ test('composer hint: blocked AI task promises dispatch on both surfaces; human t
   // born ineligible: the AI task attaches its assignee AFTER the hold is set,
   // so the 5s scan can never claim it while the moves happen
   const ai = await createRow(page, tasks, aiTitle);
-  await holdScan(ai.taskId);
+  await holdDispatchScan(ai.taskId);
   await attachAssignee(page, ai.taskId, bot.id);
   await expect(ai.row).toContainText(bot.name, { timeout: 10_000 });
   // leave ready (the old hint's only dispatch state) — blocked still dispatches

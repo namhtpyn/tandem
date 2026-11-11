@@ -1,6 +1,119 @@
-import { expect, type Locator } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { SQL } from 'bun';
 
+import { E2E_DATABASE_URL } from '../helpers/env.ts';
 import { BasePage } from './base.page.ts';
+
+/** hold the dispatcher scan off a fresh ready AI task: the 5s tick would claim
+ *  it mid-test (create → page/drawer → manual dispatch crosses the scan) and the
+ *  run settles before the spec's own click. The MANUAL verb ignores
+ *  dispatch_after — only the scan (and the note path) respect it. A silent
+ *  0-row UPDATE would let the scan in, so the update proves its own match (#387). */
+export async function holdDispatchScan(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const held =
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+    expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** read-back (fresh statement, real clock): the hold stands AND the seeded
+ *  employee is the assignee. Both are seed preconditions — if either silently
+ *  no-ops the scan-claim window returns, so fail loudly at the seed. */
+export async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`
+      select (dispatch_after - now()) > interval '10 minutes' as held,
+             assignee_id = ${employeeId} as attached
+      from tasks where id = ${taskId}`;
+    expect(rows.length, 'task row exists for the seed read-back').toBe(1);
+    expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
+    expect(rows[0]!.attached, 'seeded employee is the assignee').toBe(true);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** the task id a list row / title link points at; strips any list-scope query
+ *  the link carries (a leftover `?scope=` silently misses every SQL key below) */
+export async function rowTaskIdFromLink(link: Locator): Promise<string> {
+  const href = await link.getAttribute('href');
+  expect(href, 'row links to the task page').toBeTruthy();
+  const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
+  expect(taskId, 'task id from the row link').toBeTruthy();
+  return taskId;
+}
+
+export async function rowTaskId(row: Locator): Promise<string> {
+  return rowTaskIdFromLink(row.locator('a[href^="/tasks/"]').first());
+}
+
+/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test. */
+export async function attachAssignee(page: Page, taskId: string, employeeId: string): Promise<void> {
+  const res = await page.request.post('/rpc/tasks/update', { data: { json: { id: taskId, assigneeId: employeeId } } });
+  expect(res.status(), 'assignee attach accepted').toBe(200);
+}
+
+/** BORN-INELIGIBLE SEEDING (#297, #387, #391): a task created WITH the AI assignee
+ *  is scanner-eligible at insert, so the 5s dispatch tick can claim it while the
+ *  page/drawer settles — the dispatch verb unmounts mid-click and Playwright waits
+ *  60s on a button that never returns. Create it unassigned, hold dispatch_after,
+ *  then attach the assignee through the RPC edge: the scan AND the note path
+ *  respect the hold; only the manual Dispatch-now verb ignores it, which is the
+ *  verb these specs drive. Returns the created list row. */
+export async function createTaskWithHeldScan(
+  page: Page,
+  tasks: TasksPage,
+  title: string,
+  employeeId: string,
+): Promise<Locator> {
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title });
+  await tasks.saveTask();
+  const row = tasks.rowFor(title);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const taskId = await rowTaskId(row);
+  await holdDispatchScan(taskId);
+  await attachAssignee(page, taskId, employeeId);
+  // re-hold after the attach (the write that makes the task eligible) instead of
+  // pinning "attach preserves the backoff": the read-back then proves the seed,
+  // not an unspecced product invariant
+  await holdDispatchScan(taskId);
+  await expectDispatchHold(taskId, employeeId);
+  return row;
+}
+
+/** the committed EVENT of a round open: task_reviews rows, never a transient
+ *  status badge (the server can move a task through `in review` and out again
+ *  before the client's first post-verb refetch — #375, #416) */
+export async function expectRoundOpened(
+  taskId: string,
+  opts: { round?: number; timeout?: number } = {},
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+        try {
+          const rows =
+            opts.round === undefined
+              ? await sql`select count(*)::int as n from task_reviews where task_id = ${taskId}`
+              : await sql`select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${opts.round}`;
+          return Number(rows[0]?.n ?? 0);
+        } finally {
+          await sql.close();
+        }
+      },
+      { timeout: opts.timeout ?? 15_000, message: 'a review round opened for the task (task_reviews row)' },
+    )
+    .toBeGreaterThan(0);
+}
 
 // Tasks surface: the create/edit modal and the workflow drawer used by the
 // tasks spec (small task-* specs keep inline locators on purpose).
