@@ -80,7 +80,14 @@ async function expectRoundOpened(taskId: string, baseline: number): Promise<void
 async function backdateReviewRun(runId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
-    await sql`update task_runs set started_at = now() - interval '2 hours' where id = ${runId}`;
+    const rows = await sql`
+      update task_runs set started_at = now() - interval '2 hours'
+      where id = ${runId} and status = 'RUNNING'
+      returning id
+    `;
+    // the seeded turn must still be live at the backdate: a settled row would mean the
+    // submit's own dispatch raced the seed and the park this spec waits for cannot land
+    expect(rows.length).toBe(1);
   } finally {
     await sql.close();
   }
@@ -132,8 +139,8 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
       where m.id = ${messageId} and u.name = ${botName}
       returning id
     `;
+    expect(run.length).toBe(1);
     injectedRunId = run[0]!.id as string;
-    expect(injectedRunId).toBeTruthy();
   } finally {
     await sql.close();
   }
@@ -144,7 +151,11 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
   const roundsBefore = await pendingReviewRows(injectedTaskId);
+  const submitted = page.waitForResponse((r) => r.url().includes('/rpc/tasks/submit'));
   await verbs.getByTestId('task-verb-submit').click();
+  // the handler awaits its post-commit review dispatch before responding: waiting for the
+  // response means the mint attempt is over, so the backdate cannot un-suppress a mint
+  await submitted;
   await expectRoundOpened(injectedTaskId, roundsBefore);
   await backdateReviewRun(injectedRunId);
 
@@ -230,8 +241,8 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
       where m.id = ${inserted[0]!.id} and u.name = ${botName}
       returning id
     `;
+    expect(run.length).toBe(1);
     runId = run[0]!.id as string;
-    expect(runId).toBeTruthy();
   } finally {
     await sql.close();
   }
@@ -241,7 +252,9 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
   const roundsBefore = await pendingReviewRows(taskId);
+  const submitted = page.waitForResponse((r) => r.url().includes('/rpc/tasks/submit'));
   await verbs.getByTestId('task-verb-submit').click();
+  await submitted;
   await expectRoundOpened(taskId, roundsBefore);
   await backdateReviewRun(runId);
 
