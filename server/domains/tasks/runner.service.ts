@@ -977,6 +977,11 @@ export type DispatchOpts = {
    *  ANOTHER reviewer's verdict sets this; the recovery callers (owner unblock-resume,
    *  removal/heal re-fires) keep the fallback so a parked round can never strand. */
   skipSettled?: boolean;
+  /** the round the caller's settle was DISPATCHED for (#380): a verdict-less correction
+   *  that loses the mint lock parks its intent against THIS round, never against whatever
+   *  `currentRound` would read later (a new round's first-turn brief must not carry the
+   *  block, and the park must land synchronously with the lock check). */
+  round?: number;
 };
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
@@ -1381,6 +1386,9 @@ export async function settleReviewVerdict(
       await dispatchAiReviewTurns(taskId, undefined, {
         verdictCorrection: true,
         verdictlessReviewerId: reviewerId,
+        // the SETTLE's round (#380): the intent must bind to the round this run was
+        // dispatched for, not to whatever the round pointer reads when the mint runs
+        round: binding.round,
       });
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;

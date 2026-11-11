@@ -1589,45 +1589,65 @@ async function roundResultBody(taskId: string) {
  *  the winner mints the next turn and the next verdict mints the one after. */
 const reviewMintInFlight = new Set<string>();
 
-/** a verdict-less CORRECTION intent parked while another mint for the same task holds
- *  the lock (#380). The in-flight mint CARRIES it when it is about to dispatch the SAME
- *  reviewer's pending row in the round the intent was bound to — without the carry, that
- *  plain turn burns the one bounded retry (#276) and the round parks decision-class with
- *  no corrected brief ever sent. An unconsumed intent stays parked for that reviewer's
- *  next mint in its round (the stalled-review sweep, the next verdict's lazy mint) and is
- *  dropped as soon as the round moves on: a CORRECTION block may never ride a different
- *  reviewer's turn or a new round's first-turn brief. */
+/** a verdict-less CORRECTION intent parked when another mint for the same task holds the
+ *  lock (#380). The in-flight mint CARRIES it when its dispatch decision is for the SAME
+ *  reviewer's current-round pending row — without the carry that plain turn burns the one
+ *  bounded retry (#276) and the round parks decision-class with no corrected brief ever
+ *  sent. The park is SYNCHRONOUS with the lock check and bound to the round the caller's
+ *  settle was dispatched for (DispatchOpts.round), so no await can reorder it behind the
+ *  winner's decision and no round bump can re-bind it. An intent nobody consumed waits for
+ *  that reviewer's next mint (a recovery caller — the lazy mint's settle-owned ordering
+ *  defers it there), never rides another reviewer's turn, and is pruned at the task's next
+ *  mint in a newer round, so a CORRECTION block can never land on a new round's first-turn
+ *  brief. Keyed per (task, reviewer): two parked corrections never overwrite each other. */
 type ReviewMintIntent = { reviewerId: string; round: number };
 const reviewMintIntents = new Map<string, ReviewMintIntent>();
+const reviewMintIntentKey = (taskId: string, reviewerId: string) => `${taskId}:${reviewerId}`;
 
 /** queue the correction this caller would have dispatched had it won the lock (#380).
  *  Plain callers queue nothing: the winner IS a plain mint, and a winner that no-ops is
- *  re-fired by the next trigger (the sweep or the next verdict's lazy mint). */
-async function parkReviewMintIntent(taskId: string, opts?: DispatchOpts) {
+ *  re-fired by the next trigger. The ROUND must come from the caller's settle — reading it
+ *  here would both reorder the park behind the winner's dispatch decision and bind it to a
+ *  round the correction does not belong to (a settle for round N racing a round N+1
+ *  submit), which is how a CORRECTION block would reach a new round's first turn. */
+function parkReviewMintIntent(taskId: string, opts?: DispatchOpts) {
   if (opts?.verdictCorrection !== true || !opts.verdictlessReviewerId) return;
-  const round = await currentRound(taskId);
-  if (round === 0) return;
-  reviewMintIntents.set(taskId, { reviewerId: opts.verdictlessReviewerId, round });
+  if (typeof opts.round !== 'number' || opts.round <= 0) return;
+  reviewMintIntents.set(reviewMintIntentKey(taskId, opts.verdictlessReviewerId), {
+    reviewerId: opts.verdictlessReviewerId,
+    round: opts.round,
+  });
 }
 
-/** does a parked correction belong to THIS dispatch? A round mismatch means the intent
- *  outlived its round (the block must never ride a new round's first-turn brief) and is
- *  dropped; a reviewer mismatch leaves it parked for its own reviewer's next mint. */
+/** does a parked correction belong to THIS dispatch? Round and reviewer are both in the
+ *  key; a round mismatch means the intent outlived its round (the block must never ride a
+ *  new round's first-turn brief) and is dropped. */
 function reviewMintIntentFor(taskId: string, round: number, reviewerId: string): boolean {
-  const intent = reviewMintIntents.get(taskId);
+  const key = reviewMintIntentKey(taskId, reviewerId);
+  const intent = reviewMintIntents.get(key);
   if (!intent) return false;
   if (intent.round !== round) {
-    reviewMintIntents.delete(taskId);
+    reviewMintIntents.delete(key);
     return false;
   }
-  return intent.reviewerId === reviewerId;
+  return true;
+}
+
+/** drop every intent of this task that outlived its round — a newer round's mint may never
+ *  evaluate the stale reviewer's row, so the drop cannot wait for that row */
+function pruneReviewMintIntents(taskId: string, round: number) {
+  const prefix = `${taskId}:`;
+  for (const [key, intent] of reviewMintIntents) {
+    if (key.startsWith(prefix) && intent.round !== round) reviewMintIntents.delete(key);
+  }
 }
 
 /** consumed only AFTER the dispatch landed: a mint that throws parks instead, and the
  *  parked intent must still apply when the park restore re-fires the turn. */
 function consumeReviewMintIntent(taskId: string, round: number, reviewerId: string) {
-  const intent = reviewMintIntents.get(taskId);
-  if (intent && intent.round === round && intent.reviewerId === reviewerId) reviewMintIntents.delete(taskId);
+  const key = reviewMintIntentKey(taskId, reviewerId);
+  const intent = reviewMintIntents.get(key);
+  if (intent && intent.round === round) reviewMintIntents.delete(key);
 }
 
 /** the dispatch's correction flag: the caller's own #276 retry, or the parked intent this
@@ -1658,8 +1678,9 @@ export async function dispatchAiReviewTurns(
   opts?: DispatchOpts,
 ): Promise<boolean> {
   if (reviewMintInFlight.has(taskId)) {
-    // a locked-out CORRECTION parks its intent for the in-flight mint to carry (#380)
-    await parkReviewMintIntent(taskId, opts);
+    // a locked-out CORRECTION parks its intent (synchronously) for the in-flight mint to
+    // carry (#380)
+    parkReviewMintIntent(taskId, opts);
     return false;
   }
   reviewMintInFlight.add(taskId);
@@ -1728,6 +1749,8 @@ async function dispatchAiReviewTurnsUnlocked(
 ): Promise<boolean> {
   const round = await currentRound(taskId);
   if (round === 0) return false;
+  // a stale correction intent of a round that already closed can never ride this round
+  pruneReviewMintIntents(taskId, round);
   // REVIEW-TURN MINT GATE (#401): a turn is owed only while the review flow still owns
   // the task (reviewTurnAllowed: in review, or a gating block from an in-review origin —
   // a park and an owner move own the task instead). Review turns take no dispatch claim,
@@ -1802,6 +1825,9 @@ async function dispatchAiReviewTurnsUnlocked(
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
+      // the correction's OWN mint failing must not burn the retry either (#380): park its
+      // intent so the park restore's re-fire carries the CORRECTION block
+      parkReviewMintIntent(taskId, opts);
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn failed to dispatch: ${reason}`, {
         reviewTurnFailed: true,
         reviewerId: row.reviewerId,
