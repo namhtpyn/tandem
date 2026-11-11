@@ -20,22 +20,40 @@ export async function holdDispatchScan(taskId: string): Promise<void> {
   }
 }
 
-/** read-back (fresh statement, real clock): the hold stands AND the seeded
- *  employee is the assignee. Both are seed preconditions — if either silently
- *  no-ops the scan-claim window returns, so fail loudly at the seed. */
-export async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
+/** the seed's read state (fresh statement, real clock): the hold stands, the
+ *  employee is the assignee, and that assignee is an AI employee — the scanner's
+ *  eligibility is the ai_employees row, and a human user id attaches just as
+ *  happily (200) while leaving the task permanently ineligible. */
+export async function dispatchHoldState(
+  taskId: string,
+  employeeId: string,
+): Promise<{ held: boolean; attached: boolean; aiEmployee: boolean } | null> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const rows = await sql`
       select (dispatch_after - now()) > interval '10 minutes' as held,
-             assignee_id = ${employeeId} as attached
+             assignee_id = ${employeeId} as attached,
+             exists (select 1 from ai_employees where user_id = ${employeeId}) as ai_employee
       from tasks where id = ${taskId}`;
-    expect(rows.length, 'task row exists for the seed read-back').toBe(1);
-    expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
-    expect(rows[0]!.attached, 'seeded employee is the assignee').toBe(true);
+    if (rows.length === 0) return null;
+    return {
+      held: rows[0]!.held === true,
+      attached: rows[0]!.attached === true,
+      aiEmployee: rows[0]!.ai_employee === true,
+    };
   } finally {
     await sql.close();
   }
+}
+
+/** read-back: every seed precondition holds — a silent no-op here re-opens the
+ *  5s-scan claim window (hold) or leaves the verb unmountable (assignee kind) */
+export async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
+  const state = await dispatchHoldState(taskId, employeeId);
+  expect(state, 'task row exists for the seed read-back').not.toBeNull();
+  expect(state!.held, 'dispatch_after hold has a real future margin').toBe(true);
+  expect(state!.attached, 'seeded employee is the assignee').toBe(true);
+  expect(state!.aiEmployee, 'seeded assignee is an AI employee (scanner-eligible kind)').toBe(true);
 }
 
 /** the task id a list row / title link points at; asserts the link SHAPE first
@@ -44,7 +62,9 @@ export async function expectDispatchHold(taskId: string, employeeId: string): Pr
  *  link may carry (a leftover `?scope=` silently misses every SQL key below) */
 export async function rowTaskIdFromLink(link: Locator): Promise<string> {
   const href = await link.getAttribute('href');
-  expect(href, 'row links to the task page').toMatch(/^\/tasks\/[0-9a-z-]+(?:\?.*)?$/i);
+  expect(href, 'row links to the task page').toMatch(
+    /^\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\?.*)?$/i,
+  );
   const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
   expect(taskId, 'task id from the row link').toBeTruthy();
   return taskId;
@@ -54,13 +74,27 @@ export async function rowTaskId(row: Locator): Promise<string> {
   return rowTaskIdFromLink(row.locator('a[href^="/tasks/"]').first());
 }
 
-/** attach the AI assignee. The ATTACH is the write that makes a ready task
- *  scanner-eligible, so the caller must have set the dispatch_after hold FIRST
- *  (`holdDispatchScan`) — the ineligibility is the hold's property, not this
- *  helper's (a call without a live hold re-opens the 5s-scan race). */
+/** attach an assignee through the RPC edge (no hold handling — a caller that
+ *  needs the born-ineligible seed wants `attachAssigneeHeld`) */
 export async function attachAssignee(page: Page, taskId: string, employeeId: string): Promise<void> {
   const res = await page.request.post('/rpc/tasks/update', { data: { json: { id: taskId, assigneeId: employeeId } } });
   expect(res.status(), 'assignee attach accepted').toBe(200);
+}
+
+/** BORN-INELIGIBLE SEED (#297, #387, #391): hold the scan, attach the AI
+ *  assignee through the RPC edge, then VERIFY the hold survived the attach. The
+ *  attach is the write that makes a ready task scanner-eligible, so the hold has
+ *  to be live across it — and the proof is the read-back, not the (unspecced)
+ *  assumption that an attach preserves dispatch_after. A reset is repaired with
+ *  one re-hold; the RTT gap that repair leaves is the sub-second window the #387
+ *  sweep already accepted, far inside the 5s scan cadence. */
+export async function attachAssigneeHeld(page: Page, taskId: string, employeeId: string): Promise<void> {
+  await holdDispatchScan(taskId);
+  await attachAssignee(page, taskId, employeeId);
+  const afterAttach = await dispatchHoldState(taskId, employeeId);
+  expect(afterAttach, 'task row exists after the attach').not.toBeNull();
+  if (!afterAttach!.held) await holdDispatchScan(taskId);
+  await expectDispatchHold(taskId, employeeId);
 }
 
 /** BORN-INELIGIBLE SEEDING (#297, #387, #391): a task created WITH the AI assignee
@@ -83,13 +117,7 @@ export async function createTaskWithHeldScan(
   const row = tasks.rowFor(title);
   await expect(row).toBeVisible({ timeout: 15_000 });
   const taskId = await rowTaskId(row);
-  await holdDispatchScan(taskId);
-  await attachAssignee(page, taskId, employeeId);
-  // re-hold after the attach (the write that makes the task eligible) instead of
-  // pinning "attach preserves the backoff": the read-back then proves the seed,
-  // not an unspecced product invariant
-  await holdDispatchScan(taskId);
-  await expectDispatchHold(taskId, employeeId);
+  await attachAssigneeHeld(page, taskId, employeeId);
   return row;
 }
 

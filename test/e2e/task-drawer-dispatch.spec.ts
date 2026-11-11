@@ -6,7 +6,7 @@
 // absent on in-review/cancelled tasks, gone the moment a dispatch claims the
 // task, and still gone after the run settles.
 import { expect, test } from './helpers/cleanup';
-import { TasksPage, attachAssignee, holdDispatchScan, rowTaskId } from './pages/tasks.page.ts';
+import { TasksPage, attachAssigneeHeld, rowTaskId } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(
   page: import('@playwright/test').Page,
@@ -48,8 +48,7 @@ test('drawer dispatch: ready AI task fires in one click; the verb dies with the 
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
   const taskId = await rowTaskId(row);
-  await holdDispatchScan(taskId);
-  await attachAssignee(page, taskId, bot.id);
+  await attachAssigneeHeld(page, taskId, bot.id);
   await expect(row).toContainText(bot.name, { timeout: 10_000 });
 
   const drawer = await tasks.openWorkflowDrawer(row);
@@ -82,8 +81,7 @@ test('drawer dispatch: non-ready AI task renders no verb the server would refuse
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
   const taskId = await rowTaskId(row);
-  await holdDispatchScan(taskId);
-  await attachAssignee(page, taskId, bot.id);
+  await attachAssigneeHeld(page, taskId, bot.id);
   // let the create refetch wave settle before driving the row's status select —
   // a mid-settle click can submit a select value before statuses resolve
   await expect(row).toContainText(bot.name, { timeout: 10_000 });

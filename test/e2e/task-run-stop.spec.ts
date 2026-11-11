@@ -6,7 +6,7 @@
 // stop is an idempotent ok; cancel (the RUN LOCK's other half) lands cancelled
 // once the run is settled — the exact sequence #223 refused pre-stop.
 import { expect, test } from './helpers/cleanup';
-import { TasksPage, attachAssignee, holdDispatchScan, rowTaskId, rowTaskIdFromLink } from './pages/tasks.page.ts';
+import { TasksPage, attachAssigneeHeld, rowTaskId, rowTaskIdFromLink } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
   const env = await page.request.post('/rpc/environments/create', {
@@ -54,8 +54,7 @@ test.describe('task page stop at a phone viewport', () => {
     const cardLink = page.getByRole('link', { name: taskTitle }).first();
     await expect(cardLink).toBeVisible({ timeout: 15_000 });
     // born ineligible: hold the scan, then attach the AI assignee
-    await holdDispatchScan(await rowTaskIdFromLink(cardLink));
-    await attachAssignee(page, await rowTaskIdFromLink(cardLink), bot.id);
+    await attachAssigneeHeld(page, await rowTaskIdFromLink(cardLink), bot.id);
     await cardLink.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
@@ -117,8 +116,7 @@ test('drawer stop: renders only while live, settles the run, then cancel complet
   await expect(row).toBeVisible({ timeout: 15_000 });
   const taskId = await rowTaskId(row);
   // born ineligible: hold the scan, then attach the AI assignee
-  await holdDispatchScan(taskId);
-  await attachAssignee(page, taskId, bot.id);
+  await attachAssigneeHeld(page, taskId, bot.id);
 
   const drawer = await tasks.openWorkflowDrawer(row);
   await expect(drawer.getByTestId('drawer-verb-dispatch')).toBeVisible({ timeout: 10_000 });

@@ -9,7 +9,7 @@ import { SQL } from 'bun';
 
 import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
-import { TasksPage, attachAssignee, holdDispatchScan } from './pages/tasks.page.ts';
+import { TasksPage, attachAssigneeHeld, rowTaskId } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<{ id: string }> {
   const env = await page.request.post('/rpc/environments/create', {
@@ -64,16 +64,10 @@ test('a settled DONE run on a channel-mapped task lands its reply in channel_out
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
-  const taskId = await row
-    .locator('a[href^="/tasks/"]')
-    .first()
-    .getAttribute('href')
-    .then((href) => (href ?? '').split('/').pop() as string);
-  expect(taskId).toBeTruthy();
+  const taskId = await rowTaskId(row);
 
   // born ineligible: hold the scan, attach the AI assignee, seed the mapping
-  await holdDispatchScan(taskId);
-  await attachAssignee(page, taskId, bot.id);
+  await attachAssigneeHeld(page, taskId, bot.id);
   await seedChannelMapping(taskId, tag);
 
   // manual dispatch → fake runner settles DONE → the settle hook relays

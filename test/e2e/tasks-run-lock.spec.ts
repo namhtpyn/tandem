@@ -15,7 +15,7 @@ import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
-import { TasksPage, attachAssignee, holdDispatchScan } from './pages/tasks.page.ts';
+import { TasksPage, attachAssigneeHeld } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(
   page: import('@playwright/test').Page,
@@ -163,8 +163,7 @@ test('composer hint: blocked AI task promises dispatch on both surfaces; human t
   // born ineligible: the AI task attaches its assignee AFTER the hold is set,
   // so the 5s scan can never claim it while the moves happen
   const ai = await createRow(page, tasks, aiTitle);
-  await holdDispatchScan(ai.taskId);
-  await attachAssignee(page, ai.taskId, bot.id);
+  await attachAssigneeHeld(page, ai.taskId, bot.id);
   await expect(ai.row).toContainText(bot.name, { timeout: 10_000 });
   // leave ready (the old hint's only dispatch state) — blocked still dispatches
   await page.locator('tbody').getByLabel(`Status for ${aiTitle}`).click();
