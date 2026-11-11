@@ -1,3 +1,16 @@
+## [2.78.18](https://github.com/namhtpyn/tandem/compare/v2.78.17...v2.78.18) (2026-11-11)
+
+
+### Bug Fixes
+
+* [#402](https://github.com/namhtpyn/tandem/issues/402) — replay a review turn's lost settle from the run row; bounded sweep + probe arm ([cb7cccc](https://github.com/namhtpyn/tandem/commit/cb7cccc5039d8151801b4af606ba0c0657bf2961))
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r1 — a replay is a quiet no-op on a lost race, never a park; keep the bound; replay fan-out ([7f33076](https://github.com/namhtpyn/tandem/commit/7f3307681fe7caa6e94fe6354ef58c0cd0802bf9))
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r2 — only a business refusal is the replay's no-op; infra throws keep the ladder ([354ca39](https://github.com/namhtpyn/tandem/commit/354ca39079e9533a86f1776c6b5c007618f495bb))
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r3 — the replay re-emits TASKS too; the backoff arm's comment states the truth ([4c68d98](https://github.com/namhtpyn/tandem/commit/4c68d9801e100fd20adf7bc447c6e78469d662b3))
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r4 — replay before the stalled sweep; work-run discriminator; prune keeps the wedge ([d0e74b5](https://github.com/namhtpyn/tandem/commit/d0e74b5ec8c52d4819076de1eda898dc8e70736d)), closes [#397](https://github.com/namhtpyn/tandem/issues/397) [#397](https://github.com/namhtpyn/tandem/issues/397)
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r5 — the guard mirrors the scan, the mint defers a settled reviewer, ordering pinned ([462dea1](https://github.com/namhtpyn/tandem/commit/462dea1df7df1c34d682ed100f56030c335639d0)), closes [#397](https://github.com/namhtpyn/tandem/issues/397)
+* [#402](https://github.com/namhtpyn/tandem/issues/402) r6 — the lazy mint skips a settle-owned reviewer; guard predicates pinned; SPEC states the residuals ([325cab1](https://github.com/namhtpyn/tandem/commit/325cab1eb17becf154238fd3a90367f001bb228e)), closes [#397](https://github.com/namhtpyn/tandem/issues/397)
+
 ## [2.78.17](https://github.com/namhtpyn/tandem/compare/v2.78.16...v2.78.17) (2026-11-11)
 
 
