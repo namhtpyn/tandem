@@ -27,19 +27,29 @@ export async function holdDispatchScan(taskId: string): Promise<void> {
 async function dispatchHoldState(
   taskId: string,
   employeeId: string,
-): Promise<{ held: boolean; attached: boolean; aiEmployee: boolean } | null> {
+): Promise<{ held: boolean; attached: boolean; aiEmployee: boolean; ready: boolean; liveRun: boolean } | null> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const rows = await sql`
-      select (dispatch_after - now()) > interval '10 minutes' as held,
-             assignee_id = ${employeeId} as attached,
-             exists (select 1 from ai_employees where user_id = ${employeeId}) as ai_employee
-      from tasks where id = ${taskId}`;
+      select (t.dispatch_after - now()) > interval '10 minutes' as held,
+             t.assignee_id = ${employeeId} as attached,
+             exists (select 1 from ai_employees where user_id = ${employeeId}) as ai_employee,
+             st.category = 'ready' as ready,
+             exists (
+               select 1 from task_runs r
+               join task_messages m on m.id = r.message_id
+               where m.task_id = t.id and r.status = 'RUNNING'
+             ) as live_run
+      from tasks t
+      join task_statuses st on st.id = t.status
+      where t.id = ${taskId}`;
     if (rows.length === 0) return null;
     return {
       held: rows[0]!.held === true,
       attached: rows[0]!.attached === true,
       aiEmployee: rows[0]!.ai_employee === true,
+      ready: rows[0]!.ready === true,
+      liveRun: rows[0]!.live_run === true,
     };
   } finally {
     await sql.close();
@@ -47,13 +57,18 @@ async function dispatchHoldState(
 }
 
 /** read-back: every seed precondition holds — a silent no-op here re-opens the
- *  5s-scan claim window (hold) or leaves the verb unmountable (assignee kind) */
+ *  5s-scan claim window (hold), leaves the verb unmountable (assignee kind), or
+ *  means the scan ALREADY claimed the task in the seed's own window (status left
+ *  ready-category / a RUNNING run exists), which nothing else in the spec would
+ *  attribute to the seed */
 export async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
   const state = await dispatchHoldState(taskId, employeeId);
   expect(state, 'task row exists for the seed read-back').not.toBeNull();
   expect(state!.held, 'dispatch_after hold has a real future margin').toBe(true);
   expect(state!.attached, 'seeded employee is the assignee').toBe(true);
   expect(state!.aiEmployee, 'seeded assignee is an AI employee (scanner-eligible kind)').toBe(true);
+  expect(state!.ready, 'task is still in a ready-category status (the scan has not claimed it)').toBe(true);
+  expect(state!.liveRun, 'no live run exists for the task (the scan has not claimed it)').toBe(false);
 }
 
 /** the task id a list row / title link points at; asserts the link SHAPE first
@@ -61,11 +76,15 @@ export async function expectDispatchHold(taskId: string, employeeId: string): Pr
  *  parse site instead of as a 0-row seed, then strips the list-scope query the
  *  link may carry (a leftover `?scope=` silently misses every SQL key below) */
 export async function rowTaskIdFromLink(link: Locator): Promise<string> {
-  // the ATTRIBUTE assert retries (auto-waiting): a row re-rendering in the create
-  // refetch wave must not fail the seed as a shape error
+  // read AND assert inside the same retry: a row re-rendering in the create refetch
+  // wave must not fail the seed as a shape error, and the value parsed must be the
+  // value asserted (a separate re-resolution could hand back a different href)
   const taskLink = /^\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\?.*)?$/i;
-  await expect(link, 'row links to the task page').toHaveAttribute('href', taskLink);
-  const href = (await link.getAttribute('href')) as string;
+  let href = '';
+  await expect(async () => {
+    href = (await link.getAttribute('href')) ?? '';
+    expect(href, 'row links to the task page').toMatch(taskLink);
+  }).toPass();
   const taskId = href.split('?')[0]!.split('/').pop() as string;
   expect(taskId, 'task id from the row link').toBeTruthy();
   return taskId;
@@ -83,15 +102,15 @@ export async function attachAssignee(page: Page, taskId: string, employeeId: str
 }
 
 /** BORN-INELIGIBLE SEED (#297, #387, #391): hold the scan, attach the AI
- *  assignee through the RPC edge, then re-hold IN THE SAME BEAT — the attach is
- *  the write that makes a ready task scanner-eligible, so a hold that does not
- *  survive it leaves a window where the 5s tick can claim the task. The re-hold is
- *  unconditional on purpose: a read-then-repair would put a page round-trip and a
- *  fresh DB connection between the write and the repair, and the read-back could
- *  not tell a clean seed from one the scan already claimed (a claim flips status
- *  and mints a RUNNING run without clearing dispatch_after). The read-back then
- *  proves the END state only: hold with margin + AI assignee. Whether an attach
- *  preserves dispatch_after stays unpinned (unspecced product detail). */
+ *  assignee through the RPC edge, then re-hold immediately. The attach is the
+ *  write that makes a ready task scanner-eligible, so the hold has to be live
+ *  across it; the re-hold is unconditional (the leaner of the two repairs — a
+ *  read-then-repair only ever adds a statement on the same connection) and leaves
+ *  a window of one fresh SQL connection + one statement (single-digit ms, well
+ *  under the 5s tick). The window is SHRUNK, not closed: a claim that lands in it
+ *  keeps dispatch_after and the assignee, which is why the read-back also asserts
+ *  the task is still ready-category with no live run — the claim's own fingerprints.
+ *  Whether an attach preserves dispatch_after stays unpinned (unspecced detail). */
 export async function attachAssigneeHeld(page: Page, taskId: string, employeeId: string): Promise<void> {
   await holdDispatchScan(taskId);
   await attachAssignee(page, taskId, employeeId);
