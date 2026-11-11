@@ -658,10 +658,13 @@ export async function touchDispatcherRedisOk() {
 async function sweepStalledReviewsTick() {
   try {
     const { sweepStalledReviewTurns, sweepLostReviewSettles } = await import('./review.service');
-    await sweepStalledReviewTurns();
-    // SETTLE-REPLAY SWEEP (#402): the sibling shape — a review turn DONE whose settle
-    // was lost to a crash. Same tick, same never-reject contract (its own try/catch).
+    // SETTLE-REPLAY SWEEP (#402) RUNS FIRST: a crashed settle must be replayed before the
+    // #397 sweep mints the NEXT reviewer's turn — the round is sequential, and a mint
+    // here would mask the replay (that turn's verdict opens a later run for the crashed
+    // reviewer). The #397 scan also excludes the lost-settle shape, so the order is
+    // belt-and-braces. Same never-reject contract (each sweep owns its try/catch).
     await sweepLostReviewSettles();
+    await sweepStalledReviewTurns();
   } catch (e) {
     log.warn('stalled-review tick failed:', e instanceof Error ? e.message : e);
   }

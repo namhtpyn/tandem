@@ -1104,11 +1104,14 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
         // no live turn on the task
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
         // the reviewer was never dispatched in this round — a reviewer that already had
-        // a turn is owned by the verdict-less-correction / park machinery. RESIDUAL: a run
-        // that wrote DONE but whose settle was lost to a hard crash (nothing re-runs the
-        // settle; the reaper scans RUNNING only) matches this predicate and stays stuck —
-        // a pre-existing settle-loss window, tracked in #402, not created by this sweep.
+        // a turn is owned by the verdict-less-correction / park machinery.
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.employee_id = ${taskReviews.reviewerId} and tr.started_at >= ${taskReviews.createdAt})`,
+        // LOST-SETTLE GUARD (#402 r4): a task carrying a DONE run whose settle was lost
+        // (PENDING current-round AI row + that reviewer's NEWEST run in the round is
+        // DONE) belongs to the settle-replay arm — minting the NEXT reviewer's turn here
+        // would mask the replay forever (the lazy mint after that turn's verdict opens a
+        // later run for the crashed reviewer). The round stays sequential: replay first.
+        sql`not exists (select 1 from task_reviews r4 join task_runs tr4 on tr4.employee_id = r4.reviewer_id join task_messages tm4 on tm4.id = tr4.message_id and tm4.task_id = ${tasks.id} where r4.task_id = ${tasks.id} and r4.status = ${REVIEW_STATUS.PENDING} and r4.reviewer_id is not null and r4.round = (select max(r5.round) from task_reviews r5 where r5.task_id = ${tasks.id}) and tr4.status = ${RUN_STATUS.DONE} and tr4.started_at >= r4.created_at and not exists (select 1 from task_runs tr5 join task_messages tm5 on tm5.id = tr5.message_id where tm5.task_id = ${tasks.id} and tr5.employee_id = r4.reviewer_id and (tr5.started_at, tr5.id) > (tr4.started_at, tr4.id)))`,
       ),
     )
     .orderBy(taskReviews.createdAt)
@@ -1347,6 +1350,12 @@ export function lostSettleScan(ex: DbExecutor, cutoff: Date) {
         eq(taskRuns.status, RUN_STATUS.DONE),
         lt(taskRuns.finishedAt, cutoff),
         gte(taskRuns.startedAt, taskReviews.createdAt),
+        // RUN-KIND DISCRIMINATOR (#402 r4): work runs are minted for the ASSIGNEE, so a
+        // reviewer that is also the assignee makes the run ambiguous — replaying a work
+        // turn as a review settle would rewrite its bubble with the review parser and
+        // burn a review turn on a work result. Never replayed (the probe arm excludes it
+        // too, so the residual never alerts).
+        or(isNull(tasks.assigneeId), ne(taskReviews.reviewerId, tasks.assigneeId)),
         // CURRENT round only (mirrors the #397 scan: a manual move out of review leaves
         // PENDING rows behind and a re-entry brings them along)
         sql`${taskReviews.round} = (select max(r2.round) from task_reviews r2 where r2.task_id = ${taskReviews.taskId})`,
@@ -1391,10 +1400,14 @@ export const lostSettleAttemptState = lostSettleAttempts;
 
 /** bounded map: evict the OLDEST entry only — a blanket clear() would wipe live
  *  counters, including a wedge sitting at the bound that is due to park (#402 r2) */
-function pruneLostSettleAttempts(keep: string) {
+export function pruneLostSettleAttempts(keep: string) {
   if (lostSettleAttempts.size <= 500) return;
-  const oldest = lostSettleAttempts.keys().next().value;
-  if (oldest !== undefined && oldest !== keep) lostSettleAttempts.delete(oldest);
+  for (const [runId, count] of lostSettleAttempts) {
+    // never evict a wedge sitting at the bound — it is due to park this tick
+    if (runId === keep || count >= SETTLE_REPLAY_MAX_ATTEMPTS) continue;
+    lostSettleAttempts.delete(runId);
+    return;
+  }
 }
 
 /** tick arm: replay review turns left DONE with their settle lost. Never rejects (a

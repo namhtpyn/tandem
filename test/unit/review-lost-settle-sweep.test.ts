@@ -104,6 +104,8 @@ import {
   lostSettleAction,
   lostSettleAttemptState,
   lostSettleScan,
+  pruneLostSettleAttempts,
+  SETTLE_REPLAY_MAX_ATTEMPTS,
   sweepLostReviewSettles,
 } from '../../server/domains/tasks/review.service';
 
@@ -188,6 +190,9 @@ describe('lostSettleScan (#402 SQL discriminators)', () => {
     expect(text).toContain('max(r2.round)');
     // the NEWEST-run clause: the later-run subquery compares the (started_at, id) tuple
     expect(text).toContain('(tr2.started_at, tr2.id) >');
+    // RUN-KIND discriminator: a work run is minted for the assignee, so a reviewer that
+    // is also the assignee is never replayed (#402 r4)
+    expect(text).toContain('"task_reviews"."reviewer_id" <> "tasks"."assignee_id"');
     expect(text).toContain('limit');
     await client.close();
   });
@@ -244,6 +249,16 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
     // attempts exhausted -> the round parks instead of replaying until the heat death
     expect(await sweepLostReviewSettles()).toBe(1);
     expect(h.replayed).toEqual([RUN, RUN]);
+  });
+
+  it('never evicts a wedge sitting at the bound when the attempt map is pruned (#402 r4)', () => {
+    // past the 500 cap the prune must shed a fresh entry, never the oldest wedge that is
+    // due to park — a blanket eviction would reset it and replay forever
+    lostSettleAttemptState.set('run-wedge', SETTLE_REPLAY_MAX_ATTEMPTS);
+    for (let i = 0; i < 501; i++) lostSettleAttemptState.set(`run-filler-${i}`, 0);
+    pruneLostSettleAttempts('run-other');
+    expect(lostSettleAttemptState.get('run-wedge')).toBe(SETTLE_REPLAY_MAX_ATTEMPTS);
+    expect(lostSettleAttemptState.size).toBe(501); // exactly one fresh entry shed
   });
 
   it('never rejects: a failing scan resolves 0', async () => {

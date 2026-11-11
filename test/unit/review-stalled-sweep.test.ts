@@ -211,7 +211,12 @@ describe('stalledReviewScan shape (#397)', () => {
     // review) must not shadow the live round's row or burn a LIMIT slot
     expect(flat).toContain('"task_reviews"."round" = (select max(r2.round) from task_reviews r2');
     // no live turn on the task, and the reviewer never dispatched in this round
-    expect(flat.match(/not exists \(select 1 from task_runs tr/g)?.length).toBe(2);
+    // (the `tr ` alias form — the lost-settle guard below uses its own aliases)
+    expect(flat.match(/not exists \(select 1 from task_runs tr /g)?.length).toBe(2);
+    // LOST-SETTLE GUARD (#402 r4): a task carrying a crashed settle is owned by the
+    // settle-replay arm — minting the next reviewer's turn here would mask the replay
+    expect(flat).toContain('r4.status =');
+    expect(flat).toContain('tr4.employee_id = r4.reviewer_id');
     expect(flat).toContain('tr.status =');
     expect(flat).toContain('tr.employee_id = "task_reviews"."reviewer_id"');
     expect(flat).toContain('tr.started_at >= "task_reviews"."created_at"');
