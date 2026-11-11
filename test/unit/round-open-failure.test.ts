@@ -168,16 +168,19 @@ beforeEach(() => {
 });
 
 describe('round-open dispatch failure (#282)', () => {
-  it('pre-flip (task working): the park finds nothing to park — the dispatch failure rethrows, no BLOCKED flip', async () => {
+  // read order inside dispatchAiReviewTurns: [0] the IN-REVIEW MINT GATE's status
+  // read (#401), [1] parkRound's status read, [2] the failure path's re-read that
+  // classifies the park miss.
+  it('the task was moved back to a working status inside the dispatch window: the park finds nothing to park — the failure rethrows, no BLOCKED flip', async () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
-    h.taskReads = [[{ status: STATUS.doing }], [{ status: STATUS.doing }]];
+    h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.doing }], [{ status: STATUS.doing }]];
     await expect(dispatchAiReviewTurns('task-1', 'the result')).rejects.toThrow(/before the round opened/);
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 
-  it('post-flip (task in-review): the park wins — BLOCKED flip recorded, no throw', async () => {
+  it('in-review at the gate: the park wins — BLOCKED flip recorded, no throw', async () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
-    h.taskReads = [[{ status: STATUS.inReview }]];
+    h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.inReview }]];
     h.parkWins = true;
     // #397: the mint reports whether it FIRED — a failed mint reports false and still
     // never throws at a caller that did nothing wrong
@@ -187,10 +190,16 @@ describe('round-open dispatch failure (#282)', () => {
     expect(park?.set.status).toBe(STATUS.blocked);
   });
 
-  it('off-in-review and NOT working (owner moved to todo): the park misses and the failure stays quiet — no throw at a caller that did nothing wrong', async () => {
+  it('off-in-review and NOT working (owner moved to todo inside the window): the park misses and the failure stays quiet — no throw at a caller that did nothing wrong', async () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
-    h.taskReads = [[{ status: STATUS.todo }], [{ status: STATUS.todo }]];
-    h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
+    h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.todo }], [{ status: STATUS.todo }]];
+    // the re-check must classify `todo` as READY (the #282 branch: a caller that did
+    // nothing wrong must not 500) — the fixture keeps the real category
+    h.statuses = [
+      { id: STATUS.doing, category: CATEGORY.WORKING },
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+    ];
     // #397: the mint reports whether it FIRED — a failed mint reports false and still
     // never throws at a caller that did nothing wrong
     await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBe(false);
