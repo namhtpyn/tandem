@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   reviewerExists: true,
   reviewerLookup: null as { where?: { id?: { eq?: string } } } | null,
   resumes: [] as string[],
+  drops: [] as Array<[string, string]>,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -75,6 +76,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     resumeReviewQueueAfterRemoval: async (taskId: string) => {
       h.resumes.push(taskId);
     },
+    dropReviewMintIntent: (taskId: string, reviewerId: string) => {
+      h.drops.push([taskId, reviewerId]);
+    },
   };
 });
 
@@ -97,6 +101,7 @@ beforeEach(() => {
   h.reviewerExists = true;
   h.reviewerLookup = null;
   h.resumes = [];
+  h.drops = [];
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -133,6 +138,8 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.parks[0]).toContain('finished without a verdict after a re-dispatch');
     // a decision park: no re-arm ladder (a dropped opts arg would silently re-arm it)
     expect(h.parkOpts[0]?.rearmable).toBe(false);
+    // the spent retry's parked intent is dropped (#380): a restore must not re-send the block
+    expect(h.drops).toEqual([['task-1', 'rev-1']]);
   });
 
   it('a DELETED reviewer after its bounded re-dispatch resumes instead of parking (#370)', async () => {
