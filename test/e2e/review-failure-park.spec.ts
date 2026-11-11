@@ -39,6 +39,34 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
   return `E2E Reviewer ${tag}`;
 }
 
+/**
+ * The submit's In-review state is NOT observable on the client: the submit gesture's
+ * round opens server-side, and the reaper's 5s sweep can park the round before the
+ * client's first post-submit fetch lands — the badge legitimately goes Doing →
+ * Blocked and never renders "In review" (#375: the old `toHaveText('In review')`
+ * assert lost that race in 2 gate runs). The contract is the ROUND OPEN, not a
+ * transient render, so pin it in the DB: a review row for the round exists only
+ * after the submit won the in-review flip (#394/#292 arbitration).
+ */
+async function expectRoundOpened(taskId: string, round = 1): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql`
+            select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${round}
+          `;
+          return Number(rows[0]!.n);
+        },
+        { timeout: 15_000, intervals: [250, 250, 500, 1000] },
+      )
+      .toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
 test('reaped review turn parks the round; owner unblock re-fires the reviewer (#199)', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
@@ -91,7 +119,7 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
   await verbs.getByTestId('task-verb-submit').click();
-  await expect(page.getByTestId('task-status-badge')).toHaveText('In review', { timeout: 15_000 });
+  await expectRoundOpened(injectedTaskId);
 
   // the reaper reaps the stale turn (next 5s tick) and parks the round on the owner
   await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
@@ -175,7 +203,7 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
   await verbs.getByTestId('task-verb-submit').click();
-  await expect(page.getByTestId('task-status-badge')).toHaveText('In review', { timeout: 15_000 });
+  await expectRoundOpened(taskId);
 
   // the reaper parks the round — the park write carries the re-arm ledger
   await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
