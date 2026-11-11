@@ -68,6 +68,23 @@ async function pendingReviewRows(taskId: string): Promise<number> {
   }
 }
 
+/** the seeded turn is the task's ONLY run — a second row means the submit's review mint
+ *  escaped the task-wide RUNNING suppression, which makes the seeded run non-latest and
+ *  silently kills the reap's park (fail at the barrier with the mechanism named). */
+async function expectSingleRun(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`
+      select count(*)::int as n from task_runs r
+      join task_messages m on m.id = r.message_id
+      where m.task_id = ${taskId}
+    `;
+    expect(Number(rows[0]!.n)).toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
 /** poll the round-open delta: THIS submit adds exactly one PENDING row to the baseline. */
 async function expectRoundOpened(taskId: string, baseline: number): Promise<void> {
   await expect
@@ -76,17 +93,18 @@ async function expectRoundOpened(taskId: string, baseline: number): Promise<void
 }
 
 /** backdate the seeded RUNNING turn past the reaper cutoff — only once the round is
- *  open, so the reap (and its park) is strictly post-round-open. */
+ *  open, so the reap (and its park) is strictly post-round-open. 24h clears the cutoff
+ *  under EVERY supported run_timeout_ms (settings allows up to 6h; the default is 30m). */
 async function backdateReviewRun(runId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const rows = await sql`
-      update task_runs set started_at = now() - interval '2 hours'
+      update task_runs set started_at = now() - interval '24 hours'
       where id = ${runId} and status = 'RUNNING'
       returning id
     `;
-    // the seeded turn must still be live at the backdate: a settled row would mean the
-    // submit's own dispatch raced the seed and the park this spec waits for cannot land
+    // the seeded turn must still be live at the backdate: a settled row would be a
+    // different shape than this spec seeds (the reap+park it waits for cannot land)
     expect(rows.length).toBe(1);
   } finally {
     await sql.close();
@@ -155,8 +173,12 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   await verbs.getByTestId('task-verb-submit').click();
   // the handler awaits its post-commit review dispatch before responding: waiting for the
   // response means the mint attempt is over, so the backdate cannot un-suppress a mint
-  await submitted;
+  // a refused submit must fail HERE with the server's message, not 15s later as an
+  // opaque poll mismatch after the seed was backdated on a task that never left Doing
+  const res = await submitted;
+  expect(res.ok(), await res.text()).toBe(true);
   await expectRoundOpened(injectedTaskId, roundsBefore);
+  await expectSingleRun(injectedTaskId);
   await backdateReviewRun(injectedRunId);
 
   // the reaper reaps the stale turn (next 5s tick) and parks the round on the owner
@@ -254,8 +276,10 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   const roundsBefore = await pendingReviewRows(taskId);
   const submitted = page.waitForResponse((r) => r.url().includes('/rpc/tasks/submit'));
   await verbs.getByTestId('task-verb-submit').click();
-  await submitted;
+  const res = await submitted;
+  expect(res.ok(), await res.text()).toBe(true);
   await expectRoundOpened(taskId, roundsBefore);
+  await expectSingleRun(taskId);
   await backdateReviewRun(runId);
 
   // the reaper parks the round — the park write carries the re-arm ledger
@@ -263,11 +287,16 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
   const sql3 = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const ledger = await sql3`
-      select park_rearm_attempts::int as attempts, park_rearm_after is not null as scheduled
+      select park_rearm_attempts::int as attempts,
+        park_rearm_after is not null as scheduled,
+        park_rearm_after > now() + interval '4 minutes'
+          and park_rearm_after < now() + interval '6 minutes' as first_rung
       from tasks where id = ${taskId}
     `;
     expect(Number(ledger[0]!.attempts)).toBe(1);
     expect(ledger[0]!.scheduled).toBe(true);
+    // the FIRST rung is the ladder's 5-minute entry (#211), not an arbitrary offset
+    expect(ledger[0]!.first_rung).toBe(true);
 
     // the PARKER is the reaper — a submit-time dispatch-failure park carries the same
     // ledger shape (#375), so name the cause instead of matching any park note
@@ -277,14 +306,25 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     `;
     expect(Number(parked[0]!.n)).toBe(1);
 
+    const countRuns = async () => {
+      const r = await sql3`
+        select count(*)::int as n from task_runs r
+        join task_messages m on m.id = r.message_id
+        where m.task_id = ${taskId}
+      `;
+      return Number(r[0]!.n);
+    };
+    const before = await countRuns();
+
+    // LADDER-DUE GATE (#211/#375): the first rung is 5 minutes out, so a scan that
+    // re-armed on every tick would mint HERE. Hold past two ticks and prove it does not;
+    // without this phase the spec only proves SOME re-arm, which an eager scan passes.
+    await page.waitForTimeout(12_000);
+    expect(await countRuns()).toBe(before);
+    await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked');
+
     // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action
     await sql3`update tasks set park_rearm_after = now() - interval '1 second' where id = ${taskId}`;
-    const runsBefore = await sql3`
-      select count(*)::int as n from task_runs r
-      join task_messages m on m.id = r.message_id
-      where m.task_id = ${taskId}
-    `;
-    const before = Number(runsBefore[0]!.n);
     await expect
       .poll(
         async () => {
