@@ -191,25 +191,23 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   // The re-fired turn settles verdict-less (default review script emits no envelope);
   // the per-round bound (#276) then re-dispatches ONCE with the CORRECTION block and
   // the corrected script settles the round — one park cycle, never a wedge.
-  // the unblock poll below only proves the UNBLOCK mint while the #397 sweep is not yet
-  // eligible: its grace clock is the round row's createdAt (submit time), so pin the
-  // remaining age — a future slow phase must fail HERE, not green on a sweep mint
+  await tasks.navigate('/tasks');
+  await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
+  await page.getByRole('option', { name: 'In review' }).click();
+  // Bind the re-fire to the UNBLOCK path: the #397 sweep is the only other minter, and
+  // its grace clock is the round row's createdAt (submit time) — so the 15s poll below
+  // must end before that 60s grace. Read the age right before the poll starts: 60 - 15
+  // poll - 2 slack = 43; a future slow phase fails HERE instead of greening on a sweep mint.
   const ageSql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const rows = await ageSql`
       select extract(epoch from now() - created_at)::int as age
       from task_reviews where task_id = ${injectedTaskId} order by created_at desc limit 1
     `;
-    expect(Number(rows[0]!.age)).toBeLessThan(45);
+    expect(Number(rows[0]!.age)).toBeLessThan(43);
   } finally {
     await ageSql.close();
   }
-  await tasks.navigate('/tasks');
-  await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
-  await page.getByRole('option', { name: 'In review' }).click();
-  // bind the re-fire to the UNBLOCK path: a new run must appear inside 15s of the move,
-  // well before the #397 stalled-review sweep's 60s grace — otherwise the sweep could
-  // mint the turn and a broken unblock-resume would stay green
   const runsSql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     await expect
@@ -366,8 +364,10 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked');
 
     // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action.
-    // Bind the mint to the TICK: the new run must land inside 15s, long before the #397
-    // stalled-review sweep's 60s grace could mint it on a broken re-arm.
+    // Bind the mint to the TICK: the new run must land inside 15s. The #397 sweep is the
+    // only other minter and its grace is 60s from the round row's createdAt; this poll's
+    // deadline is bounded by the phase caps above (30s park + 12s hold + 15s poll < 60s),
+    // so the sweep cannot stand in — RAISE A CAP HERE AND THAT ISOLATION BREAKS.
     await sql3`update tasks set park_rearm_after = now() - interval '1 second' where id = ${taskId}`;
     await expect
       .poll(() => countRuns(), { timeout: 15_000, intervals: [500, 1000, 2000] })
