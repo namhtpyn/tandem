@@ -1,7 +1,8 @@
 // REVIEW-TURN MINT GATE + OFF-REVIEW SETTLE REFUSAL (#401): a review turn can be
 // minted for a task a manual move took out of review, and the end-of-round flip used
-// to refuse only done/cancelled-category statuses — an all-approved settle therefore
-// flipped a manually re-queued todo task to done, overriding the owner's move.
+// to refuse only done/cancelled- and waiting_answer-category statuses — an all-approved
+// settle therefore flipped a manually re-queued todo task to done, overriding the
+// owner's move.
 //
 // The flip's mock ENFORCES the predicate it renders (a mock that returns rows
 // regardless would pass every ordering): the flip lands only when the rendered SQL's
@@ -96,12 +97,17 @@ vi.mock('../../server/db/index', async () => {
               const preArm = /"tasks"\."pre_block_status" in \(([^)]*)\)/.exec(rendered.sql);
               const machineArm = Boolean(parkArm) || Boolean(preArm);
               const inReviewAllows = statusArms[0] ? paramsOf(statusArms[0][1]!).includes(h.task.status) : false;
+              // the two origins are alternatives unless the rendered connector says `and`
+              const originBetween =
+                parkArm && preArm ? rendered.sql.slice(parkArm.index! + parkArm[0].length, preArm.index) : '';
+              const originOr = parkArm && preArm ? /\bor\b/.test(originBetween) : true;
+              const parkOk = parkArm ? paramsOf(parkArm[1]!).includes(h.task.parkFromStatus ?? '') : false;
+              const preOk = preArm ? paramsOf(preArm[1]!).includes(h.task.preBlockStatus ?? '') : false;
               const machineAllows =
                 Boolean(statusArms[1]) &&
                 machineArm &&
                 paramsOf(statusArms[1]![1]!).includes(h.task.status) &&
-                ((parkArm ? paramsOf(parkArm[1]!).includes(h.task.parkFromStatus ?? '') : false) ||
-                  (preArm ? paramsOf(preArm[1]!).includes(h.task.preBlockStatus ?? '') : false));
+                (originOr ? parkOk || preOk : parkOk && preOk);
               const gated = Boolean(statusArms[0]) || machineArm;
               // the TOP-LEVEL connector decides how the two arms compose; an `and` here
               // would refuse every in-review task that is not machine-blocked
@@ -220,6 +226,17 @@ describe('off-review settle refusal (#401)', () => {
     expect(h.cancelledAll).toHaveLength(0);
   });
 
+  it('a request_change settle never bounces a task the owner moved out of review', async () => {
+    h.task.status = STATUS.todo;
+    h.matrixRows = [
+      { round: 1, status: REVIEW_STATUS.CHANGE_REQUESTED, reviewerId: 'rev-1' },
+      { round: 1, status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-2' },
+    ];
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.CHANGE_REQUESTED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'superseded' });
+    expect(h.task.status).toBe(STATUS.todo); // the owner's move stands
+  });
+
   it('the same settle still completes a task that is in review', async () => {
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'done' });
@@ -245,6 +262,13 @@ describe('off-review settle refusal (#401)', () => {
 
   it('still settles a MACHINE-blocked task (a review park: park_from_status records the origin)', async () => {
     h.task = { ...h.task, status: STATUS.blocked, parkFromStatus: STATUS.inReview };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    expect(h.task.status).toBe(STATUS.done);
+  });
+
+  it('a CUSTOM in-review origin still settles the machine block (origin resolved by category)', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: 'st-review-custom' };
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'done' });
     expect(h.task.status).toBe(STATUS.done);
@@ -327,6 +351,13 @@ describe('review-turn mint gate (#401)', () => {
     h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
     await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
     expect(h.dispatched).toHaveLength(0);
+  });
+
+  it('mints on a gating block whose origin is a CUSTOM in-review status (resolved by category)', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: 'st-review-custom' };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(true);
+    expect(h.dispatched).toHaveLength(1);
   });
 
   it('mints nothing for a gating block whose origin is NOT in review (a stale origin)', async () => {

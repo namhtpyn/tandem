@@ -193,6 +193,13 @@ describe('round-open dispatch failure (#282)', () => {
   it('off-in-review and NOT working (owner moved to todo inside the window): the park misses and the failure stays quiet — no throw at a caller that did nothing wrong', async () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
     h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.todo }], [{ status: STATUS.todo }]];
+    // the re-check must classify `todo` as READY (the #282 branch: a caller that did
+    // nothing wrong must not 500) — the fixture keeps the real category
+    h.statuses = [
+      { id: STATUS.doing, category: CATEGORY.WORKING },
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+    ];
     // #397: the mint reports whether it FIRED — a failed mint reports false and still
     // never throws at a caller that did nothing wrong
     await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBe(false);
