@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   round: 1 as number,
   boundRow: { round: 1, createdAt: new Date('2026-11-03T00:00:00Z') } as { round: number; createdAt: Date } | null,
   seenAt: null as Date | null,
-  runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
+  runs: [] as Array<{ id: string; startedAt: Date | null; status?: string; prompt?: string }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
   parkOpts: [] as Array<Record<string, unknown>>,
@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   reviewerExists: true,
   reviewerLookup: null as { where?: { id?: { eq?: string } } } | null,
   resumes: [] as string[],
+  drops: [] as Array<[string, string]>,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -75,13 +76,17 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     resumeReviewQueueAfterRemoval: async (taskId: string) => {
       h.resumes.push(taskId);
     },
+    dropReviewMintIntent: (taskId: string, reviewerId: string) => {
+      h.drops.push([taskId, reviewerId]);
+    },
   };
 });
 
 import { settleReviewVerdict } from '../../server/domains/tasks/runner.service';
 
 const roundOpen = new Date('2026-11-03T00:00:00Z');
-const run = (id: string, at: Date, status = 'DONE') => ({ id, startedAt: at, status });
+const run = (id: string, at: Date, status = 'DONE', prompt?: string) => ({ id, startedAt: at, status, prompt });
+const CORRECTED_BRIEF = 'review brief …\nCORRECTION (verdict-less re-dispatch)\nprevious turn produced no verdict …';
 const self = new Date(roundOpen.getTime() + 5000); // the settling run's start
 
 beforeEach(() => {
@@ -97,6 +102,7 @@ beforeEach(() => {
   h.reviewerExists = true;
   h.reviewerLookup = null;
   h.resumes = [];
+  h.drops = [];
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -109,6 +115,9 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.verdictCorrection).toBe(true);
     expect(h.dispatched[0]?.verdictlessReviewerId).toBe('rev-1');
+    // the SETTLE's round rides the call (#380): without it the lock-loss park would be a
+    // silent no-op and the bounded retry would be burned by a plain turn again
+    expect(h.dispatched[0]?.round).toBe(1);
   });
 
   it('a returning reviewer in round 2 with only a PREVIOUS-round turn still gets the corrected retry', async () => {
@@ -119,16 +128,41 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.parks).toHaveLength(0);
     expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]?.round).toBe(2); // the settle's round, not a fixed 1
   });
 
   it('a PRIOR completed turn this round -> decision park (the corrected retry already failed)', async () => {
-    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000)), run('self', self)];
+    // the SETTLING turn is the correction turn in the #276 shape: its brief carries the block
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000)), run('self', self, 'DONE', CORRECTED_BRIEF)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]).toContain('finished without a verdict after a re-dispatch');
     // a decision park: no re-arm ladder (a dropped opts arg would silently re-arm it)
     expect(h.parkOpts[0]?.rearmable).toBe(false);
+    // the spent retry's parked intent is dropped (#380): a restore must not re-send the block
+    expect(h.drops).toEqual([['task-1', 'rev-1']]);
+  });
+
+  it('a prior DONE turn minted PLAIN leaves the retry parked — the block was never sent', async () => {
+    // the lock-loss half the carry could not reach: dropping here would make the loss
+    // permanent, so the intent survives for the restore's re-fire (#380)
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000), 'DONE', 'plain first-turn brief'), run('self', self)];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(1);
+    expect(h.drops).toEqual([]);
+  });
+
+  it('an ECHOED marker mid-line is not a delivery — the intent stays parked', async () => {
+    // the brief embeds the result body and verdicts verbatim: a quoted mention must not be
+    // read as a dispatched CORRECTION block (that would delete a live, never-sent retry)
+    h.runs = [
+      run('r1', new Date(roundOpen.getTime() + 1000)),
+      run('self', self, 'DONE', 'the reviewer asked about CORRECTION (verdict-less re-dispatch) twice'),
+    ];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(1);
+    expect(h.drops).toEqual([]);
   });
 
   it('a DELETED reviewer after its bounded re-dispatch resumes instead of parking (#370)', async () => {
