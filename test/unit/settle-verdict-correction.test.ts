@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   round: 1 as number,
   boundRow: { round: 1, createdAt: new Date('2026-11-03T00:00:00Z') } as { round: number; createdAt: Date } | null,
   seenAt: null as Date | null,
-  runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
+  runs: [] as Array<{ id: string; startedAt: Date | null; status?: string; prompt?: string }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
   parkOpts: [] as Array<Record<string, unknown>>,
@@ -85,7 +85,8 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 import { settleReviewVerdict } from '../../server/domains/tasks/runner.service';
 
 const roundOpen = new Date('2026-11-03T00:00:00Z');
-const run = (id: string, at: Date, status = 'DONE') => ({ id, startedAt: at, status });
+const run = (id: string, at: Date, status = 'DONE', prompt?: string) => ({ id, startedAt: at, status, prompt });
+const CORRECTED_BRIEF = 'review brief … CORRECTION (verdict-less re-dispatch) …';
 const self = new Date(roundOpen.getTime() + 5000); // the settling run's start
 
 beforeEach(() => {
@@ -131,7 +132,7 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
   });
 
   it('a PRIOR completed turn this round -> decision park (the corrected retry already failed)', async () => {
-    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000)), run('self', self)];
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000), 'DONE', CORRECTED_BRIEF), run('self', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
@@ -140,6 +141,15 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.parkOpts[0]?.rearmable).toBe(false);
     // the spent retry's parked intent is dropped (#380): a restore must not re-send the block
     expect(h.drops).toEqual([['task-1', 'rev-1']]);
+  });
+
+  it('a prior DONE turn minted PLAIN leaves the retry parked — the block was never sent', async () => {
+    // the lock-loss half the carry could not reach: dropping here would make the loss
+    // permanent, so the intent survives for the restore's re-fire (#380)
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000), 'DONE', 'plain first-turn brief'), run('self', self)];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(1);
+    expect(h.drops).toEqual([]);
   });
 
   it('a DELETED reviewer after its bounded re-dispatch resumes instead of parking (#370)', async () => {

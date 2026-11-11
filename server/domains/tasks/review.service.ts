@@ -1683,7 +1683,7 @@ export async function dispatchAiReviewTurns(
   resultBody?: string,
   opts?: DispatchOpts,
 ): Promise<boolean> {
-  // PARK FIRST (#380): every correction caller records its retry before any await, so
+  // PARK FIRST (#380): every correction caller that names its settle round records its retry before any await, so
   // whichever guard no-ops this mint (the lock, the mint gate, a live run) or whichever
   // read/dispatch throws, the retry stays on record for that reviewer's next mint — and a
   // landed dispatch consumes it below. Parking after a guard would drop the retry exactly

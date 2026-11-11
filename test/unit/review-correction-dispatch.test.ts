@@ -185,7 +185,7 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
   });
 
-  it('never rides another reviewer — it waits for its own row and is consumed exactly once', async () => {
+  it('never rides another reviewer — it waits for its own row and is consumed by the carrying dispatch', async () => {
     h.rows = [row('rev-A', minted), row('rev-B', new Date(minted.getTime() + 1000))];
     h.aiIds = ['rev-A', 'rev-B'];
     const release = gateMint();
@@ -222,6 +222,20 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     h.rows = [row('rev-B', new Date(minted.getTime() + 1000))];
     await dispatchAiReviewTurns('task-two', 'submitted work');
     expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-B', verdictCorrection: true });
+  });
+
+  it('carries at ANY round — the intent is bound to the round the settle named', async () => {
+    // a round-1-only park would silently revert #380 for every later round
+    h.round = 2;
+    h.rows = [{ reviewerId: 'rev-1', round: 2, status: 'PENDING', createdAt: minted }];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-r2', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await correction('task-r2', 'rev-1', 2);
+    release();
+    await plain;
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
   });
 
   it('is dropped when the round moves on — never a new round first-turn brief', async () => {

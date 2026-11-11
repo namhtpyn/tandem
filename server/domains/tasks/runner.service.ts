@@ -558,7 +558,7 @@ import {
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
-import { buildBrief, loadBriefData } from './brief.service';
+import { buildBrief, loadBriefData, REVIEW_CORRECTION_MARKER } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
@@ -1364,7 +1364,7 @@ export async function settleReviewVerdict(
     // reviewer's COMPLETED turns in that round — a reaped/failed turn is not a
     // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true, startedAt: true, status: true },
+      columns: { id: true, startedAt: true, status: true, prompt: true },
       where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
     });
     // COMPLETED turns this round BEFORE this one: the settling run is already DONE
@@ -1394,8 +1394,10 @@ export async function settleReviewVerdict(
       return;
     }
     const { dropReviewMintIntent } = await import('./review.service');
-    // the bounded retry is spent (#380): a later restore turn must not carry its block
-    dropReviewMintIntent(taskId, reviewerId);
+    // SPENT only if the block was DELIVERED (#380): a prior DONE turn minted PLAIN (the
+    // lock-loss half the carry could not reach) must leave the intent parked — its restore
+    // is the only remaining chance to send the CORRECTION block at all
+    if (priorDone.some((r) => r.prompt?.includes(REVIEW_CORRECTION_MARKER))) dropReviewMintIntent(taskId, reviewerId);
     await parkReviewTurnFailure(
       taskId,
       reviewerId,
