@@ -1,3 +1,14 @@
+## [2.78.17](https://github.com/namhtpyn/tandem/compare/v2.78.16...v2.78.17) (2026-11-11)
+
+
+### Bug Fixes
+
+* [#401](https://github.com/namhtpyn/tandem/issues/401) a review turn and its settle only act while the task still sits in review ([374ee54](https://github.com/namhtpyn/tandem/commit/374ee54058fd329a64edcfda2775cb49c5d75b38))
+* [#401](https://github.com/namhtpyn/tandem/issues/401) r2 — a machine block is not an owner move; pin the parked/waiting-answer mint refusals ([4a15165](https://github.com/namhtpyn/tandem/commit/4a15165efcbfcc609838dedfe0f1663b81e73ea4))
+* [#401](https://github.com/namhtpyn/tandem/issues/401) r3 — the machine-block carve-out must prove the origin is an in-review status ([7e7058f](https://github.com/namhtpyn/tandem/commit/7e7058f508eb6797b5df641ffaa8631d73d37805))
+* [#401](https://github.com/namhtpyn/tandem/issues/401) r4 — the mint gate follows the round through a gating auto-block; a manual move clears both block origins ([3aeeef8](https://github.com/namhtpyn/tandem/commit/3aeeef81a4c6627e29f2f659a78798ae2299fe64))
+* [#401](https://github.com/namhtpyn/tandem/issues/401) r5 — pin the park and block-landing terms; key the block arm on the paused category ([0cca009](https://github.com/namhtpyn/tandem/commit/0cca009a056794d4794079a099cbc15bfd5f30ef))
+
 ## [2.78.16](https://github.com/namhtpyn/tandem/compare/v2.78.15...v2.78.16) (2026-11-10)
 
 
