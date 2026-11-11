@@ -38,11 +38,13 @@ export async function expectDispatchHold(taskId: string, employeeId: string): Pr
   }
 }
 
-/** the task id a list row / title link points at; strips any list-scope query
- *  the link carries (a leftover `?scope=` silently misses every SQL key below) */
+/** the task id a list row / title link points at; asserts the link SHAPE first
+ *  (one `/tasks/<id>` segment, optional query) so a route regression fails at the
+ *  parse site instead of as a 0-row seed, then strips the list-scope query the
+ *  link may carry (a leftover `?scope=` silently misses every SQL key below) */
 export async function rowTaskIdFromLink(link: Locator): Promise<string> {
   const href = await link.getAttribute('href');
-  expect(href, 'row links to the task page').toBeTruthy();
+  expect(href, 'row links to the task page').toMatch(/^\/tasks\/[0-9a-z-]+(?:\?.*)?$/i);
   const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
   expect(taskId, 'task id from the row link').toBeTruthy();
   return taskId;
@@ -52,8 +54,10 @@ export async function rowTaskId(row: Locator): Promise<string> {
   return rowTaskIdFromLink(row.locator('a[href^="/tasks/"]').first());
 }
 
-/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
- *  ineligible (no assignee), so the 5s scan can never claim it mid-test. */
+/** attach the AI assignee. The ATTACH is the write that makes a ready task
+ *  scanner-eligible, so the caller must have set the dispatch_after hold FIRST
+ *  (`holdDispatchScan`) — the ineligibility is the hold's property, not this
+ *  helper's (a call without a live hold re-opens the 5s-scan race). */
 export async function attachAssignee(page: Page, taskId: string, employeeId: string): Promise<void> {
   const res = await page.request.post('/rpc/tasks/update', { data: { json: { id: taskId, assigneeId: employeeId } } });
   expect(res.status(), 'assignee attach accepted').toBe(200);
@@ -89,28 +93,28 @@ export async function createTaskWithHeldScan(
   return row;
 }
 
-/** the committed EVENT of a round open: task_reviews rows, never a transient
- *  status badge (the server can move a task through `in review` and out again
- *  before the client's first post-verb refetch — #375, #416) */
-export async function expectRoundOpened(
-  taskId: string,
-  opts: { round?: number; timeout?: number } = {},
-): Promise<void> {
+/** the committed EVENT of a round open: the task_reviews rows of THAT round,
+ *  never a transient status badge (the server can move a task through `in review`
+ *  and out again before the client's first post-verb refetch — #375, #416).
+ *  `round` is REQUIRED: counting any row for the task would pass on a round an
+ *  earlier call site already opened, pinning nothing at this call. */
+export async function expectRoundOpened(taskId: string, opts: { round: number; timeout?: number }): Promise<void> {
   await expect
     .poll(
       async () => {
         const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
         try {
           const rows =
-            opts.round === undefined
-              ? await sql`select count(*)::int as n from task_reviews where task_id = ${taskId}`
-              : await sql`select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${opts.round}`;
+            await sql`select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${opts.round}`;
           return Number(rows[0]?.n ?? 0);
         } finally {
           await sql.close();
         }
       },
-      { timeout: opts.timeout ?? 15_000, message: 'a review round opened for the task (task_reviews row)' },
+      {
+        timeout: opts.timeout ?? 15_000,
+        message: `round ${opts.round} opened for the task (task_reviews row)`,
+      },
     )
     .toBeGreaterThan(0);
 }

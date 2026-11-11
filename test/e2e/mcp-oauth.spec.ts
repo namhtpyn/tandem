@@ -409,6 +409,10 @@ test.describe('mcp oauth per binding', () => {
       // born-ineligible seeding (#391): the auto-dispatch-on-create race this
       // spec used to swallow in a try/catch is the seed's job, not the assertion's
       const row = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
+      // the drawer gate reads the assignee kind off the live list row — let the
+      // attach's invalidation refetch land before opening it, or a stalled refetch
+      // reads as a missing dispatch button
+      await expect(row).toContainText(employeeName, { timeout: 10_000 });
       const drawer = await tasks.openWorkflowDrawer(row);
       await drawer.getByTestId('drawer-verb-dispatch').click({ timeout: 20_000 });
       await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });

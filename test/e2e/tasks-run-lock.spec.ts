@@ -15,7 +15,7 @@ import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
-import { TasksPage, attachAssignee, holdDispatchScan, rowTaskId } from './pages/tasks.page.ts';
+import { TasksPage, attachAssignee, holdDispatchScan } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(
   page: import('@playwright/test').Page,
