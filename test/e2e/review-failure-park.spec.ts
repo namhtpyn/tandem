@@ -4,7 +4,7 @@
 // inserted BEFORE submit (fresh, so no sweep can reap it pre-submit) and backdated
 // past the reaper cutoff only AFTER the round opens (#375) — the sequential-turn law
 // then suppresses the real mint while it is RUNNING, and the REAL reaper (run timeout
-// + grace < 2h) reaps it mid-round. That is the exact production class: a reviewer
+// + grace < 24h) reaps it mid-round. That is the exact production class: a reviewer
 // host dies with the turn live, the reaper fires, the round must park — never the
 // work ladder's todo-flip, which would yank an in-review task out of its open round.
 // The second half proves the recovery loop: unblock (status -> in-review) re-fires
@@ -112,6 +112,7 @@ async function backdateReviewRun(runId: string): Promise<void> {
 }
 
 test('reaped review turn parks the round; owner unblock re-fires the reviewer (#199)', async ({ page }) => {
+  test.setTimeout(120_000); // stacked caps (park 30s + re-fire 15s + Done 45s) exceed the 60s default
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
   const botName = await seedAiEmployee(page, tag);
@@ -171,10 +172,12 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   const roundsBefore = await pendingReviewRows(injectedTaskId);
   const submitted = page.waitForResponse((r) => r.url().includes('/rpc/tasks/submit'));
   await verbs.getByTestId('task-verb-submit').click();
-  // the handler awaits its post-commit review dispatch before responding: waiting for the
-  // response means the mint attempt is over, so the backdate cannot un-suppress a mint
-  // a refused submit must fail HERE with the server's message, not 15s later as an
-  // opaque poll mismatch after the seed was backdated on a task that never left Doing
+  // The handler awaits its post-commit review dispatch before responding, so once the
+  // response lands no run row can still be inserted — that is what makes the run-count
+  // barrier below deterministic instead of an escaped mint landing after it (which
+  // would make the seeded run non-latest and silently clear the reap's park guard).
+  // A refused submit must fail HERE with the server's message, not 15s later as an
+  // opaque poll mismatch after the seed was backdated on a task that never left Doing.
   const res = await submitted;
   expect(res.ok(), await res.text()).toBe(true);
   await expectRoundOpened(injectedTaskId, roundsBefore);
@@ -191,6 +194,27 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   await tasks.navigate('/tasks');
   await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
   await page.getByRole('option', { name: 'In review' }).click();
+  // bind the re-fire to the UNBLOCK path: a new run must appear inside 15s of the move,
+  // well before the #397 stalled-review sweep's 60s grace — otherwise the sweep could
+  // mint the turn and a broken unblock-resume would stay green
+  const runsSql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    await expect
+      .poll(
+        async () => {
+          const r = await runsSql`
+            select count(*)::int as n from task_runs r
+            join task_messages m on m.id = r.message_id
+            where m.task_id = ${injectedTaskId}
+          `;
+          return Number(r[0]!.n);
+        },
+        { timeout: 15_000, intervals: [500, 1000, 2000] },
+      )
+      .toBe(2);
+  } finally {
+    await runsSql.close();
+  }
   await expect(tasks.rowFor(taskTitle)).toContainText('Done', { timeout: 45_000 });
 
   // the only park on this path is the reaper's infra park; the corrected re-dispatch
@@ -222,6 +246,9 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
 // is never a silent terminal state; the machine re-fires within one tick of the ladder
 // coming due.
 test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', async ({ page }) => {
+  // the negative rung phase holds two full 5s ticks on purpose; that hard floor plus the
+  // stacked caps does not fit the 60s default (siblings raise it the same way)
+  test.setTimeout(120_000);
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
   const botName = await seedAiEmployee(page, tag);
@@ -323,20 +350,12 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     expect(await countRuns()).toBe(before);
     await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked');
 
-    // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action
+    // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action.
+    // Bind the mint to the TICK: the new run must land inside 15s, long before the #397
+    // stalled-review sweep's 60s grace could mint it on a broken re-arm.
     await sql3`update tasks set park_rearm_after = now() - interval '1 second' where id = ${taskId}`;
     await expect
-      .poll(
-        async () => {
-          const r = await sql3`
-            select count(*)::int as n from task_runs r
-            join task_messages m on m.id = r.message_id
-            where m.task_id = ${taskId}
-          `;
-          return Number(r[0]!.n);
-        },
-        { timeout: 45_000, intervals: [2_000, 5_000, 5_000, 10_000] },
-      )
+      .poll(() => countRuns(), { timeout: 15_000, intervals: [500, 1000, 2000] })
       .toBeGreaterThanOrEqual(before + 1); // the re-arm re-minted the reviewer's turn
 
     // the re-fired turn settles verdict-less; the per-round bound's corrected
