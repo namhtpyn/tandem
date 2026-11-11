@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   aiReads: 0,
   gate: null as Promise<void> | null,
   failNextDispatch: false,
+  failRoundRead: false,
 }));
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -46,7 +47,10 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
     const c = (cols ?? {}) as Record<string, unknown>;
     // the IN-REVIEW MINT GATE's task-status read (#401)
     if (isTaskRow && 'status' in c) return [{ status: 'st-review' }];
-    if ('round' in c) return [{ round: h.round }];
+    if ('round' in c) {
+      if (h.failRoundRead) throw new Error('round read exploded');
+      return [{ round: h.round }];
+    }
     if ('resultBody' in c) return [{ resultBody: 'submitted work' }];
     if ('id' in c) return [];
     // the mint's settle-owned ordering read (#402 r5): reviewer → newest run mark
@@ -109,6 +113,7 @@ beforeEach(() => {
   h.aiReads = 0;
   h.gate = null;
   h.failNextDispatch = false;
+  h.failRoundRead = false;
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
@@ -228,6 +233,23 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     await dispatchAiReviewTurns('task-plain', 'submitted work');
     expect(h.dispatchCalls).toHaveLength(2);
     expect(h.dispatchCalls.every((c: Record<string, unknown>) => c.verdictCorrection === false)).toBe(true);
+  });
+
+  it('a failed intent read never turns a lost lock into a settle error (fault-isolated)', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-fault', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    h.failRoundRead = true; // the locked-out correction's round read dies
+    await expect(
+      dispatchAiReviewTurns('task-fault', undefined, { verdictCorrection: true, verdictlessReviewerId: 'rev-1' }),
+    ).resolves.toBe(false);
+    h.failRoundRead = false;
+    release();
+    await plain;
+    expect(h.dispatchCalls).toHaveLength(1);
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false); // nothing was parked
   });
 
   it('a failed mint leaves the intent parked for the re-fire (consumed only after dispatch)', async () => {
