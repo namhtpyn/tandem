@@ -87,15 +87,18 @@ vi.mock('../../server/db/index', async () => {
                 (placeholders.match(/\$(\d+)/g) ?? []).map((t) => rendered.params[Number(t.slice(1)) - 1]);
               const inArm = /"tasks"\."status" in \(([^)]*)\)/.exec(rendered.sql);
               const statusEq = /"tasks"\."status" = \$(\d+)/.exec(rendered.sql);
-              const machineArm =
-                /"tasks"\."park_from_status" is not null/.test(rendered.sql) &&
-                /"tasks"\."pre_block_status" is not null/.test(rendered.sql);
+              // the carve-out must check the origin VALUE, not merely its presence: the
+              // rendered origin lists are what the mock honors
+              const parkArm = /"tasks"\."park_from_status" in \(([^)]*)\)/.exec(rendered.sql);
+              const preArm = /"tasks"\."pre_block_status" in \(([^)]*)\)/.exec(rendered.sql);
+              const machineArm = Boolean(parkArm) || Boolean(preArm);
               const inReviewAllows = inArm ? paramsOf(inArm[1]!).includes(h.task.status) : false;
               const machineAllows =
                 Boolean(statusEq) &&
                 machineArm &&
                 rendered.params[Number(statusEq![1]) - 1] === h.task.status &&
-                Boolean(h.task.parkFromStatus || h.task.preBlockStatus);
+                ((parkArm ? paramsOf(parkArm[1]!).includes(h.task.parkFromStatus ?? '') : false) ||
+                  (preArm ? paramsOf(preArm[1]!).includes(h.task.preBlockStatus ?? '') : false));
               const gated = Boolean(inArm) || machineArm;
               const allowed = gated ? inReviewAllows || machineAllows : true;
               if (!allowed) return [];
@@ -240,6 +243,15 @@ describe('off-review settle refusal (#401)', () => {
     expect(h.task.status).toBe(STATUS.blocked);
   });
 
+  it('refuses a machine block whose recorded origin is NOT an in-review status (a stale pre_block_status)', async () => {
+    // gating records whatever status the task held; pre_block_status also survives a
+    // manual move — a bare non-null origin must never unlock the flip (#401 r2)
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.todo };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'superseded' });
+    expect(h.task.status).toBe(STATUS.blocked);
+  });
+
   it('a non-closing verdict on a waiting_answer task leaves the next reviewer unminted (the answer re-fires it)', async () => {
     h.task = { ...h.task, status: STATUS.waitingAnswer };
     h.matrixRows = [
@@ -258,10 +270,14 @@ describe('off-review settle refusal (#401)', () => {
     const flip = h.flips[0];
     expect(flip?.sql).toContain('"tasks"."status" in (');
     expect(flip?.sql).not.toMatch(/\bnot in\b/);
-    expect(flip?.params).toEqual(['task-1', STATUS.inReview, 'st-review-custom', STATUS.blocked]);
-    // the machine-blocked carve-out is part of the predicate, not an afterthought
-    expect(flip?.sql).toContain('"tasks"."park_from_status" is not null');
-    expect(flip?.sql).toContain('"tasks"."pre_block_status" is not null');
+    expect(flip?.params.slice(0, 3)).toEqual(['task-1', STATUS.inReview, 'st-review-custom']);
+    expect(flip?.params).toContain(STATUS.blocked);
+    expect(flip?.params).not.toContain(STATUS.todo);
+    expect(flip?.params).not.toContain(STATUS.done);
+    // the machine-blocked carve-out is part of the predicate and it checks the origin
+    // VALUE (an id in the in-review list), not merely its presence
+    expect(flip?.sql).toContain('"tasks"."park_from_status" in (');
+    expect(flip?.sql).toContain('"tasks"."pre_block_status" in (');
   });
 });
 

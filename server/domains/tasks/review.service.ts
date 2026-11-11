@@ -12,7 +12,7 @@
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
 import { consola } from 'consola';
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
@@ -1494,15 +1494,21 @@ async function inReviewStatusIds(): Promise<string[]> {
 
 /** END-OF-ROUND FLIP CAS (#260, #401): the settle flip is a conditional write that
  * REQUIRES the task to still sit in an in-review-category status — OR in a MACHINE
- * block (a park's park_from_status / a gating auto-block's pre_block_status recorded
- * the in-review home), which is not an owner move and must never strand a decided
- * round: the deny-list let such a settle land, and the block's own restore arm
- * cannot settle an already-decided round (roundLive=false, no void row). A task the
- * owner moved out of review keeps its status — terminal, waiting_answer and a plain
- * re-queue/block alike — and the verdict becomes a recorded-but-superseded audit row
- * (returns false). #288: the refused waiting_answer flip is re-checked by the hold
+ * block whose recorded origin (park_from_status / pre_block_status) RESOLVES to an
+ * in-review-category id, which is not an owner move and must never strand a decided
+ * round: the deny-list let such a settle land, and the block's own restore arm cannot
+ * settle an already-decided round (roundLive=false, no void row). A bare origin id is
+ * NOT enough — gating records whatever status the task held and pre_block_status
+ * survives manual moves — and a task the owner moved out of review keeps its status
+ * (terminal, waiting_answer and a plain re-queue/block alike); its verdict becomes a
+ * recorded-but-superseded audit row (returns false). #288: the refused waiting_answer flip is re-checked by the hold
  * arm below, which parks instead of superseding. */
 async function flipTask(taskId: string, status: string): Promise<boolean> {
+  // the machine-block carve-out must prove the ROUND's home: the recorded origin has to
+  // RESOLVE to an in-review-category id (a bare non-null origin is not enough — gating
+  // records whatever status the task held, and pre_block_status survives manual moves,
+  // so a stale/owner-moved origin would reopen the #401 hole this gate closes)
+  const inReview = await inReviewStatusIds();
   const flipped = await db
     .update(tasks)
     .set({ status, updatedAt: new Date() })
@@ -1510,8 +1516,11 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
       and(
         eq(tasks.id, taskId),
         or(
-          inArray(tasks.status, await inReviewStatusIds()),
-          and(eq(tasks.status, BLOCKED_STATUS), or(isNotNull(tasks.parkFromStatus), isNotNull(tasks.preBlockStatus))),
+          inArray(tasks.status, inReview),
+          and(
+            eq(tasks.status, BLOCKED_STATUS),
+            or(inArray(tasks.parkFromStatus, inReview), inArray(tasks.preBlockStatus, inReview)),
+          ),
         ),
       ),
     )
