@@ -1393,6 +1393,9 @@ export async function settleReviewVerdict(
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
+    const { dropReviewMintIntent } = await import('./review.service');
+    // the bounded retry is spent (#380): a later restore turn must not carry its block
+    dropReviewMintIntent(taskId, reviewerId);
     await parkReviewTurnFailure(
       taskId,
       reviewerId,

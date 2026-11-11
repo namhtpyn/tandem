@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   round: 1,
   aiReads: 0,
   gate: null as Promise<void> | null,
+  roundGate: null as Promise<void> | null,
   failNextDispatch: false,
 }));
 
@@ -54,12 +55,18 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
     if (h.rows.length) return h.rows;
     return [{ reviewerId: 'rev-1', round: 1, status: 'PENDING', createdAt: new Date() }];
   };
+  // the round projection is gate-able: it is the read a lock-loss park must NEVER need
+  // before its Map write (#380 synchronicity pin)
+  const gated = async (): Promise<unknown[]> => {
+    if (h.roundGate && 'round' in ((cols ?? {}) as Record<string, unknown>)) await h.roundGate;
+    return resolve();
+  };
   const ch: Chain = {
     where: () => ch,
     orderBy: () => ch,
-    limit: async () => resolve(),
+    limit: () => gated(),
     innerJoin: () => ch,
-    then: (onfulfilled) => Promise.resolve(resolve()).then((v) => (onfulfilled ? onfulfilled(v) : (v as never))),
+    then: (onfulfilled) => gated().then((v) => (onfulfilled ? onfulfilled(v) : (v as never))),
   };
   return ch;
 };
@@ -108,6 +115,7 @@ beforeEach(() => {
   h.round = 1;
   h.aiReads = 0;
   h.gate = null;
+  h.roundGate = null;
   h.failNextDispatch = false;
 });
 
@@ -268,6 +276,35 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     await dispatchAiReviewTurns('task-ownfail', 'submitted work');
     expect(h.dispatchCalls).toHaveLength(2);
     expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
+  });
+
+  it('parks SYNCHRONOUSLY with the lock check — a gated round read cannot reorder it', async () => {
+    // an await before the Map write would let the winner reach its dispatch decision first
+    // and mint an uncorrected turn — the exact #380 loss, invisible to an awaited test
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-sync', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    let releaseRound!: () => void;
+    h.roundGate = new Promise<void>((resolve) => (releaseRound = resolve));
+    const losing = correction('task-sync', 'rev-1'); // deliberately NOT awaited yet
+    release(); // the winner runs its dispatch decision while the round read is still gated
+    await plain;
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(true);
+    releaseRound();
+    h.roundGate = null;
+    await expect(losing).resolves.toBe(false);
+  });
+
+  it('a correction bound to an OLD round mints nothing — never a new round first turn', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    h.round = 2; // the settle's round (1) is no longer live
+    expect(await correction('task-stale', 'rev-1', 1)).toBe(false);
+    expect(h.dispatchCalls).toHaveLength(0);
+    await dispatchAiReviewTurns('task-stale', 'submitted work');
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false); // the live round's own first turn
   });
 
   it('a failed carried mint leaves the intent parked for the re-fire (consumed only after dispatch)', async () => {

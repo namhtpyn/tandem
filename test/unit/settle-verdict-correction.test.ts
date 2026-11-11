@@ -109,6 +109,9 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.verdictCorrection).toBe(true);
     expect(h.dispatched[0]?.verdictlessReviewerId).toBe('rev-1');
+    // the SETTLE's round rides the call (#380): without it the lock-loss park would be a
+    // silent no-op and the bounded retry would be burned by a plain turn again
+    expect(h.dispatched[0]?.round).toBe(1);
   });
 
   it('a returning reviewer in round 2 with only a PREVIOUS-round turn still gets the corrected retry', async () => {
@@ -119,6 +122,7 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.parks).toHaveLength(0);
     expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]?.round).toBe(2); // the settle's round, not a fixed 1
   });
 
   it('a PRIOR completed turn this round -> decision park (the corrected retry already failed)', async () => {

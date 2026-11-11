@@ -1596,12 +1596,11 @@ const reviewMintInFlight = new Set<string>();
  *  sent. The park is SYNCHRONOUS with the lock check and bound to the round the caller's
  *  settle was dispatched for (DispatchOpts.round), so no await can reorder it behind the
  *  winner's decision and no round bump can re-bind it. An intent nobody consumed waits for
- *  that reviewer's next mint (a recovery caller — the lazy mint's settle-owned ordering
- *  defers it there), never rides another reviewer's turn, and is pruned at the task's next
- *  mint in a newer round, so a CORRECTION block can never land on a new round's first-turn
- *  brief. Keyed per (task, reviewer): two parked corrections never overwrite each other. */
-type ReviewMintIntent = { reviewerId: string; round: number };
-const reviewMintIntents = new Map<string, ReviewMintIntent>();
+ *  that reviewer's next mint (a recovery caller), never rides another reviewer's turn, and
+ *  is pruned on the task's next mint in a newer round, so a CORRECTION block can never land
+ *  on a new round's first-turn brief. Keyed per (task, reviewer): two parked corrections
+ *  never overwrite each other. */
+const reviewMintIntents = new Map<string, number>(); // `${taskId}:${reviewerId}` -> round
 const reviewMintIntentKey = (taskId: string, reviewerId: string) => `${taskId}:${reviewerId}`;
 
 /** queue the correction this caller would have dispatched had it won the lock (#380).
@@ -1613,32 +1612,31 @@ const reviewMintIntentKey = (taskId: string, reviewerId: string) => `${taskId}:$
 function parkReviewMintIntent(taskId: string, opts?: DispatchOpts) {
   if (opts?.verdictCorrection !== true || !opts.verdictlessReviewerId) return;
   if (typeof opts.round !== 'number' || opts.round <= 0) return;
-  reviewMintIntents.set(reviewMintIntentKey(taskId, opts.verdictlessReviewerId), {
-    reviewerId: opts.verdictlessReviewerId,
-    round: opts.round,
-  });
+  reviewMintIntents.set(reviewMintIntentKey(taskId, opts.verdictlessReviewerId), opts.round);
 }
 
-/** does a parked correction belong to THIS dispatch? Round and reviewer are both in the
- *  key; a round mismatch means the intent outlived its round (the block must never ride a
- *  new round's first-turn brief) and is dropped. */
+/** the bounded retry is SPENT: the reviewer's turn settled verdict-less again and the round
+ *  parks on the owner (#276), so a later restore turn must not carry a CORRECTION block for
+ *  a retry that already ran (#380) */
+export function dropReviewMintIntent(taskId: string, reviewerId: string) {
+  reviewMintIntents.delete(reviewMintIntentKey(taskId, reviewerId));
+}
+
+/** does a parked correction belong to THIS dispatch? Reviewer and round are both in the
+ *  key/value; a round mismatch means the intent outlived its round and must never ride a
+ *  new round's first-turn brief (the prune below clears those; this comparison is the
+ *  carry's own gate) */
 function reviewMintIntentFor(taskId: string, round: number, reviewerId: string): boolean {
-  const key = reviewMintIntentKey(taskId, reviewerId);
-  const intent = reviewMintIntents.get(key);
-  if (!intent) return false;
-  if (intent.round !== round) {
-    reviewMintIntents.delete(key);
-    return false;
-  }
-  return true;
+  return reviewMintIntents.get(reviewMintIntentKey(taskId, reviewerId)) === round;
 }
 
-/** drop every intent of this task that outlived its round — a newer round's mint may never
- *  evaluate the stale reviewer's row, so the drop cannot wait for that row */
+/** MEMORY HYGIENE, behaviorally inert (the carry gate above already refuses a stale round):
+ *  drop every intent of this task that outlived its round, including the reviewers whose
+ *  rows a newer round's mint never evaluates again */
 function pruneReviewMintIntents(taskId: string, round: number) {
   const prefix = `${taskId}:`;
-  for (const [key, intent] of reviewMintIntents) {
-    if (key.startsWith(prefix) && intent.round !== round) reviewMintIntents.delete(key);
+  for (const [key, intentRound] of reviewMintIntents) {
+    if (key.startsWith(prefix) && intentRound !== round) reviewMintIntents.delete(key);
   }
 }
 
@@ -1646,8 +1644,7 @@ function pruneReviewMintIntents(taskId: string, round: number) {
  *  parked intent must still apply when the park restore re-fires the turn. */
 function consumeReviewMintIntent(taskId: string, round: number, reviewerId: string) {
   const key = reviewMintIntentKey(taskId, reviewerId);
-  const intent = reviewMintIntents.get(key);
-  if (intent && intent.round === round) reviewMintIntents.delete(key);
+  if (reviewMintIntents.get(key) === round) reviewMintIntents.delete(key);
 }
 
 /** the dispatch's correction flag: the caller's own #276 retry, or the parked intent this
@@ -1662,6 +1659,12 @@ function correctionFlag(opts: DispatchOpts | undefined, carried: boolean): boole
  *  mint that throws parks instead, and the restore's re-fire must still carry the retry */
 function settleReviewMintIntent(taskId: string, round: number, reviewerId: string, correction: boolean) {
   if (correction) consumeReviewMintIntent(taskId, round, reviewerId);
+}
+
+/** a correction caller bound to a round that is no longer live (#380): its CORRECTION
+ *  block may never ride a new round's first-turn brief, so the mint is a no-op */
+function staleSettleRound(opts: DispatchOpts | undefined, round: number): boolean {
+  return typeof opts?.round === 'number' && opts.round !== round;
 }
 
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
@@ -1751,6 +1754,8 @@ async function dispatchAiReviewTurnsUnlocked(
   if (round === 0) return false;
   // a stale correction intent of a round that already closed can never ride this round
   pruneReviewMintIntents(taskId, round);
+  // …and neither can a caller whose settle round is no longer live (#380)
+  if (staleSettleRound(opts, round)) return false;
   // REVIEW-TURN MINT GATE (#401): a turn is owed only while the review flow still owns
   // the task (reviewTurnAllowed: in review, or a gating block from an in-review origin —
   // a park and an owner move own the task instead). Review turns take no dispatch claim,
