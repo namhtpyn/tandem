@@ -45,7 +45,7 @@ task_runs(id, message_id -> task_messages.id cascade NOT NULL, employee_id -> us
 tasks.workflow: owner_id, reviewers text[], question_chain text[] (loop guard state)
 task_obligations(id, task_id -> tasks.id cascade, employee_id -> user.id, role: answer|approval, status: pending|fulfilled|cancelled, created_at, resolved_at, resolved_by) — single source of "who acts next"; replaces question_holder_id + review_approvals (one migration backfills and drops both). answer moves on forward (old row resolved, new row pending); approvals spawn one row per reviewer per round (shared timestamp = round identity; a round with any cancelled row is dead -> request-changes resets approvals); drives the waiting-on-you inbox + badge (tasks.inbox: items + counts by role) and the company-wide awaiting-decision queue (2026-10-31, #91): tasks.listPaged accepts awaitingDecision — true = ONLY tasks holding ≥1 PENDING obligation (any role, any holder; the empty set short-circuits to an empty page), composable with q/statusId/projectId/assigneeId/inboxOfMe, omitted/false = no filtering; session tier — every authenticated reader sees the company queue, not just their own. OBLIGATION LIFECYCLE (#205): a PENDING obligation never outlives the state that makes it actionable — setStatus teardown resolves status CATEGORIES, never seeded ids: any settle into a done/cancelled-category status (seeded or custom) tears the review round down and cancels every PENDING obligation (both roles); any move out of the waiting_answer category cancels PENDING ANSWER obligations; the inbox, badge and awaiting-decision queue therefore never render a settled task
 task_assignments(id, task_id cascade, employee_id set null, reason, actor_id, started_at, ended_at) — append-only assignee ledger; current assignee stays denormalized on tasks.assignee_id; every change (create/update/reassign) flows through recordAssignment; derived "X -> Y" activity; recent rows feed the reassign ping-pong loop guard
-tasks.parent_task_id -> tasks.id (set null), tasks.pre_block_status — subtask nesting, unlimited depth; children are full tasks (own assignee/runs/reviewers); parent auto-blocks while any child is non-terminal (done or cancelled-category), restoring pre_block_status when all children land terminal — derived, no drift; UNBLOCK RESTORE LAW (2026-10-31, #88): the restore target resolves against task_statuses before the write — an unknown/malformed id falls back to to-do (this write bypasses the setStatus membership guard, so a stale id would re-create a dangling tasks.status — the #62 class), and a working-category target restores to to-do instead (a working status must be backed by a live run; the dispatcher scans ready-category only, so restore-to-doing dead-ended the task — prod 9515f3f8 sat stranded 4+ days after its 2026-10-27 unblock); PARK-ORIGIN RESTORE (2026-11-01, #202): a review park (REVIEW LAW) persists its own origin in tasks.park_from_status in the same write that flips the task to blocked; when every child lands terminal the unblock arm fires for a parked task too — the restore target is the recorded pre-park status, resolved against task_statuses with an unknown-id fallback to in-review (the only park origin), NEVER the to-do demotion (a to-do restore re-enters the ready-category dispatch scan and bypasses the open review round); park origin outranks a stale pre_block_status, both columns clear in the single unblock write, and the restored round's parked reviewer turn re-dispatches (unblock-resume parity); GUARDED GATING WRITE (2026-11-02, #208): both gating flips are single conditional writes — the auto-block guarded on the row not being blocked yet, the unblock restore guarded on the row still being blocked AND on the ORIGIN it read (a statuses.remove re-home rewrites the origin on a blocked row, so an unpinned restore would write the stale target it resolved — a deleted status id, i.e. a ghost task, or the #88 to-do demotion) — each returning the affected row as the sole race arbiter against a concurrent owner move (the status-category resolve ahead of the restore opens an interleave window a manual settle can win); a zero-row result means the concurrent writer owns the outcome: the losing arm appends no activity row, replays no reviewer turn and stops its walk there (the winner propagates parent gating itself — every status write path re-runs refreshParentGating), so a stale read can never resurrect a settled task, stomp a park's origin memory or double-mint the restored turn; the manual status move also clears park_from_status (owner resolution wins); submit is refused while children are open; child briefs carry "This is a subtask of: <parent title>"
+tasks.parent_task_id -> tasks.id (set null), tasks.pre_block_status — subtask nesting, unlimited depth; children are full tasks (own assignee/runs/reviewers); parent auto-blocks while any child is non-terminal (done or cancelled-category), restoring pre_block_status when all children land terminal — derived, no drift; UNBLOCK RESTORE LAW (2026-10-31, #88): the restore target resolves against task_statuses before the write — an unknown/malformed id falls back to to-do (this write bypasses the setStatus membership guard, so a stale id would re-create a dangling tasks.status — the #62 class), and a working-category target restores to to-do instead (a working status must be backed by a live run; the dispatcher scans ready-category only, so restore-to-doing dead-ended the task — prod 9515f3f8 sat stranded 4+ days after its 2026-10-27 unblock); PARK-ORIGIN RESTORE (2026-11-01, #202): a review park (REVIEW LAW) persists its own origin in tasks.park_from_status in the same write that flips the task to blocked; when every child lands terminal the unblock arm fires for a parked task too — the restore target is the recorded pre-park status, resolved against task_statuses with an unknown-id fallback to in-review (the only park origin), NEVER the to-do demotion (a to-do restore re-enters the ready-category dispatch scan and bypasses the open review round); park origin outranks a stale pre_block_status, both columns clear in the single unblock write, and the restored round's parked reviewer turn re-dispatches (unblock-resume parity); GUARDED GATING WRITE (2026-11-02, #208): both gating flips are single conditional writes — the auto-block guarded on the row not being blocked yet, the unblock restore guarded on the row still being blocked AND on the ORIGIN it read (a statuses.remove re-home rewrites the origin on a blocked row, so an unpinned restore would write the stale target it resolved — a deleted status id, i.e. a ghost task, or the #88 to-do demotion) — each returning the affected row as the sole race arbiter against a concurrent owner move (the status-category resolve ahead of the restore opens an interleave window a manual settle can win); a zero-row result means the concurrent writer owns the outcome: the losing arm appends no activity row, replays no reviewer turn and stops its walk there (the winner propagates parent gating itself — every status write path re-runs refreshParentGating), so a stale read can never resurrect a settled task, stomp a park's origin memory or double-mint the restored turn; the manual status move also clears park_from_status (owner resolution wins); OWNER-MOVE RECORD (2026-11-12, #430): the manual status write and its `status: <from> → <to>` activity row commit in ONE transaction (`tasks.setStatus` is the only writer of that body and every surface — sidebar, list, board drag — rides it), so a landed owner move can never exist without the record the prod watchdog reads to tell an owner move from a machine status write; the teardown/resume side effects run AFTER that commit, so their failure can never erase it; submit is refused while children are open; child briefs carry "This is a subtask of: <parent title>"
 task_proposals(id, task_id cascade, run_id cascade, kind: subtasks|reassign, payload jsonb, status: proposed|executed|rejected, decision_note, decided_by, decided_at, created_at) — agent routing proposals read ONLY from the settled run's JSON envelope (its `subtasks`/`reassign` fields — envelope-only routing, 2026-10-26: no [SUBTASKS]/[REASSIGN] text markers, so echoed task content can never route); human confirms via tasks.confirmProposal/rejectProposal — the confirm flow is the single structural writer. AUTO-EXECUTION LAW (2026-10-16): when EVERY routing target of a proposal resolves inside the proposing agent's own supervision chain, the proposal executes immediately at settle (no approval) through the same confirm path; outside-chain targets or unnamed routing still wait for a human, and the ping-pong loop guard still applies (a guarded target stays proposed rather than executing): subtasks are created full (assignee kept when inside the agent's supervision chain, else escalated to the agent's supervisor; unknown names land unassigned), reassigns write through the ledger with a loop guard refusing recent assignees; rejected notes ride the next brief to prevent re-propose loops
 seeded statuses add blocked (paused; next: todo) and cancelled (the cancelled-category terminal — abandoned was merged into it; abandonReview lands on cancelled)
 tasks page: "Needs my decision" toggle (badge = pending obligations on the current user) filters the list/board to inbox tasks; the company-wide "Awaiting decision" chip (deep link /tasks?awaiting=1, URL synced on toggle) filters to every task holding a pending obligation for anyone, rows and mobile cards badge "Waiting on <holder>" (the pending answer holder; "Review pending" while the task sits in-review with approvers outstanding) and the overview carries a live-count card linking to the same filtered list. DECISION-VISIBILITY LAW (2026-11-07): the "Needs my decision" toggle is URL-backed like the company chip — /tasks?inbox=1 restores it on mount and every toggle writes/clears the param, so the personal queue is linkable and survives reload/share; the app shell's Tasks nav item carries a live count badge of the signed-in user's pending obligations (tasks.inbox items, any role), absent at zero and kept fresh by the TASKS change resource; below lg, where the sidebar is a closed drawer, the same count rides the page navbar as a one-tap link into the queue — a human sees work waiting on them from every page (a collapsed desktop sidebar is icon-only by design — the count returns on expand), the Tasks page's toggle remains the one-click way in, and the badge query never fires while signed out or on the forced-rotation screen (ROTATION LOCK); the digits are decorative (aria-hidden) and the count is announced as words in the Tasks link name, so name-based navigation still reaches the queue. CREATE-AFFORDANCE LAW (#210): the toolbar "New task" entry renders on EVERY view state — List and Board, empty, filtered or not — for every EMPLOYEE-TIER session, so deleting the last task never leaves the tasks surface without a one-step create entry; the List empty-state CTA stays and both may coexist (below the employee tier the entry hides — see Roles & access, Employee-tier render rule #300)
@@ -1060,38 +1060,50 @@ non-positive deltas render no duration.
   (`max(round)`) holds NO PENDING row at all — a NULL-reviewer void row counts as
   an unsettled row whose owner settles it (the removal/boot heals for an in_review
   task, the block restore for a blocked one; the arm's silence is a declared
-  choice, not a liveness claim) — and the newest VERDICT row of that round
-  (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the task's last
-  write. The shapes are (1) an `in_review`-category task, and
+  choice, not a liveness claim) — holds at least one VERDICT row
+  (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`), and takes NO OWNER STATUS WRITE
+  newer than that round's newest verdict. The owner-status clause is the
+  manual-freedom test (#430): every manual status move is the `tasks.setStatus`
+  write and records an activity row (`task_messages`) whose body is
+  `status: <from> → <to>` — the only writer of that body in the codebase — so a
+  legal re-queue into an in-review status over an already-decided round always
+  carries its move NEWER than the verdict, while machine status writes (the gating
+  auto-block and auto-unblock, a park, the settle flip) log their own bodies and
+  can never borrow a manual move's shape; a task-row write that is NOT an owner
+  status write (the child-restore that lands the task back in review, a
+  title/assignee edit) no longer masks the shape either. Free text cannot forge the
+  row: the 1:1 activity payload must carry `kind = 'STATUS'` (a note or a human
+  reviewer's body that merely starts `status: ` is not a status write), and
+  `tasks.setStatus` commits the row in the SAME transaction as the status write
+  (OWNER-MOVE RECORD law), so a landed owner move always carries it. The body, not
+  the author, is the key: `author_id` is ON DELETE SET NULL, so a deleted mover's
+  row would read as a machine write. The
+  verdict ROW still commits before the flip's conditional task write, so a lost
+  settle flip leaves exactly this shape: the round closed with a verdict and no
+  owner move after it. The shapes are (1) an `in_review`-category task, and
   (2) from 2.78.20, under the same origin-column and version gates as the other
   #419 arms, a PAUSED gating auto-block (`park_from_status IS NULL`,
-  `pre_block_status` resolving to an `in_review` category). The write-vs-verdict
-  discriminator is the manual-freedom test in both: a legal move reads `updated_at`
-  last (a manual re-queue into an in-review status over an already-decided round
-  puts the verdict BEFORE the move and the later block, and a hand-made block
-  writes no origin), while a lost settle flip has the block write first and the
-  killing verdict after it (the verdict ROW is written before the flip's task
-  write, as separate statements). A `park` clears the gate origin in the SAME
-  write that sets `park_from_status`, so a parked row matches neither branch — a
-  parked round that closed is either a designed settle-failure recovery or the same
-  lost flip, and telling them apart is OUT of this arm (#431); a non-settle block
-  egress (#427) leaves the origin pointing at a NON-REVIEW status (a cancel that
-  re-blocks records the cancelled status), so the origin resolve excludes them, and
-  an origin that no longer RESOLVES (its status was deleted after the block recorded
-  it) is covered by the ORPHAN-HOME arm below (#432). BOTH
-  branches share one RESIDUAL: a task-row write that leaves the status unchanged
-  and stamps `updated_at` after the killing verdict masks the shape — the
-  child-restore that lands the task back in review, a title/assignee edit — while
-  a write that MOVES the status out of the review-flow shape is a legal
-  resolution, not a mask. Pre-existing for the in_review branch and tracked, with
-  the activity-stamp design that removes it, in #430.
+  `pre_block_status` resolving to an `in_review` category). A `park` clears the
+  gate origin in the SAME write that sets `park_from_status`, so a parked row
+  matches neither branch — a parked round that closed is either a designed
+  settle-failure recovery or the same lost flip, and telling them apart is OUT of
+  this arm (#431); a non-settle block egress (#427) leaves the origin pointing at a
+  NON-REVIEW status (a cancel that re-blocks records the cancelled status), so the
+  origin resolve excludes them, and an origin that no longer RESOLVES (its status
+  was deleted after the block recorded it) is covered by the ORPHAN-HOME arm below
+  (#432). The owner-status term reads `task_messages.task_id` / `body` /
+  `created_at` and `task_message_activities.message_id` / `payload` (probe law #5:
+  the column names are verified against the live schema, and the arm rides
+  `task_messages_task_idx`).
 - The ORPHAN-HOME arm (#432) reads the shape the wedge's block branch cannot: a
   PAUSED row where EITHER recorded origin (`pre_block_status` or `park_from_status`)
   names NO `task_statuses` row — its status was deleted while it homed a block — and NO
   recorded origin of that row resolves into review (a resolvable park home still lets
   the settle flip land, so such a row is not this shape: the wedge's park exclusion,
-  mirrored), with the SAME current-round predicate as the wedge (no PENDING row in
-  `max(round)`, the newest verdict row of that round NEWER than the task's last write).
+  mirrored), with the wedge's current-round clause (no PENDING row in `max(round)`,
+  at least one verdict row) plus its own verdict-vs-write ordering (the newest verdict
+  of that round NEWER than the task's last write — this arm keeps the simpler `updated_at`
+  test; the wedge's owner-status discriminator is #430's).
   The dangling test is PER COLUMN (a row carrying both origins still fires when one of
   them lost its row). No ORDINARY write path produces it: a gating block records the
   task's own status (a row that exists at write time), a park records an in-review home,
@@ -1113,7 +1125,8 @@ non-positive deltas render no duration.
   echoed by other arms), the block branch's presence/absence at the version gate
   and, counted per branch (never a whole-SQL substring, which other arms satisfy),
   the current-round live-round clause, the verdict status list, the verdict round
-  binding and the write discriminator.
+  binding and the owner-status discriminator (present in both branches, and the
+  retired `updated_at` ordering absent from the wedge slice).
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
