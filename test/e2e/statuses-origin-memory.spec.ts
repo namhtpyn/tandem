@@ -194,8 +194,8 @@ test.describe('status origin memory (#432)', () => {
       const driftRehomed = await originOf(blockedE, 'pre_block_status');
       expect(driftRehomed, 'the drifted built-in is never chosen').not.toBe(TODO);
       expect(driftRehomed, 'the home never keeps the removed id').not.toBe(readyHome);
+      expect(driftRehomed, 'the LOWEST-POSITION ready survivor wins (LIVE, position 25)').toBe(live);
       expect((await statusRow(driftRehomed))?.category, 'the home still carries the ready category').toBe('ready');
-      expect(live, 'a same-category sibling existed for the resolver').toBeTruthy();
       await save({ ...todoRow, category: 'ready' });
 
       // (9b) the target is resolved LIVE by category, not from a frozen map: a category
@@ -208,8 +208,11 @@ test.describe('status origin memory (#432)', () => {
       expect(removedBucket.status(), 'a surviving same-category row is a faithful target').toBe(200);
       const bucketRehomed = await originOf(blockedF, 'pre_block_status');
       expect(bucketRehomed, 'the home never keeps the removed id').not.toBe(bucketGone);
+      // position order is the tie-break: case (4)'s BACKLOG row (23) outranks this case's
+      // BUCKET HOME (30), so the resolver must land there — a resolver that picked any
+      // row of the category would land on bucketHome and fail here
+      expect(bucketRehomed, 'the lowest-position backlog survivor wins').toBe(backlog);
       expect((await statusRow(bucketRehomed))?.category, 'the home lands on a surviving backlog row').toBe('backlog');
-      expect(bucketHome, 'a same-category sibling existed for the resolver').toBeTruthy();
       createdStatuses.splice(createdStatuses.indexOf(bucketGone), 1);
 
       // (9c) a category with no faithful target clears an INERT reference instead of
@@ -256,6 +259,7 @@ test.describe('status origin memory (#432)', () => {
       ).json;
     const save = (body: Record<string, unknown>) => page.request.post('/rpc/statuses/save', { data: { json: body } });
     const before = (await list()).find((s) => s.id === BLOCKED)!;
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
       const moved = await save({ ...before, category: 'ready' });
       expect(moved.status(), 'the block state category is frozen').toBe(400);
@@ -263,9 +267,15 @@ test.describe('status origin memory (#432)', () => {
       const renamed = await save({ ...before, name: `${before.name} ${suffix}` });
       expect(renamed.status(), 'name edits stay free').toBe(200);
       expect((await list()).find((s) => s.id === BLOCKED)?.category, 'the category never moved').toBe('paused');
+      // the freeze is ONE-WAY: a block state drifted by a pre-guard image (seeded here with
+      // raw SQL, the only writer left) repairs itself through the API
+      await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [BLOCKED]);
+      const repaired = await save({ ...before, category: 'paused' });
+      expect(repaired.status(), 'a drifted block state can be repaired in-product').toBe(200);
+      expect((await list()).find((s) => s.id === BLOCKED)?.category, 'the repair lands').toBe('paused');
     } finally {
-      const now = (await list()).find((s) => s.id === BLOCKED);
-      if (now && now.name !== before.name) await save({ ...now, name: before.name, category: 'paused' });
+      await sql.unsafe(`update task_statuses set category = 'paused', name = $2 where id = $1`, [BLOCKED, before.name]);
+      await sql.close();
     }
   });
 
@@ -309,19 +319,63 @@ test.describe('status origin memory (#432)', () => {
     }
   });
 
-  // A ready-category origin is the other half of the mapping  // A ready-category origin is the other half of the mapping: a delete must land the
+  // The block state is excluded from the re-home CANDIDATES by identity, not by its
+  // category: a block state drifted to ready by a pre-guard image (there is no API path
+  // left — the freeze above — so this is seeded with raw SQL) must never take a home,
+  // because a restore INTO the block clears the origin and strands the row.
+  test('a drifted block state is never a re-home target', async ({ page }) => {
+    await login(page);
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    const suffix = crypto.randomUUID().slice(0, 8);
+    let home = '';
+    try {
+      // the only other ready-category row becomes the block state itself
+      await sql.unsafe(`update task_statuses set category = 'done' where id = $1`, [TODO]);
+      await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [BLOCKED]);
+      const made = await page.request.post('/rpc/statuses/save', {
+        data: { json: { name: `Drift home ${suffix}`, position: 42, category: 'ready' } },
+      });
+      expect(made.status()).toBe(200);
+      home = ((await made.json()) as { json: Saved }).json.id;
+      const blocked = `status-origin-drifted-${suffix}`;
+      await sql.unsafe(
+        `insert into tasks (id, title, status, pre_block_status, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [blocked, BLOCKED, home],
+      );
+      await sql.unsafe(
+        `insert into tasks (id, title, status, parent_task_id, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [`${blocked}-c`, DOING, blocked],
+      );
+      const refused = await page.request.post('/rpc/statuses/remove', { data: { json: { id: home } } });
+      expect(refused.status(), 'the block state can never take a home').toBe(400);
+      expect(JSON.stringify(await refused.json())).toContain('no faithful home');
+      const rows = await sql.unsafe(`select pre_block_status as home from tasks where id = $1`, [blocked]);
+      expect(String((rows[0] as { home: string }).home), 'the blocked home survives the refusal').toBe(home);
+    } finally {
+      await sql.unsafe(`update task_statuses set category = 'paused' where id = $1`, [BLOCKED]);
+      await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [TODO]);
+      await sql.unsafe(`delete from tasks where id like 'status-origin-%'`);
+      if (home) await sql.unsafe(`delete from task_statuses where id = $1`, [home]);
+      await sql.close();
+    }
+  });
+
+  // A ready-category origin is the other half of the mapping: a delete must land the
   // recorded home on THAT category's built-in row, never on in-review (a wrong category
   // would restore a plain gated task into the review flow).
   test('a ready-category home re-homes onto the built-in ready status', async ({ page }) => {
     await login(page);
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     const suffix = crypto.randomUUID().slice(0, 8);
+    let home = '';
     try {
       const res = await page.request.post('/rpc/statuses/save', {
         data: { json: { name: `Triage ${suffix}`, position: 29, category: 'ready' } },
       });
       expect(res.status()).toBe(200);
-      const home = ((await res.json()) as { json: Saved }).json.id;
+      home = ((await res.json()) as { json: Saved }).json.id;
       const blocked = `status-origin-ready-${suffix}`;
       // a BLOCKED seed needs an OPEN child, or the repair's post-commit re-gate
       // legitimately restores it (children all terminal) and clears the asserted origin
@@ -340,6 +394,8 @@ test.describe('status origin memory (#432)', () => {
       const rows = await sql.unsafe(`select pre_block_status as home from tasks where id = $1`, [blocked]);
       expect(String((rows[0] as { home: string }).home), 'ready stays ready').toBe(TODO);
     } finally {
+      // custom statuses are not part of the cleanup fixture's sweep
+      if (home) await sql.unsafe(`delete from task_statuses where id = $1`, [home]);
       await sql.close();
     }
   });

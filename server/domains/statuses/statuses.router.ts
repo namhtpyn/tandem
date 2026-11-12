@@ -93,15 +93,16 @@ export const statusesRouter = os.router({
             .from(taskStatusesTable)
             .where(eq(taskStatusesTable.id, id))
         )[0];
-        // THE BLOCK STATE'S CATEGORY IS FROZEN (#432): it is the anchor every recorded
-        // machine home restores through and every paused-category discriminator resolves
-        // (the settle flip's paused branch, the mint gate, both sweeps, both probe arms).
-        // A recategorized block state re-keys or blinds ALL of them at once (blocked rows
-        // become dispatchable at Blocked→ready, terminal at Blocked→done), so only name,
-        // colour and position stay editable on it.
-        if (existing && id === STATUS.blocked && existing.category !== input.category)
+        // THE BLOCK STATE'S CATEGORY IS FROZEN TO 'paused' (#432): it is the anchor every
+        // recorded machine home restores through and every paused-category discriminator
+        // resolves (the settle flip's paused branch, the mint gate, both sweeps, both
+        // probe arms). A recategorized block state re-keys or blinds ALL of them at once
+        // (blocked rows become dispatchable at Blocked→ready, terminal at Blocked→done).
+        // The freeze is ONE-WAY: moving the category TO 'paused' always lands, so a
+        // workspace drifted on a pre-guard image can repair itself in-product.
+        if (existing && id === STATUS.blocked && input.category !== CATEGORY.PAUSED)
           throw new ORPCError('BAD_REQUEST', {
-            message: 'the block state category is fixed — name, colour and position stay editable',
+            message: "the block state category is fixed to 'paused' — name, colour and position stay editable",
           });
         if (existing && existing.category !== input.category) {
           // the blocker is the BLOCK STATE by IDENTITY, never the paused CATEGORY: the
