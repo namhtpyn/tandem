@@ -29,6 +29,17 @@ const h = vi.hoisted(() => ({
   casMiss: false,
   /** taskReviews read counter: [1] the verdict's own row, [2] the settle matrix, [3+] mint rows */
   reviewRead: 0,
+  /** #423: parent-gating calls made by a WON flip, with the status already written */
+  regated: [] as Array<{ taskId: string; status: string }>,
+  regateThrows: false,
+  /** #423 clause 6: the best-effort re-gate's LOGGED half */
+  warnings: [] as string[],
+  /** #423 composition pin: run the REAL gating service for one test */
+  realGating: false,
+  /** the task's children, read by the real gating walk */
+  children: [] as Array<{ status: string }>,
+  /** one-shot barrier inside the real gating walk's children read (await-shape pin) */
+  barrier: null as null | { promise: Promise<void>; release: () => void },
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -136,6 +147,24 @@ vi.mock('../../server/db/index', async () => {
         taskStatuses: { findMany: async () => h.statuses },
         aiEmployees: { findMany: async () => h.aiEmployees },
         user: { findMany: async () => [] },
+        // the real gating walk's reads (composition pin, #423)
+        tasks: {
+          findFirst: async (args: { where: { id: { eq: string } } }) =>
+            args.where.id.eq === h.task.id
+              ? {
+                  id: h.task.id,
+                  status: h.task.status,
+                  preBlockStatus: null,
+                  parkFromStatus: null,
+                  parkRearmAfter: null,
+                  parentTaskId: null,
+                }
+              : null,
+          findMany: async (args: { where: { parentTaskId: { eq: string } } }) => {
+            if (h.barrier) await h.barrier.promise;
+            return args.where.parentTaskId.eq === h.task.id ? h.children : [];
+          },
+        },
       },
     },
   };
@@ -179,6 +208,35 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
   };
 });
 
+// #423 clause 6: the re-gate's failure path must LOG and not surface. consola's child
+// loggers (`consola.withTag(...)`) carry their own warn, so a spy on the root instance
+// cannot see the service's lines — mock the module and record every warn.
+vi.mock('consola', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('consola')>();
+  const record = (...args: unknown[]) => void h.warnings.push(args.map((a) => String(a)).join(' '));
+  const child = new Proxy({} as Record<string, unknown>, { get: (_t, p) => (p === 'warn' ? record : () => {}) });
+  const root = new Proxy({} as Record<string, unknown>, {
+    get: (_t, p) => (p === 'withTag' ? () => child : p === 'warn' ? record : () => {}),
+  });
+  return { ...mod, consola: root, default: root };
+});
+
+// #423: the settle flip re-gates through a dynamic import (module graph stays acyclic at
+// load time). The mock records the call with the status the flip already wrote, so the
+// pin proves gating ran AFTER the write and from the FLIPPED status.
+vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/gating.service')>();
+  return {
+    ...mod,
+    refreshParentGating: async (taskId: string) => {
+      if (h.regateThrows) throw new Error('gating read failed');
+      h.regated.push({ taskId, status: h.task.status });
+      // the composition pin runs the REAL walk against this file's db mock
+      if (h.realGating) await mod.refreshParentGating(taskId);
+    },
+  };
+});
+
 import { dispatchAiReviewTurns, recordVerdict } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
@@ -203,6 +261,12 @@ beforeEach(() => {
   h.published = 0;
   h.casMiss = false;
   h.reviewRead = 0;
+  h.regated = [];
+  h.regateThrows = false;
+  h.warnings = [];
+  h.realGating = false;
+  h.children = [];
+  h.barrier = null;
 });
 
 describe('off-review settle refusal (#401)', () => {
@@ -388,5 +452,127 @@ describe('review-turn mint gate (#401)', () => {
     h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
     await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(true);
     expect(h.dispatched).toHaveLength(1);
+  });
+});
+
+// SETTLE-CLEARS-GATING LAW (#423): the end-of-round flip is where a round's machine
+// context ENDS. A decided round that settles out of a child-derived auto-block left
+// pre_block_status behind — an illegal shape (a live block has a PENDING row, a park
+// carries park_from_status) that every `flow still owns` reader misreads, and whose
+// spent park ladder would re-enter the park scan on the task's next block. The same
+// write therefore exhausts both origins and the ladder, and a WON flip re-gates from
+// the status it just wrote (best-effort: the settle already committed).
+describe('settle exhausts the gating context and re-gates (#423)', () => {
+  const arms = [
+    {
+      name: 'all-approved',
+      verdict: REVIEW_STATUS.APPROVED,
+      matrix: [{ round: 1, status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' }],
+      target: STATUS.done,
+      outcome: 'done',
+    },
+    {
+      name: 'all-rejected',
+      verdict: REVIEW_STATUS.REJECTED,
+      matrix: [{ round: 1, status: REVIEW_STATUS.REJECTED, reviewerId: 'rev-1' }],
+      target: STATUS.cancelled,
+      outcome: 'cancelled',
+    },
+    {
+      name: 'request_change',
+      verdict: REVIEW_STATUS.CHANGE_REQUESTED,
+      matrix: [{ round: 1, status: REVIEW_STATUS.CHANGE_REQUESTED, reviewerId: 'rev-1' }],
+      target: STATUS.todo,
+      outcome: 'returned',
+    },
+  ] as const;
+
+  for (const arm of arms) {
+    it(`${arm.name}: the winning flip clears both origins and resets the park ladder`, async () => {
+      h.matrixRows = [...arm.matrix];
+      const outcome = await recordVerdict('task-1', 'rev-1', arm.verdict, '', 'human');
+      expect(outcome).toEqual({ outcome: arm.outcome });
+      const set = h.flips[0]?.set ?? {};
+      expect(set.status).toBe(arm.target);
+      // presence AND value: a dropped key leaves undefined, which fails toBeNull here
+      expect(set.preBlockStatus).toBeNull();
+      expect(set.parkFromStatus).toBeNull();
+      expect(set.parkRearmAttempts).toBe(0);
+      expect(set.parkRearmAfter).toBeNull();
+      // every landing re-gates from ITS OWN target — the request_change arm is the one
+      // this law newly covers (the pre-diff code skipped the todo landing), so pinning
+      // only the grant arm leaves that arm free to lose its re-gate silently (#426 r1)
+      expect(h.regated).toEqual([{ taskId: 'task-1', status: arm.target }]);
+    });
+  }
+
+  it('the re-gate runs AFTER the flip wrote, from the FLIPPED status', async () => {
+    // the mock records h.task.status at call time, so a re-gate that ran before the
+    // write (or from the pre-flip status) is visible here as `in_review`
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.done }]);
+  });
+
+  it('a flip that loses to an owner move re-gates nothing (the owner propagates gating)', async () => {
+    h.task.status = STATUS.todo;
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'superseded' });
+    expect(h.regated).toHaveLength(0);
+  });
+
+  it('a settle out of a child-derived block clears the block origin (the #423 drift shape)', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.inReview };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    const set = h.flips[0]?.set ?? {};
+    expect(set.status).toBe(STATUS.done);
+    expect(set.preBlockStatus).toBeNull();
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.done }]);
+  });
+
+  it('COMPOSITION: a settle that still owns an open child lands BLOCKED with the settled status as its home (#423)', async () => {
+    // every other #423 test stubs gating, so none of them composes the two halves: here
+    // the REAL walk runs against this file's db mock, and the block write it produces is
+    // the assertion — a settle that never re-gates leaves the task in `done` (red)
+    h.realGating = true;
+    h.children = [{ status: STATUS.doing }];
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    const blockWrite = h.flips.at(-1)?.set ?? {};
+    expect(blockWrite.status).toBe(STATUS.blocked);
+    expect(blockWrite.preBlockStatus).toBe(STATUS.done);
+  });
+
+  it('the re-gate is AWAITED: the settle does not resolve before the gating walk completes (#426 r3)', async () => {
+    // fire-and-forget (`void refreshParentGating(...).catch()`) would let the verdict
+    // return — and publish — before the re-block lands; park the walk on a barrier and
+    // prove the settle is still pending behind it
+    h.realGating = true;
+    h.children = [{ status: STATUS.doing }];
+    let release!: () => void;
+    h.barrier = { promise: new Promise<void>((r) => (release = r)), release: () => release() };
+    let settled = false;
+    const running = recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human').then((v) => {
+      settled = true;
+      return v;
+    });
+    await new Promise((r) => setTimeout(r, 50)); // every other await drains; this one cannot
+    expect(settled).toBe(false);
+    h.barrier = null;
+    release();
+    await expect(running).resolves.toEqual({ outcome: 'done' });
+    expect(h.flips.at(-1)?.set.status).toBe(STATUS.blocked);
+  });
+
+  it('a failing re-gate is logged, never surfaced — the committed settle stands', async () => {
+    h.regateThrows = true;
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    expect(h.task.status).toBe(STATUS.done);
+    expect(h.notes.length).toBeGreaterThan(0); // the settle-arm note still lands
+    expect(h.published).toBeGreaterThan(0);
+    // clause 6's LOGGED half: a silent `catch {}` must not pass this pin (#426 r1)
+    expect(h.warnings.some((w) => w.includes('re-gate after the flip failed'))).toBe(true);
   });
 });

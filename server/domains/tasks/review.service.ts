@@ -79,6 +79,25 @@ async function categoryOf(statusId: string): Promise<string | null> {
   return statuses.find((s) => s.id === statusId)?.category ?? null;
 }
 
+/** SETTLE-CLEARS-GATING (#423): a settle can now leave the task in a PAUSED-category
+ *  block — the re-gate re-blocks a settled task that still owns an open child and records
+ *  the settled status as the block's home. Every heal whose discriminator is "the owner
+ *  settled this round" must resolve that shape too: a bare terminal-category check reads
+ *  the re-blocked row as live and leaves the freshly minted reviewer row + obligation
+ *  alive on a closed round. The home is resolved against task_statuses, never a bare id. */
+function settledByOwner(
+  cats: ReadonlyArray<{ id: string; category: string }>,
+  status: string,
+  preBlockStatus: string | null,
+): boolean {
+  const catOf = (id: string) => cats.find((c) => c.id === id)?.category;
+  const cat = catOf(status);
+  if (cat === CATEGORY.DONE || cat === CATEGORY.CANCELLED) return true;
+  if (cat !== CATEGORY.PAUSED || preBlockStatus === null) return false;
+  const home = catOf(preBlockStatus);
+  return home === CATEGORY.DONE || home === CATEGORY.CANCELLED;
+}
+
 export async function logActivity(
   taskId: string,
   kind: ActivityKind,
@@ -408,16 +427,19 @@ async function supersedeAllPendingRows(taskId: string) {
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
 }
 
-const TERMINAL_CATEGORIES = new Set<string>([CATEGORY.DONE, CATEGORY.CANCELLED]);
-
 /** TERMINAL RESIDUE (#365 r5): the settle's flip is its FIRST write, so a crash or a
  *  throwing teardown after the flip leaves a settled task still carrying the void row
  *  (and its siblings' pending approvals) — and nothing else would ever clear a
  *  CURRENT-round row. A settled task must never keep a pending review row or a
  *  pending approval obligation (#361 r6). Idempotent: on a clean task both writes are
  *  no-ops. Returns true when the task is terminal (the caller must not settle it). */
-async function healTerminalResidue(taskId: string, statusId: string): Promise<boolean> {
-  if (!TERMINAL_CATEGORIES.has((await categoryOf(statusId)) ?? '')) return false;
+async function healTerminalResidue(taskId: string, statusId: string, preBlockStatus: string | null): Promise<boolean> {
+  // SETTLE-CLEARS-GATING (#423): a settle can leave the task in a PAUSED block whose
+  // recorded home is terminal (the re-gate re-blocks a settled task that still owns an
+  // open child). That shape is settled too — a bare terminal-category check would leave
+  // its residue (void row, pending approvals) unreachable by every healer.
+  const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  if (!settledByOwner(cats, statusId, preBlockStatus)) return false;
   // same trigger-last ordering as the settle: the row sweep erases the signature the
   // scans key on, so a failure before it must leave the row for the next trigger
   await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
@@ -453,10 +475,13 @@ export async function discardVoidRows(taskId: string) {
  *  wins and this call reports false. */
 export async function settleExtinguishedRound(taskId: string): Promise<boolean> {
   const taskRow = (
-    await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
+    await db
+      .select({ status: tasks.status, updatedAt: tasks.updatedAt, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
   )[0];
   if (!taskRow) return false;
-  if (await healTerminalResidue(taskId, taskRow.status)) return false;
+  if (await healTerminalResidue(taskId, taskRow.status, taskRow.preBlockStatus)) return false;
   if ((await categoryOf(taskRow.status)) !== CATEGORY.IN_REVIEW) return false;
   const round = await currentRound(taskId);
   if (round === 0) return false;
@@ -479,8 +504,18 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   const flipped = await db
     .update(tasks)
     // PARK-REARM LAW (#365 r6): the flip leaves BLOCKED, so the ladder is inert —
-    // a settled round must never hand a spent ladder to the task's next park
-    .set({ status: target, updatedAt: new Date(), parkRearmAttempts: 0, parkRearmAfter: null })
+    // a settled round must never hand a spent ladder to the task's next park.
+    // SETTLE-CLEARS-GATING (#423): the same write exhausts the round's gating context —
+    // a surviving origin would read as a live machine block/park on a task whose round
+    // is closed.
+    .set({
+      status: target,
+      updatedAt: new Date(),
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+      preBlockStatus: null,
+      parkFromStatus: null,
+    })
     // TERMINAL ARBITRATION (#292 r2): pin the status AND the updatedAt stamp this
     // call read — a manual round-trip back into the same in-review status (or a
     // submit re-flip) must beat a stale settle, never be stomped by it
@@ -496,6 +531,24 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
   await extinguishVoidPendingRows(taskId, round);
+  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones. This
+  // flip changed the task's status, so a still-open child must re-block it FROM the
+  // landed status (a re-blocking settle keeps its ancestors gated, since the settled task
+  // is still open), and a task that was its parent's LAST open child releases that
+  // parent's gate by landing TERMINAL — a to-do landing lowers no open count. PLACEMENT
+  // is load-bearing both ways: the residue writes above must run FIRST (they are
+  // retryable only while the row is still terminal — a throw after a re-block would
+  // strand a closed round's void row on a paused task no healer can reach), and the
+  // re-gate itself must not be skippable by the notification writes below (a skipped
+  // re-gate leaves a parent gated with zero open children, and no retry can re-gate
+  // since the CAS cannot re-win). Best-effort: the flip already committed, so a gating
+  // failure is logged, never surfaced. Dynamic import keeps the module graph acyclic.
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,
@@ -508,17 +561,6 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     { roundClosed: true, round, reviewersRemoved: true },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-  if (target !== TODO_STATUS) {
-    // a TERMINAL settle flips the task's status: re-gate its parents (every other
-    // lifecycle flip does — an auto-blocked parent must unblock when its last child
-    // lands terminal). Dynamic import keeps the module graph acyclic at load time.
-    try {
-      const { refreshParentGating } = await import('./gating.service');
-      await refreshParentGating(taskId);
-    } catch (e) {
-      log.warn(`settle: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-    }
-  }
   return true;
 }
 
@@ -1916,7 +1958,23 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
   const { inReview, paused } = await flipScopeIds();
   const flipped = await db
     .update(tasks)
-    .set({ status, updatedAt: new Date() })
+    .set({
+      status,
+      updatedAt: new Date(),
+      // ORIGIN EXHAUSTION (#423): the flip ENDS the round's machine context, so the same
+      // write exhausts it. A surviving origin is drift: an origin is the restore home of
+      // a block that exists, and every discriminator resolves those columns on a PAUSED
+      // row only — so a non-blocked row carrying one is exactly the shape the #419 arms
+      // defend against promoting (they keep the block arm recording `cur.status`, never a
+      // surviving memory). The ladder reset is the load-bearing half: parkRound
+      // INCREMENTS a surviving ledger, so a settled round must never hand its spent
+      // re-arm ladder to the task's next park (a mid-ladder start, or a FINAL park with
+      // no auto-recovery).
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    })
     .where(
       and(
         eq(tasks.id, taskId),
@@ -1930,7 +1988,20 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
       ),
     )
     .returning({ id: tasks.id });
-  return flipped.length > 0;
+  if (flipped.length === 0) return false;
+  // RE-GATE (#423): the flip changed the gating input (this task's status), so the derived
+  // block is recomputed — a task that still owns an open child is blocked again FROM THE
+  // NEW STATUS (todo/done/cancelled), never from the pre-flip in-review origin, and a
+  // done/cancelled settle unblocks its parents (the same walk). A plain in-review settle
+  // pays a few reads; the gate is fault-isolated because the flip already committed and
+  // its outcome must never be turned into a caller-visible error (BEST-EFFORT-BETWEEN).
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the flip failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
+  return true;
 }
 
 /** WAITING-ANSWER HOLD (#288): the task is in a waiting_answer category at settle
@@ -1986,9 +2057,14 @@ async function holdVerdictForWaitingAnswer(
   //    only), so heal — supersede the just-reverted row and cancel the APPROVAL
   //    obligations the teardown skipped, including anything the spawn above
   //    inserted. Never resurrect state on a settled task.
-  const after = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const after = (
+    await db
+      .select({ status: tasks.status, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+  )[0];
   const afterCat = after ? cats.find((c) => c.id === after.status)?.category : undefined;
-  if (!after || afterCat === CATEGORY.DONE || afterCat === CATEGORY.CANCELLED) {
+  if (!after || settledByOwner(cats, after.status, after.preBlockStatus)) {
     await db
       .update(taskReviews)
       .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
@@ -2243,11 +2319,15 @@ export async function listReviews(taskId: string) {
  * strand the parked round); the standard teardown supersedes PENDING rows, cancels
  * approval obligations and the roster reverts. A vanished task heals nothing. */
 async function selfHealEscalationIfSettled(taskId: string, originalReviewers: string[]): Promise<boolean> {
-  const postGate = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const postGate = (
+    await db
+      .select({ status: tasks.status, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+  )[0];
   if (postGate == null) return false;
   const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
-  const cat = cats.find((c) => c.id === postGate.status)?.category;
-  if (cat !== CATEGORY.DONE && cat !== CATEGORY.CANCELLED) return false;
+  if (!settledByOwner(cats, postGate.status, postGate.preBlockStatus)) return false;
   await teardownOpenRound(taskId, 'escalation lost the race');
   await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   return true;
@@ -2472,9 +2552,9 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     // the status term alone cannot arbitrate two failure arms parking one round (each
     // would land a park and burn a ladder rung) — the unwritten park memory is that
     // branch's arbiter. It is scoped to the block branch on purpose: an in-review task
-    // can legally carry a stale park origin (a settle-matrix flip out of a park writes
-    // only the status; a resubmit brings the origin back), and refusing there would
-    // wedge every later park of that round.
+    // can legally carry a stale park origin (a resubmit of a task whose block/park memory
+    // an egress left behind — #427 covers the two non-settle egresses), and refusing
+    // there would wedge every later park of that round.
     .where(
       and(
         eq(tasks.id, taskId),

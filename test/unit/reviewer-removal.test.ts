@@ -21,6 +21,7 @@ import {
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
+  taskPreBlockStatus: null as string | null,
   taskFlips: [] as string[],
   trackTaskStatusOnFlip: false,
   statuses: [] as Array<{ id: string; category: string }>,
@@ -45,7 +46,21 @@ const h = vi.hoisted(() => ({
   deletedById: [] as string[],
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
-  regated: [] as string[],
+  /** #423: the round-close re-gate, with the status the flip already wrote */
+  regated: [] as Array<{ taskId: string; status: string }>,
+  /** the status of the LAST tasks write — the re-gate's "already written" witness */
+  lastFlipStatus: '' as string,
+  regateThrows: false,
+  /** #423 clause 6: the best-effort re-gate's LOGGED half */
+  warnings: [] as string[],
+  /** the writes already applied when the round-close re-gate ran (placement pin) */
+  regatedWrites: [] as string[][],
+  /** notes already on the thread when the re-gate ran (placement pin: 0) */
+  regatedNotes: [] as number[],
+  /** make the obligation teardown throw (the retryable-residue placement pin) */
+  obligationsThrow: false,
+  /** one-shot barrier inside the round-close re-gate (await-shape pin) */
+  gateBarrier: null as null | { promise: Promise<void>; release: () => void },
   dispatches: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
   runningReviewRuns: [] as Array<{ id: string }>,
@@ -97,7 +112,9 @@ vi.mock('../../server/db/index', async () => {
                   h.statusReadThrows -= 1;
                   throw new Error('db down');
                 }
-                return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+                return Promise.resolve([
+                  { status: h.taskStatus, updatedAt: h.taskUpdatedAt, preBlockStatus: h.taskPreBlockStatus },
+                ]);
               }
               if (table === taskRuns) {
                 h.captureCond = cond;
@@ -145,6 +162,7 @@ vi.mock('../../server/db/index', async () => {
                 cond,
               });
               if (table === tasks) {
+                if (typeof set.status === 'string') h.lastFlipStatus = set.status;
                 if (h.flipWins && typeof set.status === 'string') {
                   h.taskFlips.push(set.status);
                   if (h.trackTaskStatusOnFlip) h.taskStatus = set.status;
@@ -207,6 +225,7 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
       h.cancelled.push(String(args[0]));
     },
     cancelAllObligations: async (...args: unknown[]) => {
+      if (h.obligationsThrow) throw new Error('obligations down');
       h.cancelledAll.push(String(args[0]));
     },
     deleteObligationById: async (id: string) => {
@@ -229,9 +248,26 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
   refreshParentGating: async (taskId: string) => {
-    h.regated.push(taskId);
+    if (h.gateBarrier) await h.gateBarrier.promise;
+    if (h.regateThrows) throw new Error('gating read failed');
+    // the witness is the LAST tasks write: a re-gate that ran before any flip records ''
+    h.regated.push({ taskId, status: h.lastFlipStatus });
+    h.regatedWrites.push(h.updates.map((u) => `${u.table}:${String(u.set.status ?? '')}`));
+    h.regatedNotes.push(h.notes.length);
   },
 }));
+
+// #423 clause 6: consola child loggers carry their own warn (a root-instance spy cannot
+// see the service's lines) — mock the module and record every warn.
+vi.mock('consola', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('consola')>();
+  const record = (...args: unknown[]) => void h.warnings.push(args.map((a) => String(a)).join(' '));
+  const child = new Proxy({} as Record<string, unknown>, { get: (_t, p) => (p === 'warn' ? record : () => {}) });
+  const root = new Proxy({} as Record<string, unknown>, {
+    get: (_t, p) => (p === 'withTag' ? () => child : p === 'warn' ? record : () => {}),
+  });
+  return { ...mod, consola: root, default: root };
+});
 
 import {
   dispatchAiReviewTurns,
@@ -257,6 +293,7 @@ function renderCond(cond: unknown): string {
 
 beforeEach(() => {
   h.taskStatus = STATUS.inReview;
+  h.taskPreBlockStatus = null;
   h.taskFlips = [];
   h.trackTaskStatusOnFlip = false;
   h.statuses = [
@@ -280,6 +317,13 @@ beforeEach(() => {
   h.resolved = [];
   h.notes = [];
   h.regated = [];
+  h.lastFlipStatus = '';
+  h.regateThrows = false;
+  h.warnings = [];
+  h.regatedWrites = [];
+  h.regatedNotes = [];
+  h.obligationsThrow = false;
+  h.gateBarrier = null;
   h.dispatches = [];
   h.aiEmployees = [];
   h.runningReviewRuns = [];
@@ -335,8 +379,18 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(flipSql).toContain('"updated_at" =');
     expect(h.cancelledAll).toEqual(['task-1']);
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
-    // a bounce is NOT terminal: no parent re-gate (the task stays open)
-    expect(h.regated).toEqual([]);
+    // SETTLE-CLEARS-GATING (#423): EVERY landing re-gates — a still-open child must
+    // re-block the task from the landed status; a parent is released only by a TERMINAL
+    // landing (it is what lowers the parent's open count), never by this to-do bounce.
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
+    // the flip exhausts the round's gating context: both machine origins clear in
+    // the same write (a surviving origin reads as a live block/park on a closed round)
+    expect(flip?.set.preBlockStatus).toBeNull();
+    expect(flip?.set.parkFromStatus).toBeNull();
+    // ... and the ladder resets with them: parkRound INCREMENTS a surviving ledger, so a
+    // settled round must not hand its spent ladder to the task's next park (#423)
+    expect(flip?.set.parkRearmAttempts).toBe(0);
+    expect(flip?.set.parkRearmAfter).toBeNull();
   });
 
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
@@ -351,6 +405,9 @@ describe('settleExtinguishedRound (#365)', () => {
     // the flip leaves BLOCKED, so the park ladder is inert — a settled round must not
     // hand a spent ladder to the task's next park (#365 r6)
     expect(h.updates.find((u) => u.table === 'tasks')?.set.parkRearmAfter).toBeNull();
+    // ... and both machine origins leave with it (#423)
+    expect(h.updates.find((u) => u.table === 'tasks')?.set.preBlockStatus).toBeNull();
+    expect(h.updates.find((u) => u.table === 'tasks')?.set.parkFromStatus).toBeNull();
     // terminal arm: task-wide supersede of every pending row (all rounds); the approved
     // round keeps its FULFILLED approvals (matrix parity with settleRound)
     const sweeps = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
@@ -358,7 +415,7 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.cancelled).toEqual(['task-1']);
     expect(h.cancelledAll).toEqual([]);
     // a TERMINAL settle re-gates the task's parents (an auto-blocked parent unblocks)
-    expect(h.regated).toEqual(['task-1']);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.done }]);
   });
 
   it('a deleted reviewer plus a decided rejection cancels the task', async () => {
@@ -369,7 +426,98 @@ describe('settleExtinguishedRound (#365)', () => {
       ],
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
-    expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.cancelled);
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.set.status).toBe(STATUS.cancelled);
+    // the clears are arm-INDEPENDENT: pin them on this arm too, or a branch-conditional
+    // clear regresses silently here (#426 r3)
+    expect(flip?.set.preBlockStatus).toBeNull();
+    expect(flip?.set.parkFromStatus).toBeNull();
+    expect(flip?.set.parkRearmAttempts).toBe(0);
+    expect(flip?.set.parkRearmAfter).toBeNull();
+    // every landing re-gates, the cancelled one included (#423)
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.cancelled }]);
+  });
+
+  it('the round-close re-gate runs AFTER the flip, from the landed status (#423)', async () => {
+    // the recorded witness is the status of the LAST tasks write: a re-gate that ran
+    // before the flip (or on a lost one) records nothing
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    expect(await settleExtinguishedRound('task-1')).toBe(true);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
+  });
+
+  it('the round-close re-gate runs AFTER the residue writes, before the notification ones (#426 r4)', async () => {
+    // PLACEMENT is two-sided: the void-row teardown must be retryable when the row is
+    // still terminal, and the re-gate must not be skipped by a later notification write.
+    // So the re-gate runs after the supersede/extinguish writes and before the note.
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+      ],
+    ];
+    expect(await settleExtinguishedRound('task-1')).toBe(true);
+    const seen = h.regatedWrites[0] ?? [];
+    // BOTH residue writes must have landed: the task-wide supersede AND the void-row
+    // extinguish (the machine signature every boot/removal scan keys on). A re-gate
+    // merely after the plain supersede would let a teardown throw strand the signature
+    // on a paused task — counting the supersede writes is what separates the two.
+    expect(seen.filter((t) => t === `taskReviews:${REVIEW_STATUS.SUPERSEDED}`)).toHaveLength(2);
+    expect(h.regatedNotes[0]).toBe(0); // ... and the settlement note had NOT landed yet
+    expect(h.notes).toHaveLength(1); // it lands after the re-gate
+  });
+
+  it('a teardown throw leaves a still-TERMINAL row and re-gates nothing (the boot heal retries it) (#426 r4)', async () => {
+    // the other side of the placement: a throw BEFORE the residue writes must not be
+    // preceded by a re-block, or the void row strands on a paused row no healer reaches
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    h.obligationsThrow = true;
+    await expect(settleExtinguishedRound('task-1')).rejects.toThrow('obligations down');
+    expect(h.taskFlips).toEqual([STATUS.todo]); // the flip committed, the row stays terminal
+    expect(h.regated).toEqual([]); // no re-gate: the retryable shape is preserved
+  });
+
+  it('the round-close re-gate is AWAITED: the settle cannot resolve before the walk completes (#426 r5)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    let release!: () => void;
+    h.gateBarrier = { promise: new Promise<void>((r) => (release = r)), release: () => release() };
+    let settled = false;
+    const running = settleExtinguishedRound('task-1').then((v) => {
+      settled = true;
+      return v;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(settled).toBe(false); // parked on the gating walk
+    h.gateBarrier = null;
+    release();
+    await expect(running).resolves.toBe(true);
+  });
+
+  it('a failing round-close re-gate is logged, never surfaced (#423 clause 6)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    h.regateThrows = true;
+    expect(await settleExtinguishedRound('task-1')).toBe(true); // the commit stands
+    expect(h.warnings.some((w) => w.includes('re-gate after the round close failed'))).toBe(true);
+  });
+
+  it('a task the settle RE-BLOCKED (paused, terminal home) still heals its residue (#423)', async () => {
+    // healTerminalResidue's discriminator must resolve the re-blocked shape, or a settle
+    // that threw mid-teardown leaves a void row + approvals no healer can reach
+    h.taskStatus = STATUS.blocked;
+    h.taskPreBlockStatus = STATUS.done;
+    h.statuses.push({ id: STATUS.blocked, category: CATEGORY.PAUSED });
+    expect(await settleExtinguishedRound('task-1')).toBe(false); // healed, not settled
+    expect(h.cancelled).toContain('task-1'); // cancelObligations ran
+    expect(h.updates.some((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED)).toBe(true);
+  });
+
+  it('a LIVE block (home in review) is never healed as terminal residue (#423 scope)', async () => {
+    h.taskStatus = STATUS.blocked;
+    h.taskPreBlockStatus = STATUS.inReview;
+    h.statuses.push({ id: STATUS.blocked, category: CATEGORY.PAUSED });
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.cancelled).toEqual([]);
+    expect(h.updates).toHaveLength(0);
   });
 
   it('the void-row sweep is SCOPED: reviewer_id IS NULL, this task, this round, pending only', async () => {
@@ -423,6 +571,9 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(
       h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED),
     ).toHaveLength(0);
+    // ... and a LOST flip re-gates nothing: the owner's move owns the outcome and
+    // propagates gating itself (a re-gate here would re-block/re-home the owner's row)
+    expect(h.regated).toEqual([]);
   });
 });
 
