@@ -29,10 +29,11 @@ test.describe('prod probe wedge arm (#424)', () => {
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
-      const illegal = `probe-wedge-block-${crypto.randomUUID()}`; // fires: block + closed decided round
+      const illegal = `probe-wedge-block-${crypto.randomUUID()}`; // fires: block, then a killing verdict
+      const legalRequeue = `probe-wedge-requeue-${crypto.randomUUID()}`; // legal: verdict predates the block
       const liveBlock = `probe-wedge-live-${crypto.randomUUID()}`; // legal: PENDING row in the round
       const parked = `probe-wedge-park-${crypto.randomUUID()}`; // legal: park carries park_from_status
-      const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // legal: park owns the row
+      const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // defensive: park owns the row
       const manualBlock = `probe-wedge-manual-${crypto.randomUUID()}`; // legal: hand-made block, no origins
       const todoOrigin = `probe-wedge-todo-${crypto.randomUUID()}`; // legal: origin resolves to ready
       const tornDown = `probe-wedge-void-${crypto.randomUUID()}`; // legal: no verdict row in the round
@@ -43,11 +44,16 @@ test.describe('prod probe wedge arm (#424)', () => {
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
         [
           { id: illegal, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          // a legal re-queue into an in-review status over an ALREADY-DECIDED round: the
+          // verdict predates the move, and a child opening later records that home as a
+          // block. The write-vs-verdict discriminator is the only clause that keeps this
+          // healthy task out of the arm (r1 review: without it the arm cries wolf).
+          { id: legalRequeue, status: BLOCKED, pre: IN_REVIEW, park: null, written: 1 },
           { id: liveBlock, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: parked, status: BLOCKED, pre: null, park: IN_REVIEW, written: 5 },
-          // #427 documents gating origins surviving a non-settle egress; if one ever meets a
-          // park on a PAUSED row, the PARK owns the round (owner resolution / re-arm), so the
-          // arm must stay silent — its park discriminator is the clause that decides.
+          // defensive control: no live writer emits both origins (parkRound and the gate
+          // write each clear the other). The clause is kept so such a row can never be read
+          // as a block — a park owns its round (owner resolution / re-arm) by definition.
           { id: parkedStaleOrigin, status: BLOCKED, pre: IN_REVIEW, park: IN_REVIEW, written: 5 },
           { id: manualBlock, status: BLOCKED, pre: null, park: null, written: 5 },
           { id: todoOrigin, status: BLOCKED, pre: TODO, park: null, written: 5 },
@@ -73,6 +79,7 @@ test.describe('prod probe wedge arm (#424)', () => {
         );
       };
       await seedReview(illegal, 'APPROVED', 1);
+      await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveBlock, 'APPROVED', 1);
       await seedReview(liveBlock, 'PENDING', null);
       await seedReview(parked, 'APPROVED', 1);
@@ -95,6 +102,10 @@ test.describe('prod probe wedge arm (#424)', () => {
       );
       expect(fired, 'the in_review branch keeps detecting its own shape').toContain(inReviewWedge);
       expect(fired, 'a live block still holds a PENDING row — not a wedge').not.toContain(liveBlock);
+      expect(
+        fired,
+        'a block over an already-decided round (verdict older than the block write) is legal',
+      ).not.toContain(legalRequeue);
       expect(fired, 'a park carries park_from_status — not a gating block').not.toContain(parked);
       expect(fired, 'a park origin owns a paused row even with a stale gating origin').not.toContain(parkedStaleOrigin);
       expect(fired, 'a hand-made block clears both origins — legal').not.toContain(manualBlock);

@@ -12,7 +12,6 @@ if [ -n "${TANDEM_CT_ADDR:-}" ] && [ "${TANDEM_CT_ADDR}" != "root@100.64.0.3" ] 
   echo "probe: non-default TANDEM_CT_ADDR requires TANDEM_PROBE_STATE (inspection run must not write the prod trail)" >&2
   exit 2
 fi
-mkdir -p "$PROBE_STATE" 2>/dev/null || true
 CT=(ssh -i "$CT_KEY" -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$CT_ADDR")
 # Epoch stamps: settings retention stamps are epoch **ms**; probe math is seconds.
 to_epoch_s() { case "${1:-}" in ''|*[!0-9]*) echo 0 ;; *) if [ "$1" -gt 100000000000 ]; then echo $(( $1 / 1000 )); else echo "$1"; fi ;; esac; }
@@ -40,17 +39,28 @@ own_predicate() {
 # database, so the detector is pinned by the SQL that ships, never a test-side copy.
 # #424: the wedge arm's inner set gains the gating-block branch — a block recording an
 # in-review home whose CURRENT round is closed (no PENDING row in max(round), at least
-# one verdict row in it) is a lost settle flip. It needs no updated_at discriminator:
-# every legal exit clears both machine origins, a park carries park_from_status, and a
-# settle re-blocks from the LANDED status (never from an in-review home).
+# one verdict row in it) with that verdict NEWER than the task's last write. The
+# discriminator is load-bearing here too: a legal re-queue into an in-review status over
+# an already-decided round carries its verdict BEFORE the move and the later block (a
+# child opening then records that home, block write last), while a lost settle flip has
+# the block write first and the killing verdict after it (recordVerdict touches no task
+# row). A park carries park_from_status, a hand-made block writes no origin, and a
+# settle re-blocks from the LANDED status; the two non-settle block egresses (#427)
+# leave a non-paused row, so no paused-row arm reads them.
 strand_sql() {
   local own blkarm
   own=$(own_predicate "${1:-}" "${2:-}")
   blkarm=""
   if [ -n "$(own_block_predicate "${1:-}" "${2:-}")" ]; then
-    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))"
+    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
   fi
   printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')"
+}
+# the wedge arm alone (the SQL's first emission) — selfcheck greps THIS, never the whole
+# strand SQL: `park_from_status` also rides $own inside the stallrv/lostsettle arms, so a
+# whole-SQL grep stays green with the wedge branch deleted (r1 review, P3)
+strand_wedge_arm() {
+  strand_sql "${1:-}" "${2:-}" | sed "s/ union all select 'strand'.*//"
 }
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
@@ -63,12 +73,14 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ -z "$(own_block_predicate 2.78.20 1)" ] || { echo "selfcheck fail: block column gate"; exit 1; }
   [ -z "$(own_block_predicate '' 2)" ] || { echo "selfcheck fail: block empty version"; exit 1; }
   STR_ON=$(strand_sql 2.78.20 2); STR_OFF=$(strand_sql 2.78.19 2)
-  printf '%s' "$STR_ON" | grep -qF "park_from_status is null" || { echo "selfcheck fail: strand block branch"; exit 1; }
-  printf '%s' "$STR_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: strand decided rows"; exit 1; }
-  printf '%s' "$STR_ON" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge arm"; exit 1; }
+  WEDGE_ON=$(strand_wedge_arm 2.78.20 2); WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
   printf '%s' "$STR_ON" | grep -qF "select 'lostsettle'" || { echo "selfcheck fail: strand lostsettle arm"; exit 1; }
-  printf '%s' "$STR_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: strand block branch not gated"; exit 1; }
-  printf '%s' "$STR_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge floor"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge arm"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF "park_from_status is null" || { echo "selfcheck fail: wedge block branch"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: wedge decided rows"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF ") > t.updated_at" || { echo "selfcheck fail: wedge write discriminator"; exit 1; }
+  printf '%s' "$WEDGE_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: wedge block branch not gated"; exit 1; }
+  printf '%s' "$WEDGE_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: wedge floor"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
@@ -90,6 +102,7 @@ if OVS_TS=$(date -u -d "$OVS_RAW" +%s 2>/dev/null) && [ -n "$OVS_TS" ]; then
 else
   OVS='2026-10-30 02:55+00'
 fi
+mkdir -p "$PROBE_STATE" 2>/dev/null || true
 anom=()
 if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
   anom+=("probe_state: unwritable ($PROBE_STATE — state-confirmed detectors + deploy window degraded)")

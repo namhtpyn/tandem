@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 import { $ } from 'bun';
 import { describe, expect, it } from 'vitest';
 
@@ -19,22 +21,37 @@ describe('prod probe selfcheck', () => {
   // (test/e2e/probe-wedge-block.spec.ts); this pins the GATE that decides whether those
   // bytes carry the branch at all — dropping it (or ungating it) must go red here first.
   it('emits the strand SQL with the block branch gated on version AND origin columns', async () => {
-    const on = await $`bash ${script} --strand-sql 2.78.20 2`.nothrow().quiet();
-    expect(on.exitCode, on.stderr.toString()).toBe(0);
-    const sql = on.stdout.toString();
-    expect(sql).toContain("select 'wedge'");
-    expect(sql).toContain("s.category = 'in_review'");
-    expect(sql).toContain('park_from_status is null');
-    expect(sql).toContain("r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')");
-    expect(sql).toContain("select 'lostsettle'");
+    // The WEDGE arm alone: `park_from_status` also rides the ownership predicate echoed
+    // by the stallrv/lostsettle arms, so a whole-SQL grep stays green with the wedge
+    // branch deleted (r1 review, P3).
+    const wedgeOf = async (ver: string, cols: string) => {
+      const proc = await $`bash ${script} --strand-sql ${ver} ${cols}`.nothrow().quiet();
+      expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+      return proc.stdout.toString().split(" union all select 'strand'")[0] ?? '';
+    };
 
-    const below = await $`bash ${script} --strand-sql 2.78.19 2`.nothrow().quiet();
-    expect(below.exitCode, below.stderr.toString()).toBe(0);
+    const wedge = await wedgeOf('2.78.20', '2');
+    expect(wedge).toContain("select 'wedge'");
+    expect(wedge).toContain("s.category = 'in_review'");
+    expect(wedge).toContain('park_from_status is null');
+    expect(wedge).toContain("r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')");
+    // both branches carry the write-vs-verdict discriminator
+    expect(wedge.match(/\) > t\.updated_at/g) ?? []).toHaveLength(2);
+
     // a pre-block image cannot heal the shape: the branch must not exist in its SQL
-    expect(below.stdout.toString()).not.toContain('park_from_status');
-    expect(below.stdout.toString()).toContain("select 'wedge'");
+    const below = await wedgeOf('2.78.19', '2');
+    expect(below).toContain("select 'wedge'");
+    expect(below).not.toContain('park_from_status');
+    expect(below.match(/\) > t\.updated_at/g) ?? []).toHaveLength(1);
 
-    const noColumns = await $`bash ${script} --strand-sql 2.78.20 1`.nothrow().quiet();
-    expect(noColumns.stdout.toString()).not.toContain('park_from_status');
+    const noColumns = await wedgeOf('2.78.20', '1');
+    expect(noColumns).not.toContain('park_from_status');
+  });
+
+  it('writes no probe state in the emit mode (SPEC: no state writes)', async () => {
+    const dir = `${process.env.TMPDIR ?? '/tmp'}/probe-strand-${crypto.randomUUID()}`;
+    const proc = await $`bash ${script} --strand-sql 2.78.20 2`.env({ TANDEM_PROBE_STATE: dir }).nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    expect(existsSync(dir)).toBe(false);
   });
 });

@@ -1060,18 +1060,25 @@ non-positive deltas render no duration.
   manual move into review bumps `updated_at` past every verdict). (2) From
   2.78.20 — the same origin-column and version gates as the other #419 arms — a
   PAUSED gating auto-block (`park_from_status IS NULL`, `pre_block_status`
-  resolving to an `in_review` category) whose CURRENT round is closed: no
-  PENDING row in `max(round)` and at least one verdict row in it. The blocked
-  branch needs no `updated_at` discriminator: every legal exit clears both
-  machine origins (a hand-made block, an owner move), a park carries
-  `park_from_status`, and a settle re-blocks from the LANDED status — so a block
-  recording an in-review home with a closed round is a lost settle flip, never a
-  legal state, and a block whose round still holds a PENDING row is a live round.
+  resolving to an `in_review` category) whose CURRENT round is closed — no
+  PENDING row in `max(round)`, at least one verdict row in it — and whose newest
+  verdict is NEWER than the task's last write. The blocked branch carries the
+  SAME discriminator, and it is load-bearing: a legal re-queue into an in-review
+  status over an already-decided round puts the verdict BEFORE the move and the
+  later block (a child opening then records that home with the block write last),
+  while a lost settle flip has the block write first and the killing verdict
+  after it (`recordVerdict` touches no task row). A park carries
+  `park_from_status`, a hand-made block writes no origin, and a settle re-blocks
+  from the LANDED status; the two non-settle block egresses (#427) leave a
+  non-paused row, so no paused-row arm reads them.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
-  SQL a pass would run for that gate pair (no network, no state writes), so the
-  arms' regression test executes the bytes that ship rather than a test-side
-  copy; `--selfcheck` asserts both ownership predicates and the presence/absence
-  of the block branch at the version gate.
+  SQL a pass would run for that gate pair (no network, no state writes — the
+  probe's state directory is created only after both pure dispatch modes exit),
+  so the arms' regression test executes the bytes that ship rather than a
+  test-side copy; `--selfcheck` asserts both ownership predicates and, on the
+  WEDGE arm alone (never the whole strand SQL, where the ownership predicate is
+  echoed by other arms), the presence/absence of the block branch + its write
+  discriminator at the version gate.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
