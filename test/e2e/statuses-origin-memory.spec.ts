@@ -114,7 +114,7 @@ test.describe('status origin memory (#432)', () => {
       const refused = await remove(backlog);
       expect(refused.status(), 'a backlog home cannot be re-homed faithfully').toBe(400);
       const refusedBody = JSON.stringify(await refused.json());
-      expect(refusedBody).toContain('recorded home of 1 task');
+      expect(refusedBody).toContain('recorded home of 1 blocked task');
       expect(refusedBody).toContain('backlog');
       expect(await originOf(blockedC, 'pre_block_status'), 'a refused removal touches nothing').toBe(backlog);
       const stillThere = await sql.unsafe(`select id from task_statuses where id = $1`, [backlog]);
@@ -127,7 +127,7 @@ test.describe('status origin memory (#432)', () => {
       await seedTask(blockedPaused, BLOCKED, { pre: held });
       const refusedPaused = await remove(held);
       expect(refusedPaused.status(), 'a paused-category home has no faithful target').toBe(400);
-      expect(JSON.stringify(await refusedPaused.json())).toContain('no faithful built-in home');
+      expect(JSON.stringify(await refusedPaused.json())).toContain('no faithful home');
       expect(await originOf(blockedPaused, 'pre_block_status'), 'the paused home survives the refusal').toBe(held);
 
       // (6) a CATEGORY edit is refused while a BLOCKED task records the status as its home
@@ -167,19 +167,48 @@ test.describe('status origin memory (#432)', () => {
         loose,
       );
 
-      // (9) the re-home target's LIVE category is re-verified: recategorize the built-in
-      // TODO row, then a ready-category home must refuse instead of landing on it.
+      // (9) the target is resolved LIVE by category, never from a frozen built-in map:
+      // recategorize the built-in TODO row, then a ready-category home must re-home onto
+      // the SURVIVING ready row (the custom one from case (6)), never onto drifted TODO.
       // (Shared boot-seed state: restored in the finally below.)
       const todoRow = (await statusRow(TODO))!;
       const drift = await save({ ...todoRow, category: 'done' });
       expect(drift.res.status(), 'the built-in can be recategorized by an admin').toBe(200);
-      const readyHome = await create(`Triage ${suffix}`, 'ready', 27);
+      const readyHome = await create(`Triage ${suffix}`, 'ready', 33);
       const blockedE = `status-origin-drift-${suffix}`;
       await seedTask(blockedE, BLOCKED, { pre: readyHome });
-      const refusedDrift = await remove(readyHome);
-      expect(refusedDrift.status(), 'a drifted built-in is not a faithful target').toBe(400);
-      expect(await originOf(blockedE, 'pre_block_status'), 'the ready home survives the refusal').toBe(readyHome);
+      const removedDrift = await remove(readyHome);
+      expect(removedDrift.status(), 'a surviving same-category row takes the home').toBe(200);
+      const driftRehomed = await originOf(blockedE, 'pre_block_status');
+      expect(driftRehomed, 'the drifted built-in is never chosen').not.toBe(TODO);
+      expect(driftRehomed, 'the home never keeps the removed id').not.toBe(readyHome);
+      expect((await statusRow(driftRehomed))?.category, 'the home still carries the ready category').toBe('ready');
+      expect(live, 'a same-category sibling existed for the resolver').toBeTruthy();
       await save({ ...todoRow, category: 'ready' });
+
+      // (9b) the target is resolved LIVE by category, not from a frozen map: a category
+      // with no built-in row (backlog) still re-homes onto a surviving sibling
+      const bucketHome = await create(`Bucket home ${suffix}`, 'backlog', 30);
+      const bucketGone = await create(`Bucket gone ${suffix}`, 'backlog', 31);
+      const blockedF = `status-origin-live-${suffix}`;
+      await seedTask(blockedF, BLOCKED, { pre: bucketGone });
+      const removedBucket = await remove(bucketGone);
+      expect(removedBucket.status(), 'a surviving same-category row is a faithful target').toBe(200);
+      const bucketRehomed = await originOf(blockedF, 'pre_block_status');
+      expect(bucketRehomed, 'the home never keeps the removed id').not.toBe(bucketGone);
+      expect((await statusRow(bucketRehomed))?.category, 'the home lands on a surviving backlog row').toBe('backlog');
+      expect(bucketHome, 'a same-category sibling existed for the resolver').toBeTruthy();
+      createdStatuses.splice(createdStatuses.indexOf(bucketGone), 1);
+
+      // (9c) a category with no faithful target clears an INERT reference instead of
+      // refusing forever (a blocked reference still refuses — case (5) above)
+      const heldInert = await create(`Hold inert ${suffix}`, 'paused', 32);
+      const inertTask = `status-origin-inert-${suffix}`;
+      await seedTask(inertTask, DONE, { pre: heldInert });
+      const removedInert = await remove(heldInert);
+      expect(removedInert.status(), 'an inert reference never makes a status undeletable').toBe(200);
+      expect(await originOf(inertTask, 'pre_block_status'), 'the inert reference is cleared').toBe('');
+      createdStatuses.splice(createdStatuses.indexOf(heldInert), 1);
 
       // (10) an unreferenced custom status still deletes (the guard is not over-broad)
       const spare = await create(`Spare ${suffix}`, 'in_review', 28);
@@ -191,6 +220,7 @@ test.describe('status origin memory (#432)', () => {
       // RESTORE LAW): put its category back even when an assertion above failed
       const todoNow = await statusRow(TODO);
       if (todoNow && todoNow.category !== 'ready') await save({ ...todoNow, category: 'ready' });
+      await sql.unsafe(`delete from tasks where id like 'status-origin-%'`);
       // custom statuses are not part of the cleanup fixture's sweep and would leak into
       // later specs of the same run (global-setup re-seeds them only on the next boot)
       for (const id of createdStatuses) await sql.unsafe(`delete from task_statuses where id = $1`, [id]);

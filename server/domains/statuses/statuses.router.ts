@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, notInArray, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -19,28 +19,6 @@ import {
   protectedProcedure,
   publishChange,
 } from '../kernel/kernel';
-
-/** STATUS-ORIGIN MEMORY LAW (#432, SPEC "STATUS FREEDOM / CATEGORY-GATE LAW"): a
- *  machine origin (tasks.pre_block_status / tasks.park_from_status) is a raw id with no
- *  FK whose CATEGORY every reader resolves — the settle flip's machine-home term, the
- *  unblock restore target, the review-turn mint gate, both recovery sweeps and the
- *  probe. A status mutation must therefore never leave a recorded home naming no row:
- *  a removal RE-HOMES every recorded reference onto the canonical built-in status of
- *  the SAME category inside the delete's own transaction. TWO categories have no
- *  faithful home and refuse instead of guessing: 'backlog' has no built-in row, and
- *  'paused''s only built-in IS the block state itself — a home re-homed onto BLOCKED
- *  would restore the task into the block, clear both origins and strand it with no arm
- *  left to fire (the #88 to-do demotion is the restore path's job, never the delete's).
- *  The target's LIVE category is re-verified at delete time: an admin can recategorize
- *  a built-in, and a frozen map would then re-home into the wrong category. */
-const CANONICAL_BY_CATEGORY: Record<string, string> = {
-  [CATEGORY.READY]: STATUS.todo,
-  [CATEGORY.WORKING]: STATUS.doing,
-  [CATEGORY.WAITING_ANSWER]: STATUS.waitingAnswer,
-  [CATEGORY.IN_REVIEW]: STATUS.inReview,
-  [CATEGORY.DONE]: STATUS.done,
-  [CATEGORY.CANCELLED]: STATUS.cancelled,
-};
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -161,13 +139,16 @@ export const statusesRouter = os.router({
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
     }
     await db.transaction(async (tx) => {
-      // the row is the category source for the origin re-home below; a missing row is
-      // the NOT_FOUND the delete used to answer (same message)
+      // FOR UPDATE: this row is the category source for the origin re-home, and its lock
+      // serializes a concurrent statuses.save (whose upsert needs the same row) — a
+      // category drifting between the read and the re-home would land the home on the
+      // wrong category. A missing row is the NOT_FOUND the delete always answered.
       const statusRow = (
         await tx
           .select({ id: taskStatusesTable.id, category: taskStatusesTable.category })
           .from(taskStatusesTable)
           .where(eq(taskStatusesTable.id, input.id))
+          .for('update')
       )[0];
       if (!statusRow) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
       const inUse = await tx.query.tasks.findMany({
@@ -180,51 +161,79 @@ export const statusesRouter = os.router({
       // STATUS-ORIGIN MEMORY LAW (#432): a recorded block/park home is a raw id with no
       // FK — deleting the row without re-homing strands every block that recorded it
       // (the settle flip's machine-home term stops matching, the round closes with no
-      // task write, the restore falls the unknown id back to to-do). Re-home EVERY
-      // recorded reference in this same transaction, before the row disappears; the
-      // category has to survive the move, so one without a built-in status refuses.
-      // Stale references on non-paused rows (#427 egress leftovers) ride along: they
-      // are inert drift, and leaving them would state a home that no longer exists.
+      // task write, the restore falls the unknown id back). Resolve a FAITHFUL target
+      // LIVE, by category: a frozen id map would re-home into the wrong category after
+      // an admin recategorizes a built-in, and would miss a category that gained a row.
+      // 'paused' has NO faithful target (its only paused-category sibling is the block
+      // state itself: a home re-homed onto it restores the task INTO the block, clears
+      // both origins and strands it).
+      const pausedIds = (
+        await tx
+          .select({ id: taskStatusesTable.id })
+          .from(taskStatusesTable)
+          .where(eq(taskStatusesTable.category, CATEGORY.PAUSED))
+      ).map((s) => s.id);
       const refs = await tx
-        .select({ id: tasksTable.id })
+        .select({ id: tasksTable.id, status: tasksTable.status })
         .from(tasksTable)
-        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)));
-      if (refs.length > 0) {
-        // the canonical target must still CARRY the category — an admin can recategorize
-        // a built-in, and a frozen id map would then re-home into the wrong category
-        const homeId = CANONICAL_BY_CATEGORY[statusRow.category];
-        const liveHome = homeId
-          ? (
-              await tx
-                .select({ category: taskStatusesTable.category })
-                .from(taskStatusesTable)
-                .where(eq(taskStatusesTable.id, homeId))
-            )[0]
-          : undefined;
-        const home = liveHome && liveHome.category === statusRow.category ? homeId : null;
-        if (!home)
-          throw new ORPCError('BAD_REQUEST', {
-            message: `status is the recorded home of ${refs.length} task(s) and category '${statusRow.category}' has no faithful built-in home`,
-          });
-        // METADATA REPAIR, not a task write: the stamp is HELD BACK (`updated_at =
-        // updated_at`). Bumping it would invalidate an in-flight settle flip that pinned
-        // the stamp it read (0-row CAS, the round closes with no task write — the exact
-        // strand this law removes) and would mask the #430 wedge discriminator
-        // (`verdict > updated_at`) on a row the repair touched.
-        await tx
-          .update(tasksTable)
-          .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
-          .where(eq(tasksTable.preBlockStatus, input.id));
-        await tx
-          .update(tasksTable)
-          .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
-          .where(eq(tasksTable.parkFromStatus, input.id));
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)))
+        // FOR UPDATE: hold the referencing rows so a concurrent gating block waits for
+        // this delete instead of landing a home behind it
+        .for('update');
+      let home: string | null = null;
+      if (refs.length > 0 && statusRow.category !== CATEGORY.PAUSED) {
+        const candidates = await tx
+          .select({ id: taskStatusesTable.id })
+          .from(taskStatusesTable)
+          .where(and(eq(taskStatusesTable.category, statusRow.category), ne(taskStatusesTable.id, input.id)))
+          .orderBy(asc(taskStatusesTable.position))
+          .limit(1)
+          .for('update');
+        home = candidates[0]?.id ?? null;
       }
+      // only a LOAD-BEARING (paused-row) reference can refuse: an inert leftover on a
+      // non-paused row (#427 egress) means nothing to any reader, so it is CLEARED
+      // instead of making the status undeletable forever with no in-product remedy.
+      const liveRefs = refs.filter((r) => pausedIds.includes(r.status)).length;
+      if (!home && liveRefs > 0)
+        throw new ORPCError('BAD_REQUEST', {
+          message: `status is the recorded home of ${liveRefs} blocked task(s) and category '${statusRow.category}' has no faithful home`,
+        });
       const del = await tx
         .delete(taskStatusesTable)
         .where(eq(taskStatusesTable.id, input.id))
         .returning({ id: taskStatusesTable.id });
       if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
+      // REPAIR AFTER THE DELETE, in the same transaction: the UPDATE's own WHERE catches a
+      // block/park that committed inside the refs-read→delete window (READ COMMITTED
+      // re-evaluates at execution), so only a write landing after this statement can
+      // still name the removed row — a task moved into a status being deleted is the
+      // pre-existing ghost-task race the in-use check above already carries.
+      // The stamp is HELD BACK (`updated_at = updated_at`): this is metadata repair, and
+      // a bumped stamp would miss an in-flight settle flip's CAS (the exact strand this
+      // law removes) and mask the #430 wedge discriminator (`verdict > updated_at`).
+      if (refs.length > 0) {
+        if (home) {
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.preBlockStatus, input.id));
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.parkFromStatus, input.id));
+        } else {
+          // no faithful home and nothing load-bearing: drop the inert references
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.preBlockStatus, input.id), notInArray(tasksTable.status, pausedIds)));
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.parkFromStatus, input.id), notInArray(tasksTable.status, pausedIds)));
+        }
+      }
       // edges pointing at the removed status would become dead transitions — strip them atomically
       const others = await tx.query.taskStatuses.findMany({
         columns: { id: true, nextIds: true },
