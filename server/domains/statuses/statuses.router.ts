@@ -1,16 +1,17 @@
 import { os } from '@orpc/server';
+import { consola } from 'consola';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
+import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
 import {
   ORPCError,
   adminProcedure,
@@ -19,6 +20,8 @@ import {
   protectedProcedure,
   publishChange,
 } from '../kernel/kernel';
+
+const log = consola.withTag('tandem');
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -70,6 +73,61 @@ export const statusesRouter = os.router({
         updatedAt: now,
       };
       await db.transaction(async (tx) => {
+        // STATUS MUTATION MUTEX (#432): every writer of task_statuses (this upsert, the
+        // removal and its origin re-home) serializes on ONE transaction-scoped advisory
+        // lock, so a category edit can never interleave with a delete's re-home (a save
+        // racing the re-home TARGET would otherwise re-categorize a home that just
+        // landed) and two same-category removals can never deadlock on each other's
+        // target row.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))`);
+        // STATUS-ORIGIN MEMORY LAW (#432): a CATEGORY change re-keys every reader that
+        // resolves this status as a recorded block/park home (the settle flip's
+        // machine-home term, the restore target) — a blocked task would then restore
+        // into the wrong category and a live round would be bypassed. Refuse while a
+        // BLOCKED task records it as its home; a stale reference on a non-paused row
+        // (the #427 egress leftovers) is inert and never gates an edit. Name, colour
+        // and position edits stay free — only the category is load-bearing.
+        const existing = (
+          await tx
+            .select({ category: taskStatusesTable.category })
+            .from(taskStatusesTable)
+            .where(eq(taskStatusesTable.id, id))
+        )[0];
+        // THE BLOCK STATE'S CATEGORY IS FROZEN TO 'paused' (#432): it is the anchor every
+        // recorded machine home restores through and every paused-category discriminator
+        // resolves (the settle flip's paused branch, the mint gate, both sweeps, both
+        // probe arms). A recategorized block state re-keys or blinds ALL of them at once
+        // (blocked rows become dispatchable at Blocked→ready, terminal at Blocked→done).
+        // The freeze is ONE-WAY: a category change TO 'paused' always lands, so a
+        // workspace drifted on a pre-guard image repairs itself in-product, and a save
+        // that leaves the category untouched (a rename on the drifted row) still lands.
+        if (
+          existing &&
+          id === STATUS.blocked &&
+          existing.category !== input.category &&
+          input.category !== CATEGORY.PAUSED
+        )
+          throw new ORPCError('BAD_REQUEST', {
+            message: "the block state category is fixed to 'paused' — name, colour and position stay editable",
+          });
+        if (existing && existing.category !== input.category) {
+          // the blocker is the BLOCK STATE by IDENTITY, never the paused CATEGORY: the
+          // gating arms fire on status === BLOCKED_STATUS, and no live writer leaves an
+          // origin on any other row, so identity is the load-bearing test.
+          const homes = await tx
+            .select({ id: tasksTable.id })
+            .from(tasksTable)
+            .where(
+              and(
+                eq(tasksTable.status, STATUS.blocked),
+                or(eq(tasksTable.preBlockStatus, id), eq(tasksTable.parkFromStatus, id)),
+              ),
+            );
+          if (homes.length > 0)
+            throw new ORPCError('BAD_REQUEST', {
+              message: `status is the recorded home of ${homes.length} blocked task(s) — unblock them before changing its category`,
+            });
+        }
         // transitions must reference existing statuses (self ok) — validated against the same snapshot we upsert
         const all = await tx.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
         const ids = new Set([...all.map((a) => a.id), id]);
@@ -101,7 +159,18 @@ export const statusesRouter = os.router({
     if ((Object.values(STATUS) as string[]).includes(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
     }
-    await db.transaction(async (tx) => {
+    const touched = await db.transaction(async (tx) => {
+      // STATUS MUTATION MUTEX (#432): see save — the category read below must not drift
+      // under a concurrent edit, and two same-category removals must not deadlock.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))`);
+      // a missing row is the NOT_FOUND the delete always answered
+      const statusRow = (
+        await tx
+          .select({ id: taskStatusesTable.id, category: taskStatusesTable.category })
+          .from(taskStatusesTable)
+          .where(eq(taskStatusesTable.id, input.id))
+      )[0];
+      if (!statusRow) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
       const inUse = await tx.query.tasks.findMany({
         columns: { id: true },
         where: { status: { eq: input.id } },
@@ -109,11 +178,121 @@ export const statusesRouter = os.router({
       });
       if (inUse.length > 0)
         throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` });
+      // STATUS-ORIGIN MEMORY LAW (#432): a recorded block/park home is a raw id with no
+      // FK — deleting the row without re-homing strands every block that recorded it
+      // (the settle flip's machine-home term stops matching, the round closes with no
+      // task write, the restore falls the unknown id back). Resolve a FAITHFUL target
+      // LIVE, by category: a frozen id map would re-home into the wrong category after
+      // an admin recategorizes a built-in, and would miss a category that gained a row.
+      // 'paused' has NO faithful target: a restore into ANY paused-category status
+      // clears the origin and leaves a row no gating arm fires on (the block state
+      // themselves is excluded by identity below, so no paused candidate survives).
+      const refs = await tx
+        .select({ id: tasksTable.id, status: tasksTable.status })
+        .from(tasksTable)
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)));
+      // A FAITHFUL target carries the same category AND is not the block state itself
+      // (by IDENTITY: a home re-homed onto BLOCKED restores the task INTO the block,
+      // clears both origins and strands it), and 'paused' has none — a restore into any
+      // paused status clears the origin and leaves a row no arm can fire.
+      let home: string | null = null;
+      if (statusRow.category !== CATEGORY.PAUSED) {
+        const candidates = await tx
+          .select({ id: taskStatusesTable.id })
+          .from(taskStatusesTable)
+          .where(
+            and(
+              eq(taskStatusesTable.category, statusRow.category),
+              ne(taskStatusesTable.id, input.id),
+              ne(taskStatusesTable.id, STATUS.blocked),
+            ),
+          )
+          .orderBy(asc(taskStatusesTable.position))
+          .limit(1);
+        home = candidates[0]?.id ?? null;
+      }
+      // only a LOAD-BEARING reference can refuse: one held by a BLOCKED task (by
+      // IDENTITY — the only state a gating block/park ever writes, and the only state
+      // every reader fires on). An inert leftover on any other row (#427 egress) means
+      // nothing to any reader, so it is CLEARED instead of making the status undeletable
+      // forever with no in-product remedy.
+      const liveRefs = refs.filter((r) => r.status === STATUS.blocked).length;
+      if (!home && liveRefs > 0)
+        throw new ORPCError('BAD_REQUEST', {
+          message: `status is the recorded home of ${liveRefs} blocked task(s) and category '${statusRow.category}' has no faithful home`,
+        });
       const del = await tx
         .delete(taskStatusesTable)
         .where(eq(taskStatusesTable.id, input.id))
         .returning({ id: taskStatusesTable.id });
       if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
+      // REPAIR AFTER THE DELETE, in the same transaction: the UPDATE's own WHERE catches a
+      // block/park that committed inside the refs-read→delete window (READ COMMITTED
+      // re-evaluates at execution), so only a write landing after this statement can
+      // still name the removed row — a task moved into a status being deleted is the
+      // pre-existing ghost-task race the in-use check above already carries.
+      // The stamp is HELD BACK (`updated_at = updated_at`): this is metadata repair, and
+      // a bumped stamp would miss an in-flight settle flip's CAS (the exact strand this
+      // law removes) and mask the #430 wedge discriminator (`verdict > updated_at`).
+      // UNCONDITIONAL (not gated on the refs read): a block/park that committed inside
+      // the refs-read→delete window is caught by this UPDATE's own WHERE, so the repair
+      // is right even when the read saw zero references.
+      const touched = new Set<string>();
+      const collect = (rows: Array<{ id: string; status: string }>) => {
+        // ONLY rows still in the BLOCK STATE are re-gated: the repair also re-homes
+        // INERT origins on live rows, and refreshParentGating would BLOCK any of them
+        // that owns an open child (silently undoing a manual unblock and bumping the
+        // stamp). A non-blocked row has no gate to restore — nothing to re-derive.
+        for (const r of rows) if (r.status === STATUS.blocked) touched.add(r.id);
+      };
+      if (home) {
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.preBlockStatus, input.id))
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
+        );
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.parkFromStatus, input.id))
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
+        );
+      } else {
+        // no faithful home: drop the INERT references (a blocked one would have refused)
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.preBlockStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
+        );
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.parkFromStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
+        );
+      }
+      // the invariant the whole law rests on: after this delete no row may still name the
+      // removed id. Two legal producers can land one: a task moved into the status between
+      // the in-use check and the DELETE (the ghost-task race), and a STALE gating write —
+      // refreshParentGating captures `pre = cur.status` before its conditional write, so a
+      // task moved out of the status in that window still records it as its home. Both
+      // commit before this read are caught here; the rollback lets the caller retry
+      // against the settled state instead of shipping a dangling home.
+      const stragglers = await tx
+        .select({ id: tasksTable.id })
+        .from(tasksTable)
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)))
+        .limit(1);
+      if (stragglers.length > 0)
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'status changed while it was being removed — a task now records it as its home; retry',
+        });
       // edges pointing at the removed status would become dead transitions — strip them atomically
       const others = await tx.query.taskStatuses.findMany({
         columns: { id: true, nextIds: true },
@@ -126,8 +305,22 @@ export const statusesRouter = os.router({
           .set({ nextIds: o.nextIds.filter((n) => n !== input.id), updatedAt: new Date() })
           .where(eq(taskStatusesTable.id, o.id));
       }
+      return [...touched];
     });
     await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
+    // BEST-EFFORT AFTER THE COMMIT (#432): the repair changed restore targets, so re-derive
+    // the gating of every touched task — a task whose children all landed while it was
+    // blocked restores onto its NEW home now instead of waiting for an unrelated write
+    // (a restore that raced this delete lost its CAS on the pinned origin and cannot).
+    // The outcome stands either way; a gating failure is logged, never surfaced.
+    for (const taskId of touched) {
+      try {
+        const { refreshParentGating } = await import('../tasks/gating.service');
+        await refreshParentGating(taskId);
+      } catch (e) {
+        log.warn(`statuses: re-gate after the origin repair failed for ${taskId}:`, e instanceof Error ? e.message : e);
+      }
+    }
     return { ok: true };
   }),
 
