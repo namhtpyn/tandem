@@ -118,6 +118,13 @@ describe('parkRound in-review guard (#199)', () => {
     const parked = await parkRound('task-1', 'review turn timed out — reaped after 45 min', { rearmable: true });
     expect(parked).toBe(true);
     expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
+    // the park-once term is BLOCK-scoped: this branch's arbiter is the status write
+    const rendered = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.updates[0]?.cond as never)
+      .toSQL();
+    expect(rendered.sql.replace(/\s+/g, ' ').toLowerCase()).not.toContain('"tasks"."park_from_status" is null');
   });
 
   it('the park activity row records the from-status (#202)', async () => {
