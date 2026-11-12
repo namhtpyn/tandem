@@ -1,3 +1,17 @@
+## [2.78.21](https://github.com/namhtpyn/tandem/compare/v2.78.20...v2.78.21) (2026-11-12)
+
+
+### Bug Fixes
+
+* [#423](https://github.com/namhtpyn/tandem/issues/423) a settle flip exhausts both gating origins + the park ladder and re-gates from the landed status ([8762321](https://github.com/namhtpyn/tandem/commit/8762321743f83fcddf53e175ba4de49e4126a56b))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r1 — pin every landing's re-gate, the ladder columns, the terminal re-block and the logged half; scope the law's clauses ([65b28f2](https://github.com/namhtpyn/tandem/commit/65b28f22495e85e1fbfcf9553888b3f09a061a67))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r2 — pin the round-close re-gate's ordering and log, compose settle→gating, scope the law to the settle flips ([#427](https://github.com/namhtpyn/tandem/issues/427)) ([bcc475e](https://github.com/namhtpyn/tandem/commit/bcc475ed86399dd18534cfd1e776b53d065776f3))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r3 — re-gate immediately after the round-close flip (a teardown throw must not skip it); pin the lost flip, the await shape and the cancelled arm; split the e2e ledger read ([13daefa](https://github.com/namhtpyn/tandem/commit/13daefa547b138b56d51cc46e0df71d61404fd6d))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r4 — the round-close re-gate sits between the residue writes and the notification writes (both sides pinned); drop the racy e2e ledger read for a unit pin ([06501f3](https://github.com/namhtpyn/tandem/commit/06501f33192c3a69584c540fcd03272e766ae457))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r5 — resolve a settled-but-reblocked task in the two settle heals; pin the round-close await and the void-row placement ([07232f3](https://github.com/namhtpyn/tandem/commit/07232f3a8fe3fec41ae1dfef08bf8b8122282628))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) r6 cap — resolve the re-blocked shape in the terminal-residue heal and pin the resolver's remaining arms ([98a63b0](https://github.com/namhtpyn/tandem/commit/98a63b02c29e3e576d4cd898d9d7320b2278b1ad))
+* [#423](https://github.com/namhtpyn/tandem/issues/423) spec the settle-clears-gating law (a settle flip exhausts the round's machine context) ([e2300fd](https://github.com/namhtpyn/tandem/commit/e2300fd504ff63eeb9b9ef2b383bc4a4841cc950))
+
 ## [2.78.20](https://github.com/namhtpyn/tandem/compare/v2.78.19...v2.78.20) (2026-11-12)
 
 
