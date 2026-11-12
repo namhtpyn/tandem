@@ -58,7 +58,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       for (const t of seedTasks) {
         await sql.unsafe(
           `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
-           values ($1, $2, $3, $4, $5, now() - interval '1 hour', now() - ($6::int * interval '1 minute'))`,
+           values ($1, $2, $3, $4, $5, now(), now() - ($6::int * interval '1 minute'))`,
           [t.id, t.id, t.status, t.pre, t.park, t.written],
         );
       }
