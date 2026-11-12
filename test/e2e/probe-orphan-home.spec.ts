@@ -11,8 +11,10 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // status, a park records an in-review home, a hand-made block clears both origins, and
 // `statuses.remove` re-homes every recorded reference inside its delete transaction — so
 // a surviving count means a direct-SQL delete or a guard regression. The arm is
-// version-INDEPENDENT (it reads only the #202-era origin columns), and it is pinned on
-// the SQL that ships: the probe emits it (--strand-sql) and this spec executes exactly
+// VERSION-independent (no image floor — a pre-guard image produces the strand too) but
+// COLUMN-gated exactly like the block branch: it reads BOTH origin columns, and on a
+// one-column image it would kill the whole UNION, so it must vanish there. It is pinned
+// on the SQL that ships: the probe emits it (--strand-sql) and this spec executes exactly
 // those bytes against the e2e database.
 
 const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pathname;
@@ -26,12 +28,16 @@ const DANGLING = '01a14743-dead-7e57-8000-000000000001';
 
 test.describe('prod probe orphan-home arm (#432)', () => {
   test('fires on a dangling home over a closed round, silent on every legal shape', async () => {
-    // the PRE-GUARD gate pair on purpose: the arm is deliberately ungated, so a pre-guard
-    // image (which still produces the strand) must emit it too
-    const emitted = await $`bash ${script} --strand-sql 2.78.19 1`.nothrow().quiet();
+    // the PRE-GUARD VERSION pair on purpose: the arm is deliberately version-independent,
+    // so a pre-guard image (which still produces the strand) must emit it too — but only
+    // at the two-column gate, since the arm reads both origin columns
+    const emitted = await $`bash ${script} --strand-sql 2.78.19 2`.nothrow().quiet();
     expect(emitted.exitCode, emitted.stderr.toString()).toBe(0);
     const strandSql = emitted.stdout.toString().trim();
     expect(strandSql).toContain("select 'orphanhome'");
+    const oneColumn = await $`bash ${script} --strand-sql 2.78.19 1`.nothrow().quiet();
+    expect(oneColumn.exitCode, oneColumn.stderr.toString()).toBe(0);
+    expect(oneColumn.stdout.toString(), 'the arm must vanish without the park column').not.toContain('orphanhome');
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
@@ -44,11 +50,12 @@ test.describe('prod probe orphan-home arm (#432)', () => {
       const tag = crypto.randomUUID();
       const danglingBlock = `probe-orphan-block-${tag}`; // fires: block home dangling, verdict after the write
       const danglingPark = `probe-orphan-park-${tag}`; // fires: park home dangling, same shape
+      const mixedOrigins = `probe-orphan-mixed-${tag}`; // fires: one origin dangles, the other still resolves
       const legalRequeue = `probe-orphan-requeue-${tag}`; // legal: the verdict predates the last write
       const liveRound = `probe-orphan-live-${tag}`; // legal: a PENDING row keeps the round open
       const tornDown = `probe-orphan-void-${tag}`; // legal: the round holds no verdict row
       const manualBlock = `probe-orphan-manual-${tag}`; // legal: a hand-made block writes no origin
-      const nonPaused = `probe-orphan-doing-${tag}`; // legal: a stale origin off a paused row
+      const nonPaused = `probe-orphan-doing-${tag}`; // legal: a stale origin on a NON-paused row
       const resolvable = `probe-orphan-resolvable-${tag}`; // the WEDGE block branch owns this one
 
       // task write age (minutes ago) per seed; the arm needs the verdict NEWER than it
@@ -56,6 +63,9 @@ test.describe('prod probe orphan-home arm (#432)', () => {
         [
           { id: danglingBlock, status: BLOCKED, pre: DANGLING, park: null, written: 5 },
           { id: danglingPark, status: BLOCKED, pre: null, park: DANGLING, written: 5 },
+          // both origins on one row is not producible by a live writer, but the schema
+          // permits it: the arm fires per COLUMN, so one dangling origin is enough
+          { id: mixedOrigins, status: BLOCKED, pre: DANGLING, park: IN_REVIEW, written: 5 },
           // a block over an already-decided round (the verdict predates the block write) is
           // the legal manual-move shape the write-vs-verdict discriminator exists for
           { id: legalRequeue, status: BLOCKED, pre: DANGLING, park: null, written: 1 },
@@ -90,6 +100,7 @@ test.describe('prod probe orphan-home arm (#432)', () => {
       };
       await seedReview(danglingBlock, 'APPROVED', 1);
       await seedReview(danglingPark, 'CHANGE_REQUESTED', 1);
+      await seedReview(mixedOrigins, 'APPROVED', 1);
       await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveRound, 'APPROVED', 1);
       await seedReview(liveRound, 'PENDING', null, adminId);
@@ -110,11 +121,12 @@ test.describe('prod probe orphan-home arm (#432)', () => {
         danglingBlock,
       );
       expect(fired, 'a park whose recorded home was deleted strands the same way').toContain(danglingPark);
+      expect(fired, 'either column dangling is enough — the clause is per column').toContain(mixedOrigins);
       expect(fired, 'a verdict older than the task write is a legal manual move').not.toContain(legalRequeue);
       expect(fired, 'a PENDING row in the current round means the round is still live').not.toContain(liveRound);
       expect(fired, 'a round with no verdict row is not a decided round').not.toContain(tornDown);
       expect(fired, 'a hand-made block writes no origin — nothing to dangle').not.toContain(manualBlock);
-      expect(fired, 'a stale origin off a paused row is not a block').not.toContain(nonPaused);
+      expect(fired, 'a stale origin on a NON-paused row is not a block').not.toContain(nonPaused);
       expect(fired, 'a home that still RESOLVES belongs to the wedge block branch, not this arm').not.toContain(
         resolvable,
       );

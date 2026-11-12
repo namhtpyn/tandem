@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -26,14 +26,16 @@ import {
  *  unblock restore target, the review-turn mint gate, both recovery sweeps and the
  *  probe. A status mutation must therefore never leave a recorded home naming no row:
  *  a removal RE-HOMES every recorded reference onto the canonical built-in status of
- *  the SAME category inside the delete's own transaction. 'backlog' has no built-in
- *  row, so a removal that would orphan a block there refuses instead of guessing a
- *  different category (the #88 to-do demotion is the restore path's job, never the
- *  delete's). */
+ *  the SAME category inside the delete's own transaction. TWO categories have no
+ *  faithful home and refuse instead of guessing: 'backlog' has no built-in row, and
+ *  'paused''s only built-in IS the block state itself — a home re-homed onto BLOCKED
+ *  would restore the task into the block, clear both origins and strand it with no arm
+ *  left to fire (the #88 to-do demotion is the restore path's job, never the delete's).
+ *  The target's LIVE category is re-verified at delete time: an admin can recategorize
+ *  a built-in, and a frozen map would then re-home into the wrong category. */
 const CANONICAL_BY_CATEGORY: Record<string, string> = {
   [CATEGORY.READY]: STATUS.todo,
   [CATEGORY.WORKING]: STATUS.doing,
-  [CATEGORY.PAUSED]: STATUS.blocked,
   [CATEGORY.WAITING_ANSWER]: STATUS.waitingAnswer,
   [CATEGORY.IN_REVIEW]: STATUS.inReview,
   [CATEGORY.DONE]: STATUS.done,
@@ -188,13 +190,35 @@ export const statusesRouter = os.router({
         .from(tasksTable)
         .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)));
       if (refs.length > 0) {
-        const home = CANONICAL_BY_CATEGORY[statusRow.category];
+        // the canonical target must still CARRY the category — an admin can recategorize
+        // a built-in, and a frozen id map would then re-home into the wrong category
+        const homeId = CANONICAL_BY_CATEGORY[statusRow.category];
+        const liveHome = homeId
+          ? (
+              await tx
+                .select({ category: taskStatusesTable.category })
+                .from(taskStatusesTable)
+                .where(eq(taskStatusesTable.id, homeId))
+            )[0]
+          : undefined;
+        const home = liveHome && liveHome.category === statusRow.category ? homeId : null;
         if (!home)
           throw new ORPCError('BAD_REQUEST', {
-            message: `status is the recorded home of ${refs.length} task(s) and category '${statusRow.category}' has no built-in status`,
+            message: `status is the recorded home of ${refs.length} task(s) and category '${statusRow.category}' has no faithful built-in home`,
           });
-        await tx.update(tasksTable).set({ preBlockStatus: home }).where(eq(tasksTable.preBlockStatus, input.id));
-        await tx.update(tasksTable).set({ parkFromStatus: home }).where(eq(tasksTable.parkFromStatus, input.id));
+        // METADATA REPAIR, not a task write: the stamp is HELD BACK (`updated_at =
+        // updated_at`). Bumping it would invalidate an in-flight settle flip that pinned
+        // the stamp it read (0-row CAS, the round closes with no task write — the exact
+        // strand this law removes) and would mask the #430 wedge discriminator
+        // (`verdict > updated_at`) on a row the repair touched.
+        await tx
+          .update(tasksTable)
+          .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
+          .where(eq(tasksTable.preBlockStatus, input.id));
+        await tx
+          .update(tasksTable)
+          .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
+          .where(eq(tasksTable.parkFromStatus, input.id));
       }
       const del = await tx
         .delete(taskStatusesTable)
