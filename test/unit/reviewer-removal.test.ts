@@ -335,8 +335,14 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(flipSql).toContain('"updated_at" =');
     expect(h.cancelledAll).toEqual(['task-1']);
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
-    // a bounce is NOT terminal: no parent re-gate (the task stays open)
-    expect(h.regated).toEqual([]);
+    // SETTLE-CLEARS-GATING (#423): EVERY landing re-gates — a still-open child must
+    // re-block the task from the landed status, and a last-open-child landing must
+    // release its parent's gate whatever it landed in (never only terminal arm).
+    expect(h.regated).toEqual(['task-1']);
+    // the flip exhausts the round's gating context: both machine origins clear in
+    // the same write (a surviving origin reads as a live block/park on a closed round)
+    expect(flip?.set.preBlockStatus).toBeNull();
+    expect(flip?.set.parkFromStatus).toBeNull();
   });
 
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
@@ -351,6 +357,9 @@ describe('settleExtinguishedRound (#365)', () => {
     // the flip leaves BLOCKED, so the park ladder is inert — a settled round must not
     // hand a spent ladder to the task's next park (#365 r6)
     expect(h.updates.find((u) => u.table === 'tasks')?.set.parkRearmAfter).toBeNull();
+    // ... and both machine origins leave with it (#423)
+    expect(h.updates.find((u) => u.table === 'tasks')?.set.preBlockStatus).toBeNull();
+    expect(h.updates.find((u) => u.table === 'tasks')?.set.parkFromStatus).toBeNull();
     // terminal arm: task-wide supersede of every pending row (all rounds); the approved
     // round keeps its FULFILLED approvals (matrix parity with settleRound)
     const sweeps = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);

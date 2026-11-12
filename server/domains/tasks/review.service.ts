@@ -479,8 +479,18 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   const flipped = await db
     .update(tasks)
     // PARK-REARM LAW (#365 r6): the flip leaves BLOCKED, so the ladder is inert —
-    // a settled round must never hand a spent ladder to the task's next park
-    .set({ status: target, updatedAt: new Date(), parkRearmAttempts: 0, parkRearmAfter: null })
+    // a settled round must never hand a spent ladder to the task's next park.
+    // SETTLE-CLEARS-GATING (#423): the same write exhausts the round's gating context —
+    // a surviving origin would read as a live machine block/park on a task whose round
+    // is closed.
+    .set({
+      status: target,
+      updatedAt: new Date(),
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+      preBlockStatus: null,
+      parkFromStatus: null,
+    })
     // TERMINAL ARBITRATION (#292 r2): pin the status AND the updatedAt stamp this
     // call read — a manual round-trip back into the same in-review status (or a
     // submit re-flip) must beat a stale settle, never be stomped by it
@@ -508,16 +518,17 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     { roundClosed: true, round, reviewersRemoved: true },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-  if (target !== TODO_STATUS) {
-    // a TERMINAL settle flips the task's status: re-gate its parents (every other
-    // lifecycle flip does — an auto-blocked parent must unblock when its last child
-    // lands terminal). Dynamic import keeps the module graph acyclic at load time.
-    try {
-      const { refreshParentGating } = await import('./gating.service');
-      await refreshParentGating(taskId);
-    } catch (e) {
-      log.warn(`settle: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-    }
+  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones —
+  // this flip changed the task's status, so a still-open child must re-block it FROM
+  // the landed status and a task that was its parent's last open child must release
+  // that parent's gate whatever it landed in. Best-effort: the flip already committed,
+  // so a gating failure is logged and never surfaced to the caller. Dynamic import
+  // keeps the module graph acyclic at load time.
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
   }
   return true;
 }
@@ -1916,7 +1927,23 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
   const { inReview, paused } = await flipScopeIds();
   const flipped = await db
     .update(tasks)
-    .set({ status, updatedAt: new Date() })
+    .set({
+      status,
+      updatedAt: new Date(),
+      // ORIGIN EXHAUSTION (#423): the flip ENDS the round's machine context, so the same
+      // write exhausts it. A surviving pre_block_status is gating drift: a decided round
+      // settles out of a child-derived block with an open child still present, and the
+      // stale in-review origin both reads as "the flow still owns a live round" and
+      // makes the NEXT block's restore land in review with a closed round (nothing
+      // dispatches it — the dispatcher scans ready only). A surviving park origin is the
+      // same lie for a settled park. The ladder is reset with it (the settled-round law
+      // settleExtinguishedRound already applies): a settled round must never hand a
+      // spent re-arm ledger to the task's next park.
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    })
     .where(
       and(
         eq(tasks.id, taskId),
@@ -1930,7 +1957,20 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
       ),
     )
     .returning({ id: tasks.id });
-  return flipped.length > 0;
+  if (flipped.length === 0) return false;
+  // RE-GATE (#423): the flip changed the gating input (this task's status), so the derived
+  // block is recomputed — a task that still owns an open child is blocked again FROM THE
+  // NEW STATUS (todo/done/cancelled), never from the pre-flip in-review origin, and a
+  // done/cancelled settle unblocks its parents (the same walk). A plain in-review settle
+  // pays a few reads; the gate is fault-isolated because the flip already committed and
+  // its outcome must never be turned into a caller-visible error (BEST-EFFORT-BETWEEN).
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the flip failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
+  return true;
 }
 
 /** WAITING-ANSWER HOLD (#288): the task is in a waiting_answer category at settle
