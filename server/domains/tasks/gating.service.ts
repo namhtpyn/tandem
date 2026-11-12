@@ -141,7 +141,10 @@ async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restor
   // concurrent owner settle/unblock can win. PARK-AWARE CAS (#419): a park landing in
   // that window writes while the status stays BLOCKED, so the status term alone cannot
   // arbitrate it — the parked branch pins the origin it read, the gated branch
-  // requires NO park to have appeared.
+  // requires NO park to have appeared AND still pins ITS origin: the origin is rewrite-
+  // able on a blocked row (STATUS-ORIGIN MEMORY LAW, #432, re-homes a home whose status
+  // is deleted), and an unpinned restore would write the STALE target it resolved from
+  // the pre-rewrite id — a deleted status id (a ghost task) or the #88 to-do demotion.
   const restored = await d
     .update(tasks)
     .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
@@ -149,7 +152,9 @@ async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restor
       and(
         eq(tasks.id, cur.id),
         eq(tasks.status, BLOCKED_STATUS),
-        parked ? eq(tasks.parkFromStatus, nonNull(cur.parkFromStatus)) : isNull(tasks.parkFromStatus),
+        parked
+          ? eq(tasks.parkFromStatus, nonNull(cur.parkFromStatus))
+          : and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(cur.preBlockStatus))),
       ),
     )
     .returning({ id: tasks.id });

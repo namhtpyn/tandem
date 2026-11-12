@@ -59,25 +59,51 @@ own_predicate() {
 # same lost-flip shape and is OUT of this arm by declaration (#431). The two non-settle
 # block egresses (#427) leave a non-paused row, so no paused-row arm reads them. An
 # origin that no longer RESOLVES (its status was deleted after the block recorded it) is
-# out of scope too — #432 tracks that strand.
+# the ORPHAN-HOME arm's shape (#432), appended last so this slice never carries it.
 # RESIDUAL (both branches, #430): a task write AFTER the killing verdict masks the shape
 # — the child-restore that lands the task back in review writes updated_at past the
 # verdict and reads as a legal manual move. Pre-existing for the in_review branch since
 # #292; tracked with an activity-stamp design in #430.
 strand_sql() {
-  local own blkarm
+  local own blkarm orphan
   own=$(own_predicate "${1:-}" "${2:-}")
   blkarm=""
   if [ -n "$(own_block_predicate "${1:-}" "${2:-}")" ]; then
     blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
   fi
-  printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')"
+  # ORPHAN-HOME arm (#432): a PAUSED row with a recorded origin (block or park home) that
+  # names NO task_statuses row — the home was deleted after the block recorded it — with
+  # the same current-round predicate as the wedge (no PENDING row in max(round), the
+  # newest verdict of that round NEWER than the task's last write). EITHER column alone
+  # dangles: a row carrying both origins (no live writer emits that, but the schema
+  # permits it) still fires when one of them lost its row. No legal write path produces
+  # it: a gating block records the task's own status (a row that exists at write time), a
+  # park records an in-review home, a hand-made block clears both origins, and
+  # statuses.remove re-homes every recorded reference inside its delete transaction
+  # (STATUS-ORIGIN MEMORY LAW) — so a surviving count means a direct-SQL delete, a guard
+  # regression, or the ghost-task window the law declares (a task moved into the status
+  # while it was being deleted). The arm also requires NEITHER origin to resolve to an
+  # in-review home: the flip can still land through a resolvable park origin, so such a
+  # row is not this shape (the wedge's park exclusion, mirrored). VERSION-INDEPENDENT on purpose (a pre-guard image still produces
+  # the strand, so no image floor), but COLUMN-GATED like the block branch: the arm reads
+  # park_from_status, and an origin column absent on the running image would kill the
+  # WHOLE UNION (probe law #5 / #325) and blind every arm.
+  orphan=""
+  if [ "${2:-}" = "2" ]; then
+    orphan=" union all select 'orphanhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
+  fi
+  printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${orphan}"
 }
 # the wedge arm alone (the SQL's first emission) — selfcheck greps THIS, never the whole
 # strand SQL: `park_from_status` also rides $own inside the stallrv/lostsettle arms, so a
 # whole-SQL grep stays green with the wedge branch deleted (r1 review, P3)
 strand_wedge_arm() {
   strand_sql "${1:-}" "${2:-}" | sed "s/ union all select 'strand'.*//"
+}
+# the orphan-home arm alone (#432) — same slice discipline: its clauses are pinned on the
+# arm's own bytes, never a whole-SQL substring (the wedge shares two of them verbatim)
+strand_orphan_arm() {
+  strand_sql "${1:-}" "${2:-}" | sed "s/.*select 'orphanhome'/select 'orphanhome'/"
 }
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
@@ -107,6 +133,25 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(printf '%s' "$WEDGE_ON" | grep -oF "and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge verdict round binding (both branches)"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: wedge block branch not gated"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: wedge floor"; exit 1; }
+  # ORPHAN-HOME arm (#432) — clauses pinned on the arm's own slice (the wedge shares the
+  # current-round + verdict-newer clauses verbatim, so a whole-SQL grep would stay green
+  # with this arm deleted).
+  ORPHAN_ON=$(strand_orphan_arm 2.78.19 2)
+  [ "$(printf '%s' "$ORPHAN_ON" | grep -oF "select 'orphanhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: orphan arm"; exit 1; }
+  printf '%s' "$ORPHAN_ON" | grep -qF "s.category = 'paused'" || { echo "selfcheck fail: orphan paused scope"; exit 1; }
+  printf '%s' "$ORPHAN_ON" | grep -qF "(t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))" || { echo "selfcheck fail: orphan dangling clause (per column)"; exit 1; }
+  printf '%s' "$ORPHAN_ON" | grep -qF "not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status))" || { echo "selfcheck fail: orphan in-review-resolver exclusion"; exit 1; }
+  [ "$(printf '%s' "$ORPHAN_ON" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: orphan write discriminator"; exit 1; }
+  printf '%s' "$ORPHAN_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: orphan verdict scope"; exit 1; }
+  printf '%s' "$ORPHAN_ON" | grep -qF "r.status = 'PENDING' and r.round = (select max(r3.round)" || { echo "selfcheck fail: orphan live-round clause"; exit 1; }
+  # VERSION-independent (no image floor — a pre-guard image produces the strand too) but
+  # COLUMN-gated: an arm referencing park_from_status on a one-column image would kill the
+  # whole UNION, so the arm must VANISH at the column-count-1 gate pair
+  [ "$(printf '%s' "$(strand_sql 2.78.19 2)" | grep -oF "select 'orphanhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: orphan arm missing at the pre-guard version"; exit 1; }
+  printf '%s' "$(strand_sql 2.78.19 1)" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm emitted without the park column"; exit 1; }
+  printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "orphanhome" || { echo "selfcheck fail: orphan arm missing at the current gate pair"; exit 1; }
+  # and it must never ride the wedge slice, whose clause counts assume one branch set
+  printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
@@ -500,6 +545,21 @@ elif [ "$STRCOL" = "1" ]; then
       fi
       printf '%s\n' "${LOSTSETTLE:-none}" > "$PROBE_STATE/lostsettle.prev"
     fi
+    # (f) orphan home: a block/park whose recorded origin names NO task_statuses row and
+    # whose current round closed anyway (#432). VERSION-INDEPENDENT: a pre-guard image
+    # produces the strand and a post-guard one only reaches it by a guard regression, so
+    # the arm alerts wherever it is seen (no floor, no state left behind by gating).
+    # Previous-pass presence confirm + id-set dedupe, like every other shape arm.
+    ORPHANHOME=$(echo "$STROUT" | awk -F'|' '/^orphanhome/{print $2}')
+    if [ -n "${ORPHANHOME:-}" ] && [ "$ORPHANHOME" != "none" ] && [ "$(cat "$PROBE_STATE/orphanhome.prev" 2>/dev/null || echo none)" != "none" ]; then
+      if [ "$(cat "$PROBE_STATE/orphanhome.alerted" 2>/dev/null || echo none)" != "$ORPHANHOME" ]; then
+        anom+=("orphan_home: blocked task whose recorded block/park home names no status row [$ORPHANHOME] — the settle flip cannot land, #432 class")
+        echo "$ORPHANHOME" > "$PROBE_STATE/orphanhome.alerted"
+      fi
+    else
+      rm -f "$PROBE_STATE/orphanhome.alerted"
+    fi
+    printf '%s\n' "${ORPHANHOME:-none}" > "$PROBE_STATE/orphanhome.prev"
   fi
 fi
 
