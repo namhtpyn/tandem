@@ -21,8 +21,11 @@ to_epoch_s() { case "${1:-}" in ''|*[!0-9]*) echo 0 ;; *) if [ "$1" -gt 10000000
 # $1 = prod version (may be empty), $2 = origin-column count. Empty = branch omitted.
 own_block_predicate() {
   case "${1:-}" in
-    [0-9]*.[0-9]*.[0-9]*) ;; # a real semver: sort -V can rank garbage above 2.78.20
+    [0-9]*.[0-9]*.[0-9]*) ;; # x.y.z shape first (sort -V ranks garbage above 2.78.20)
     *) return 0 ;;
+  esac
+  case "${1}" in
+    *[!0-9.]*) return 0 ;; # ... and nothing but digits/dots (2.78.20-rc1 is BELOW the floor)
   esac
   if [ "${2:-}" = "2" ] && [ "$(printf '%s\n%s\n' 2.78.20 "${1}" | sort -V | tail -1)" = "${1}" ]; then
     printf "%s" "(s.category = 'paused' and t.park_from_status is null and t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category = 'in_review'))"
@@ -31,6 +34,8 @@ own_block_predicate() {
 # OWNERSHIP predicate for the stranded-round arms (#419): in_review, plus — when the
 # image can heal it — a review-flow-owned PAUSED gating auto-block (origin column set,
 # no park origin, recorded home resolving to in_review). $1 = prod version, $2 = columns.
+# The in_review half is a literal in the wedge arm and here; only the GATE-ORIGIN test
+# has one copy (a shape added here reaches stallrv/lostsettle, never the wedge).
 own_predicate() {
   if [ -n "$(own_block_predicate "${1:-}" "${2:-}")" ]; then
     printf "%s" "(s.category = 'in_review' or $(own_block_predicate "${1:-}" "${2:-}"))"
@@ -86,6 +91,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ -z "$(own_block_predicate '' 2)" ] || { echo "selfcheck fail: block empty version"; exit 1; }
   [ -z "$(own_block_predicate guard-error 2)" ] || { echo "selfcheck fail: block non-semver version"; exit 1; }
   [ -z "$(own_block_predicate 2.78.x 2)" ] || { echo "selfcheck fail: block partial semver"; exit 1; }
+  [ -z "$(own_block_predicate 2.78.20-rc1 2)" ] || { echo "selfcheck fail: block pre-release semver"; exit 1; }
+  printf '%s' "$(own_predicate 2.78.20 2)" | grep -qF "s.category = 'in_review'" || { echo "selfcheck fail: own in_review half"; exit 1; }
+  printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "where (s.category = 'in_review' or (s.category = 'paused'" || { echo "selfcheck fail: own predicate not reaching stallrv/lostsettle"; exit 1; }
   STR_ON=$(strand_sql 2.78.20 2)
   WEDGE_ON=$(strand_wedge_arm 2.78.20 2); WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
   printf '%s' "$STR_ON" | grep -qF "select 'lostsettle'" || { echo "selfcheck fail: strand lostsettle arm"; exit 1; }
@@ -335,14 +343,15 @@ fi
 
 # 5f. strand shapes — watchdog coverage for the shipped bug classes that no other
 # check covers (watchlist "candidate probe" entries, probed 2026-11-06):
-#   (a) DEAD-ROUND WEDGE (#292 class): an in_review-category task with NO PENDING
-#       review row whose newest verdict landed AFTER the task's last write — the
-#       round opened, every row left PENDING, and the task never left in_review
+#   (a) DEAD-ROUND WEDGE (#292 class): an in_review-category task whose CURRENT
+#       round has NO PENDING row and a verdict row NEWER than the task's last write —
+#       the round opened, its verdicts landed, and the task never left in_review
 #       (round-open teardown / settle-arbitration regressions). The
 #       newest-verdict-after-last-write invariant is what separates the machine
 #       wedge from a LEGAL manual move into in_review (the human re-open bumps
-#       tasks.updated_at past every verdict, so it never matches) and from a live
-#       round (PENDING rows exist).
+#       tasks.updated_at past every verdict, so it never matches); a PENDING row in
+#       the current round means a live (or suspended) round, and an older round's
+#       rows are debris the current-round clause ignores.
 #       BLOCK BRANCH (#424): the same wedge can strand a task in a child-derived
 #       gating auto-block — #419 keeps the round running there, so a kill between
 #       recordVerdict's row write and flipTask leaves a PAUSED block (origin

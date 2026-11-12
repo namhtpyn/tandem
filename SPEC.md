@@ -1058,10 +1058,11 @@ non-positive deltas render no duration.
   current-round predicate (one copy of the ownership test, the round/verdict
   clauses repeated per branch and count-pinned): the task's CURRENT round
   (`max(round)`) holds NO PENDING row at all — a NULL-reviewer void row counts as
-  an unsettled row (a non-vote the removal/boot heals own; the arm's silence there
-  is a declared choice, not a liveness claim) — and the newest VERDICT row of that
-  round (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the task's
-  last write. The shapes are (1) an `in_review`-category task, and
+  an unsettled row whose owner settles it (the removal/boot heals for an in_review
+  task, the block restore for a blocked one; the arm's silence is a declared
+  choice, not a liveness claim) — and the newest VERDICT row of that round
+  (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the task's last
+  write. The shapes are (1) an `in_review`-category task, and
   (2) from 2.78.20, under the same origin-column and version gates as the other
   #419 arms, a PAUSED gating auto-block (`park_from_status IS NULL`,
   `pre_block_status` resolving to an `in_review` category). The write-vs-verdict
@@ -1071,10 +1072,11 @@ non-positive deltas render no duration.
   writes no origin), while a lost settle flip has the block write first and the
   killing verdict after it (the verdict ROW is written before the flip's task
   write, as separate statements). A `park` clears the gate origin in the SAME
-  write that sets `park_from_status`, so a parked row matches neither branch — and
-  a parked round that closed is the SAME lost-flip shape, deliberately OUT of this
-  arm (#431); the two non-settle block egresses (#427) leave a non-paused row, so
-  no paused-row arm reads them, and an origin that no longer RESOLVES (its status
+  write that sets `park_from_status`, so a parked row matches neither branch — a
+  parked round that closed is either a designed settle-failure recovery or the same
+  lost flip, and telling them apart is OUT of this arm (#431); a non-settle block
+  egress (#427) leaves the origin pointing at a NON-REVIEW status (a cancel that
+  re-blocks records the cancelled status), so the origin resolve excludes them, and an origin that no longer RESOLVES (its status
   was deleted after the block recorded it) is out of scope as well (#432). BOTH
   branches share one RESIDUAL: a task-row write that leaves the status unchanged
   and stamps `updated_at` after the killing verdict masks the shape — the

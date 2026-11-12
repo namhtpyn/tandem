@@ -29,8 +29,8 @@ test.describe('prod probe wedge arm (#424)', () => {
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
-      // a PENDING row only counts as a live round when it NAMES a reviewer (the #365 void
-      // row is not live) — anchor live controls on the boot admin, which survives resets
+      // ANY PENDING row in the current round suppresses the arm (a void row included), so
+      // a live-round control names a real reviewer; the boot admin survives resets
       const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
       expect(adminId, 'the e2e boot admin must exist for a live-reviewer seed').not.toBe('');
 
