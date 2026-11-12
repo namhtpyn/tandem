@@ -177,6 +177,10 @@ test.describe('prod probe wedge arm (#424)', () => {
       expect(fired, 'the in_review half holds a live round while a reviewer row is PENDING').not.toContain(
         inReviewLive,
       );
+      expect(fired, 'a void row suspends the in_review round too — the same current-round clause').not.toContain(
+        inReviewVoid,
+      );
+      expect(fired, 'an older round verdict cannot stand in for the current round').not.toContain(inReviewOldVerdict);
     } finally {
       await sql.close();
     }
