@@ -49,6 +49,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       const olderPending = `probe-wedge-oldpending-${crypto.randomUUID()}`; // fires: older round PENDING, current round decided
       const inReviewWedge = `probe-wedge-ir-${crypto.randomUUID()}`; // fires: in_review branch
       const inReviewManual = `probe-wedge-irm-${crypto.randomUUID()}`; // legal: verdict older than write
+      const inReviewLive = `probe-wedge-irl-${crypto.randomUUID()}`; // legal: the in_review round is live
 
       // task write age (minutes ago) per seed; the wedge needs the verdict NEWER than it
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
@@ -74,6 +75,7 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: olderPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: inReviewWedge, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewManual, status: IN_REVIEW, pre: null, park: null, written: 1 },
+          { id: inReviewLive, status: IN_REVIEW, pre: null, park: null, written: 5 },
         ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -126,6 +128,8 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedReview(olderPending, 'CHANGE_REQUESTED', 1, 10, 2);
       await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 1);
       await seedReview(inReviewManual, 'APPROVED', 10);
+      await seedReview(inReviewLive, 'APPROVED', 1, 10, 1, null);
+      await seedReview(inReviewLive, 'PENDING', null, 1, 1, adminId);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -160,6 +164,9 @@ test.describe('prod probe wedge arm (#424)', () => {
       );
       expect(fired, 'a torn-down round holds no verdict row — not a decided round').not.toContain(tornDown);
       expect(fired, 'a verdict older than the task write is a legal manual move').not.toContain(inReviewManual);
+      expect(fired, 'the in_review half holds a live round while a reviewer row is PENDING').not.toContain(
+        inReviewLive,
+      );
     } finally {
       await sql.close();
     }
