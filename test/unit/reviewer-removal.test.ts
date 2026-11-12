@@ -343,6 +343,10 @@ describe('settleExtinguishedRound (#365)', () => {
     // the same write (a surviving origin reads as a live block/park on a closed round)
     expect(flip?.set.preBlockStatus).toBeNull();
     expect(flip?.set.parkFromStatus).toBeNull();
+    // ... and the ladder resets with them: parkRound INCREMENTS a surviving ledger, so a
+    // settled round must not hand its spent ladder to the task's next park (#423)
+    expect(flip?.set.parkRearmAttempts).toBe(0);
+    expect(flip?.set.parkRearmAfter).toBeNull();
   });
 
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
@@ -379,6 +383,8 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.cancelled);
+    // every landing re-gates, the cancelled one included (#423)
+    expect(h.regated).toEqual(['task-1']);
   });
 
   it('the void-row sweep is SCOPED: reviewer_id IS NULL, this task, this round, pending only', async () => {

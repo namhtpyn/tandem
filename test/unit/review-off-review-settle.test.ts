@@ -32,6 +32,8 @@ const h = vi.hoisted(() => ({
   /** #423: parent-gating calls made by a WON flip, with the status already written */
   regated: [] as Array<{ taskId: string; status: string }>,
   regateThrows: false,
+  /** #423 clause 6: the best-effort re-gate's LOGGED half */
+  warnings: [] as string[],
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -182,6 +184,19 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
   };
 });
 
+// #423 clause 6: the re-gate's failure path must LOG and not surface. consola's child
+// loggers (`consola.withTag(...)`) carry their own warn, so a spy on the root instance
+// cannot see the service's lines — mock the module and record every warn.
+vi.mock('consola', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('consola')>();
+  const record = (...args: unknown[]) => void h.warnings.push(args.map((a) => String(a)).join(' '));
+  const child = new Proxy({} as Record<string, unknown>, { get: (_t, p) => (p === 'warn' ? record : () => {}) });
+  const root = new Proxy({} as Record<string, unknown>, {
+    get: (_t, p) => (p === 'withTag' ? () => child : p === 'warn' ? record : () => {}),
+  });
+  return { ...mod, consola: root, default: root };
+});
+
 // #423: the settle flip re-gates through a dynamic import (module graph stays acyclic at
 // load time). The mock records the call with the status the flip already wrote, so the
 // pin proves gating ran AFTER the write and from the FLIPPED status.
@@ -218,6 +233,7 @@ beforeEach(() => {
   h.reviewRead = 0;
   h.regated = [];
   h.regateThrows = false;
+  h.warnings = [];
 });
 
 describe('off-review settle refusal (#401)', () => {
@@ -450,6 +466,10 @@ describe('settle exhausts the gating context and re-gates (#423)', () => {
       expect(set.parkFromStatus).toBeNull();
       expect(set.parkRearmAttempts).toBe(0);
       expect(set.parkRearmAfter).toBeNull();
+      // every landing re-gates from ITS OWN target — the request_change arm is the one
+      // this law newly covers (the pre-diff code skipped the todo landing), so pinning
+      // only the grant arm leaves that arm free to lose its re-gate silently (#426 r1)
+      expect(h.regated).toEqual([{ taskId: 'task-1', status: arm.target }]);
     });
   }
 
@@ -485,5 +505,7 @@ describe('settle exhausts the gating context and re-gates (#423)', () => {
     expect(h.task.status).toBe(STATUS.done);
     expect(h.notes.length).toBeGreaterThan(0); // the settle-arm note still lands
     expect(h.published).toBeGreaterThan(0);
+    // clause 6's LOGGED half: a silent `catch {}` must not pass this pin (#426 r1)
+    expect(h.warnings.some((w) => w.includes('re-gate after the flip failed'))).toBe(true);
   });
 });

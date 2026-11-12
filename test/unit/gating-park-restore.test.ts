@@ -314,6 +314,18 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.todo);
   });
 
+  it('a TERMINAL settle that still owns an open child re-blocks from its OWN settled status (#423)', async () => {
+    // the settle flip exhausts the origins, so the re-gate it triggers must derive the
+    // block from the status the flip just wrote — a done task whose child is still open
+    // is blocked again with `done` as its recorded home (never the pre-flip in-review id)
+    row('p', { status: STATUS.done });
+    h.childrenByParent.set('p', [{ status: STATUS.doing }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+    expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.done);
+  });
+
   it('a WITHHELD decision park still lets the walk re-derive its ancestors (#419)', async () => {
     // 'withheld' is not a lost race: the parked row stays blocked and counts as an open
     // child, so its parent must be re-gated in the same walk
