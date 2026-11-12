@@ -1054,23 +1054,22 @@ non-positive deltas render no duration.
   and is the source of truth for every prod check. The agent-profile copy is a
   deploy of that file (copied, never edited in place); `origin/dev` vs live
   drift is an ops defect the critic alerts on.
-- The dead-round wedge arm covers BOTH review-flow-owned shapes. (1) An
-  `in_review`-category task with no PENDING review row whose newest verdict
-  landed after the task's last write (the manual-freedom discriminator: a legal
-  manual move into review bumps `updated_at` past every verdict). (2) From
-  2.78.20 — the same origin-column and version gates as the other #419 arms — a
-  PAUSED gating auto-block (`park_from_status IS NULL`, `pre_block_status`
-  resolving to an `in_review` category) whose CURRENT round is closed — no
-  PENDING row NAMING A REVIEWER in `max(round)` (a NULL-reviewer void row is not
-  a live round, the #365 shape), at least one verdict row in it — and whose
-  newest verdict is NEWER than the task's last write. The blocked branch carries the
-  SAME discriminator, and it is load-bearing: a legal re-queue into an in-review
-  status over an already-decided round puts the verdict BEFORE the move and the
-  later block (a child opening then records that home with the block write last),
-  while a lost settle flip has the block write first and the killing verdict
-  after it (`recordVerdict` touches no task row). A park carries
-  `park_from_status`, a hand-made block writes no origin, and a settle re-blocks
-  from the LANDED status; the two non-settle block egresses (#427) leave a
+- The dead-round wedge arm covers BOTH review-flow-owned shapes, under ONE
+  predicate: the task's CURRENT round (`max(round)`) holds NO PENDING row — any
+  PENDING row there, a NULL-reviewer void row from a removed reviewer included,
+  means the round is still suspended, never a wedge — and the newest VERDICT row
+  of that round (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the
+  task's last write. The shapes are (1) an `in_review`-category task, and
+  (2) from 2.78.20, under the same origin-column and version gates as the other
+  #419 arms, a PAUSED gating auto-block (`park_from_status IS NULL`,
+  `pre_block_status` resolving to an `in_review` category). The write-vs-verdict
+  discriminator is the manual-freedom test in both: a legal move reads `updated_at`
+  last (a manual re-queue into an in-review status over an already-decided round
+  puts the verdict BEFORE the move and the later block, and a hand-made block
+  writes no origin), while a lost settle flip has the block write first and the
+  killing verdict after it (`recordVerdict` touches no task row). A `park` carries
+  `park_from_status` and owns its round: a parked round that closed is OUT of this
+  arm's scope (#431), and the two non-settle block egresses (#427) leave a
   non-paused row, so no paused-row arm reads them. BOTH branches share one
   RESIDUAL: a task-row write AFTER the killing verdict masks the shape (the
   child-restore that lands the task back in review writes `updated_at` past the
@@ -1082,9 +1081,9 @@ non-positive deltas render no duration.
   so the arms' regression test executes the bytes that ship rather than a
   test-side copy; `--selfcheck` asserts both ownership predicates and, on the
   WEDGE arm alone (never the whole strand SQL, where the ownership predicate is
-  echoed by other arms), the block branch's presence/absence at the version gate,
-  its verdict + live-round clauses, and the write discriminator on BOTH branches
-  (counted, not substring-matched).
+  echoed by other arms), the block branch's presence/absence at the version gate
+  and, counted on both branches (never substring-matched), the current-round
+  live-round clause, the verdict status list and the write discriminator.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names

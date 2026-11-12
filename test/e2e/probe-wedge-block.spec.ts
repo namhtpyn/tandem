@@ -16,6 +16,7 @@ const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pa
 // Baseline status rows the e2e global setup re-seeds (test/e2e/global-setup.ts).
 const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
+const DOING = '01a14743-43f5-759d-a00e-9ccda502cc88';
 const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 
 test.describe('prod probe wedge arm (#424)', () => {
@@ -37,12 +38,14 @@ test.describe('prod probe wedge arm (#424)', () => {
       const illegal = `probe-wedge-block-${crypto.randomUUID()}`; // fires: block, then a killing verdict
       const legalRequeue = `probe-wedge-requeue-${crypto.randomUUID()}`; // legal: verdict predates the block
       const liveBlock = `probe-wedge-live-${crypto.randomUUID()}`; // legal: PENDING row in the round
-      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // legal: a park writes no gate origin
-      const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // defensive: park owns the row
+      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // out of scope: a park owns its round (#431)
+      const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // defensive: a park outranks a gate origin
       const manualBlock = `probe-wedge-manual-${crypto.randomUUID()}`; // legal: hand-made block, no origins
       const todoOrigin = `probe-wedge-todo-${crypto.randomUUID()}`; // legal: origin resolves to ready
       const tornDown = `probe-wedge-void-${crypto.randomUUID()}`; // legal: no verdict row in the round
-      const voidPending = `probe-wedge-voidrow-${crypto.randomUUID()}`; // fires: decided round + a NULL-reviewer row
+      const suspendedVoid = `probe-wedge-voidrow-${crypto.randomUUID()}`; // legal: a void row suspends the round
+      const nonPausedStale = `probe-wedge-stale-${crypto.randomUUID()}`; // legal: stale origin on a non-paused row
+      const inReviewOlderPending = `probe-wedge-ir-old-${crypto.randomUUID()}`; // fires: older round PENDING, current decided
       const olderPending = `probe-wedge-oldpending-${crypto.randomUUID()}`; // fires: older round PENDING, current round decided
       const inReviewWedge = `probe-wedge-ir-${crypto.randomUUID()}`; // fires: in_review branch
       const inReviewManual = `probe-wedge-irm-${crypto.randomUUID()}`; // legal: verdict older than write
@@ -58,14 +61,16 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: legalRequeue, status: BLOCKED, pre: IN_REVIEW, park: null, written: 1 },
           { id: liveBlock, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: parked, status: BLOCKED, pre: null, park: IN_REVIEW, written: 5 },
-          // defensive control: no live writer emits both origins (parkRound and the gate
-          // write each clear the other). The clause is kept so such a row can never be read
-          // as a block — a park owns its round (owner resolution / re-arm) by definition.
+          // DEFENSIVE, not a legal-shape control: no live writer emits both origins
+          // (parkRound and the gate write each clear the other). The clause is kept so a
+          // park-owned row can never be read as a block; this seed is its only pin.
           { id: parkedStaleOrigin, status: BLOCKED, pre: IN_REVIEW, park: IN_REVIEW, written: 5 },
           { id: manualBlock, status: BLOCKED, pre: null, park: null, written: 5 },
           { id: todoOrigin, status: BLOCKED, pre: TODO, park: null, written: 5 },
           { id: tornDown, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
-          { id: voidPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          { id: suspendedVoid, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          { id: nonPausedStale, status: DOING, pre: IN_REVIEW, park: null, written: 5 },
+          { id: inReviewOlderPending, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: olderPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: inReviewWedge, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewManual, status: IN_REVIEW, pre: null, park: null, written: 1 },
@@ -107,10 +112,15 @@ test.describe('prod probe wedge arm (#424)', () => {
       // verdict row, so it is not a decided round — only the verdict status list sees that
       await seedReview(tornDown, 'SUPERSEDED', null, 1);
       await seedReview(tornDown, 'ESCALATED', null, 1);
-      // a decided round carrying the #365 void row: openRoundLive says not live, so this is
-      // a closed round — a NULL-reviewer row must not mask it
-      await seedReview(voidPending, 'APPROVED', 1);
-      await seedReview(voidPending, 'PENDING', null, 1);
+      // a round suspended by the #365 void row: a removed reviewer's row still PENDING in
+      // the current round means the block's own restore will settle it when it lifts
+      await seedReview(suspendedVoid, 'APPROVED', 1);
+      await seedReview(suspendedVoid, 'PENDING', null, 1);
+      // a stale gate origin left on a non-paused row (#427 egress) is not a block at all
+      await seedReview(nonPausedStale, 'APPROVED', 1);
+      // the in_review half must read the CURRENT round: an older round's PENDING row is debris
+      await seedReview(inReviewOlderPending, 'PENDING', null, 1, 1, adminId);
+      await seedReview(inReviewOlderPending, 'APPROVED', 1, 10, 2);
       // the CURRENT round is decided; a PENDING row in an OLDER round must not hide it
       await seedReview(olderPending, 'PENDING', null, 1, 1, adminId);
       await seedReview(olderPending, 'CHANGE_REQUESTED', 1, 10, 2);
@@ -132,9 +142,15 @@ test.describe('prod probe wedge arm (#424)', () => {
         fired,
         'a block over an already-decided round (verdict older than the block write) is legal',
       ).not.toContain(legalRequeue);
-      expect(fired, 'a park writes no gate origin (pre_block_status null) — not a gating block').not.toContain(parked);
-      expect(fired, 'a decided round carrying only a NULL-reviewer void row is closed, not live').toContain(
-        voidPending,
+      expect(fired, 'a park is out of this arm scope (park_from_status set) — #431 tracks the gap').not.toContain(
+        parked,
+      );
+      expect(fired, 'a void row keeps the current round suspended — the block restore settles it').not.toContain(
+        suspendedVoid,
+      );
+      expect(fired, 'a stale gate origin on a non-paused row is not a gating block').not.toContain(nonPausedStale);
+      expect(fired, 'the in_review half reads the current round: an older round PENDING row is debris').toContain(
+        inReviewOlderPending,
       );
       expect(fired, 'a PENDING row in an older round must not hide a decided current round').toContain(olderPending);
       expect(fired, 'a park origin owns a paused row even with a stale gating origin').not.toContain(parkedStaleOrigin);
