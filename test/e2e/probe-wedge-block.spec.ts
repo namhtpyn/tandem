@@ -28,15 +28,22 @@ test.describe('prod probe wedge arm (#424)', () => {
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
+      // a PENDING row only counts as a live round when it NAMES a reviewer (the #365 void
+      // row is not live) — anchor live controls on the boot admin, which survives resets
+      const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
+      expect(adminId, 'the e2e boot admin must exist for a live-reviewer seed').not.toBe('');
+
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
       const illegal = `probe-wedge-block-${crypto.randomUUID()}`; // fires: block, then a killing verdict
       const legalRequeue = `probe-wedge-requeue-${crypto.randomUUID()}`; // legal: verdict predates the block
       const liveBlock = `probe-wedge-live-${crypto.randomUUID()}`; // legal: PENDING row in the round
-      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // legal: park carries park_from_status
+      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // legal: a park writes no gate origin
       const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // defensive: park owns the row
       const manualBlock = `probe-wedge-manual-${crypto.randomUUID()}`; // legal: hand-made block, no origins
       const todoOrigin = `probe-wedge-todo-${crypto.randomUUID()}`; // legal: origin resolves to ready
       const tornDown = `probe-wedge-void-${crypto.randomUUID()}`; // legal: no verdict row in the round
+      const voidPending = `probe-wedge-voidrow-${crypto.randomUUID()}`; // fires: decided round + a NULL-reviewer row
+      const olderPending = `probe-wedge-oldpending-${crypto.randomUUID()}`; // fires: older round PENDING, current round decided
       const inReviewWedge = `probe-wedge-ir-${crypto.randomUUID()}`; // fires: in_review branch
       const inReviewManual = `probe-wedge-irm-${crypto.randomUUID()}`; // legal: verdict older than write
 
@@ -58,6 +65,8 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: manualBlock, status: BLOCKED, pre: null, park: null, written: 5 },
           { id: todoOrigin, status: BLOCKED, pre: TODO, park: null, written: 5 },
           { id: tornDown, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          { id: voidPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          { id: olderPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: inReviewWedge, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewManual, status: IN_REVIEW, pre: null, park: null, written: 1 },
         ];
@@ -76,18 +85,20 @@ test.describe('prod probe wedge arm (#424)', () => {
         status: string,
         decidedMinutesAgo: number | null,
         createdMinutesAgo = 10,
+        round = 1,
+        reviewerId: string | null = null,
       ) => {
         await sql.unsafe(
-          `insert into task_reviews (id, task_id, round, status, created_at, decided_at)
-           values ($1, $2, 1, $3, now() - ($5::int * interval '1 minute'),
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, $6, $3, $7, now() - ($5::int * interval '1 minute'),
                    case when $4::int is null then null else now() - ($4::int * interval '1 minute') end)`,
-          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo, createdMinutesAgo],
+          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo, createdMinutesAgo, round, reviewerId],
         );
       };
       await seedReview(illegal, 'APPROVED', 1);
       await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveBlock, 'APPROVED', 1);
-      await seedReview(liveBlock, 'PENDING', null);
+      await seedReview(liveBlock, 'PENDING', null, 1, 1, adminId);
       await seedReview(parked, 'APPROVED', 1);
       await seedReview(parkedStaleOrigin, 'APPROVED', 1);
       await seedReview(manualBlock, 'APPROVED', 1);
@@ -96,6 +107,13 @@ test.describe('prod probe wedge arm (#424)', () => {
       // verdict row, so it is not a decided round — only the verdict status list sees that
       await seedReview(tornDown, 'SUPERSEDED', null, 1);
       await seedReview(tornDown, 'ESCALATED', null, 1);
+      // a decided round carrying the #365 void row: openRoundLive says not live, so this is
+      // a closed round — a NULL-reviewer row must not mask it
+      await seedReview(voidPending, 'APPROVED', 1);
+      await seedReview(voidPending, 'PENDING', null, 1);
+      // the CURRENT round is decided; a PENDING row in an OLDER round must not hide it
+      await seedReview(olderPending, 'PENDING', null, 1, 1, adminId);
+      await seedReview(olderPending, 'CHANGE_REQUESTED', 1, 10, 2);
       await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 1);
       await seedReview(inReviewManual, 'APPROVED', 10);
 
@@ -114,7 +132,11 @@ test.describe('prod probe wedge arm (#424)', () => {
         fired,
         'a block over an already-decided round (verdict older than the block write) is legal',
       ).not.toContain(legalRequeue);
-      expect(fired, 'a park carries park_from_status — not a gating block').not.toContain(parked);
+      expect(fired, 'a park writes no gate origin (pre_block_status null) — not a gating block').not.toContain(parked);
+      expect(fired, 'a decided round carrying only a NULL-reviewer void row is closed, not live').toContain(
+        voidPending,
+      );
+      expect(fired, 'a PENDING row in an older round must not hide a decided current round').toContain(olderPending);
       expect(fired, 'a park origin owns a paused row even with a stale gating origin').not.toContain(parkedStaleOrigin);
       expect(fired, 'a hand-made block clears both origins — legal').not.toContain(manualBlock);
       expect(fired, 'a block whose origin resolves to a non-review status is not the review flow').not.toContain(

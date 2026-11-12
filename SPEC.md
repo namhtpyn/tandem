@@ -1061,8 +1061,9 @@ non-positive deltas render no duration.
   2.78.20 — the same origin-column and version gates as the other #419 arms — a
   PAUSED gating auto-block (`park_from_status IS NULL`, `pre_block_status`
   resolving to an `in_review` category) whose CURRENT round is closed — no
-  PENDING row in `max(round)`, at least one verdict row in it — and whose newest
-  verdict is NEWER than the task's last write. The blocked branch carries the
+  PENDING row NAMING A REVIEWER in `max(round)` (a NULL-reviewer void row is not
+  a live round, the #365 shape), at least one verdict row in it — and whose
+  newest verdict is NEWER than the task's last write. The blocked branch carries the
   SAME discriminator, and it is load-bearing: a legal re-queue into an in-review
   status over an already-decided round puts the verdict BEFORE the move and the
   later block (a child opening then records that home with the block write last),
@@ -1070,15 +1071,20 @@ non-positive deltas render no duration.
   after it (`recordVerdict` touches no task row). A park carries
   `park_from_status`, a hand-made block writes no origin, and a settle re-blocks
   from the LANDED status; the two non-settle block egresses (#427) leave a
-  non-paused row, so no paused-row arm reads them.
+  non-paused row, so no paused-row arm reads them. BOTH branches share one
+  RESIDUAL: a task-row write AFTER the killing verdict masks the shape (the
+  child-restore that lands the task back in review writes `updated_at` past the
+  verdict and reads as a legal manual move) — pre-existing for the in_review
+  branch and tracked, with the activity-stamp design that removes it, in #430.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),
   so the arms' regression test executes the bytes that ship rather than a
   test-side copy; `--selfcheck` asserts both ownership predicates and, on the
   WEDGE arm alone (never the whole strand SQL, where the ownership predicate is
-  echoed by other arms), the presence/absence of the block branch + its write
-  discriminator at the version gate.
+  echoed by other arms), the block branch's presence/absence at the version gate,
+  its verdict + live-round clauses, and the write discriminator on BOTH branches
+  (counted, not substring-matched).
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names

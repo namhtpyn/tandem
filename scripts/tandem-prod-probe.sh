@@ -38,7 +38,8 @@ own_predicate() {
 # ONE copy: the arms' regression test executes exactly these bytes against a seeded test
 # database, so the detector is pinned by the SQL that ships, never a test-side copy.
 # #424: the wedge arm's inner set gains the gating-block branch — a block recording an
-# in-review home whose CURRENT round is closed (no PENDING row in max(round), at least
+# in-review home whose CURRENT round is closed (no PENDING row naming a reviewer in
+# max(round) — a NULL-reviewer void row is not a live round, the #365 shape — at least
 # one verdict row in it) with that verdict NEWER than the task's last write. The
 # discriminator is load-bearing here too: a legal re-queue into an in-review status over
 # an already-decided round carries its verdict BEFORE the move and the later block (a
@@ -47,12 +48,16 @@ own_predicate() {
 # row). A park carries park_from_status, a hand-made block writes no origin, and a
 # settle re-blocks from the LANDED status; the two non-settle block egresses (#427)
 # leave a non-paused row, so no paused-row arm reads them.
+# RESIDUAL (both branches, #430): a task write AFTER the killing verdict masks the shape
+# — the child-restore that lands the task back in review writes updated_at past the
+# verdict and reads as a legal manual move. Pre-existing for the in_review branch since
+# #292; tracked with an activity-stamp design in #430.
 strand_sql() {
   local own blkarm
   own=$(own_predicate "${1:-}" "${2:-}")
   blkarm=""
   if [ -n "$(own_block_predicate "${1:-}" "${2:-}")" ]; then
-    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
+    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
   fi
   printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')"
 }
@@ -78,7 +83,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$WEDGE_ON" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge arm"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "park_from_status is null" || { echo "selfcheck fail: wedge block branch"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: wedge decided rows"; exit 1; }
-  printf '%s' "$WEDGE_ON" | grep -qF ") > t.updated_at" || { echo "selfcheck fail: wedge write discriminator"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_ON" | grep -oF ") > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge write discriminator (both branches)"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_OFF" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: wedge floor discriminator"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF "r.reviewer_id is not null" || { echo "selfcheck fail: wedge live-round definition"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: wedge block branch not gated"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: wedge floor"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
