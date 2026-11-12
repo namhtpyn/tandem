@@ -1054,6 +1054,24 @@ non-positive deltas render no duration.
   and is the source of truth for every prod check. The agent-profile copy is a
   deploy of that file (copied, never edited in place); `origin/dev` vs live
   drift is an ops defect the critic alerts on.
+- The dead-round wedge arm covers BOTH review-flow-owned shapes. (1) An
+  `in_review`-category task with no PENDING review row whose newest verdict
+  landed after the task's last write (the manual-freedom discriminator: a legal
+  manual move into review bumps `updated_at` past every verdict). (2) From
+  2.78.20 — the same origin-column and version gates as the other #419 arms — a
+  PAUSED gating auto-block (`park_from_status IS NULL`, `pre_block_status`
+  resolving to an `in_review` category) whose CURRENT round is closed: no
+  PENDING row in `max(round)` and at least one verdict row in it. The blocked
+  branch needs no `updated_at` discriminator: every legal exit clears both
+  machine origins (a hand-made block, an owner move), a park carries
+  `park_from_status`, and a settle re-blocks from the LANDED status — so a block
+  recording an in-review home with a closed round is a lost settle flip, never a
+  legal state, and a block whose round still holds a PENDING row is a live round.
+- `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
+  SQL a pass would run for that gate pair (no network, no state writes), so the
+  arms' regression test executes the bytes that ship rather than a test-side
+  copy; `--selfcheck` asserts both ownership predicates and the presence/absence
+  of the block branch at the version gate.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
