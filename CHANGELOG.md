@@ -1,3 +1,21 @@
+## [2.78.22](https://github.com/namhtpyn/tandem/compare/v2.78.21...v2.78.22) (2026-11-12)
+
+
+### Bug Fixes
+
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r1 pin the park discriminator on a paused row that also carries a gating origin ([ee1ed01](https://github.com/namhtpyn/tandem/commit/ee1ed01259feabf032c5c184a111cd21dcc6ecbf))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r1 seed created_at fresh so the e2e cleanup sweep owns the rows ([b9b15f6](https://github.com/namhtpyn/tandem/commit/b9b15f66cc416425e17420d719a9fe5a9b9f85a8))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r2 — the block branch carries the write-vs-verdict discriminator, the emit mode writes no state, selfcheck pins the wedge arm alone ([344acfd](https://github.com/namhtpyn/tandem/commit/344acfd3acbb80c1ebac08684e7050ab3cac958c))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r2 pin the verdict status list — the teardown control's rows land after the block write ([daa0d43](https://github.com/namhtpyn/tandem/commit/daa0d437b86172cc97b98fc7ba33c5a5d8980b5e))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r3 — a void PENDING row is not a live round, the masking residual is specced and filed ([#430](https://github.com/namhtpyn/tandem/issues/430)), the discriminator is count-pinned ([d4576eb](https://github.com/namhtpyn/tandem/commit/d4576eb8a46ee20f3da40f946c10999bfaf60688))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r4 — one current-round/verdict predicate on both branches; void rows suspend, older rounds are debris, parks are scoped out ([#431](https://github.com/namhtpyn/tandem/issues/431)) ([a546e63](https://github.com/namhtpyn/tandem/commit/a546e6332c65ba8bd2e9a282d41dee1f73366385))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r4 add the in_review live-round control (r3 spec finding) ([f23f509](https://github.com/namhtpyn/tandem/commit/f23f5097fd3bb27433d27c86e66d70a741d602ad))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r5 — comment truth, dead var, declared scopes ([#431](https://github.com/namhtpyn/tandem/issues/431)/[#432](https://github.com/namhtpyn/tandem/issues/432)), and the in_review half's void + verdict-round pins ([2f4c93d](https://github.com/namhtpyn/tandem/commit/2f4c93d02380af7452a277d1094feee21f5ed270))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r5 pin the in_review half's void suspension and verdict-round binding ([8fc52d9](https://github.com/namhtpyn/tandem/commit/8fc52d9e441108e3c5ba13f012626bd5e5844446))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r6 — semver shape gate, honest residual/void/park wording, retimed controls, state-write pin binds the override too ([4fc079a](https://github.com/namhtpyn/tandem/commit/4fc079aa8f489c224b57b019fe1c5bd2416211ef))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) r7 (post-cap) — semver pre-release refused, own_predicate's in_review half pinned, contract wording corrected ([bfabbd7](https://github.com/namhtpyn/tandem/commit/bfabbd773e6ab746998e1829b2cf66ad7ec9ff7b))
+* [#424](https://github.com/namhtpyn/tandem/issues/424) widen the probe wedge arm to a gating block with a closed round ([f7325c5](https://github.com/namhtpyn/tandem/commit/f7325c50d27116c593cb4dcb1fdab1b0e6523aee)), closes [#419](https://github.com/namhtpyn/tandem/issues/419)
+
 ## [2.78.21](https://github.com/namhtpyn/tandem/compare/v2.78.20...v2.78.21) (2026-11-12)
 
 
