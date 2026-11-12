@@ -439,9 +439,13 @@ describe('GUARDED GATING WRITE (#208)', () => {
   });
 
   it('a gated (non-parked) restore requires NO park to have appeared (#419) and pins the origin it read (#432)', async () => {
-    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    // a WORKING-category origin on purpose: the #88 law DEMOTES it to to-do, so the
+    // resolved target and the origin differ — a pin on the target instead of the origin
+    // (the confused-deputy bug) must be falsifiable
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.doing });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo);
     const gatedSql = mockDb()
       .select()
       .from(dbTasks)
@@ -453,7 +457,8 @@ describe('GUARDED GATING WRITE (#208)', () => {
     // lose the CAS — otherwise it writes the stale target (a deleted id = ghost task).
     const gatedWhere = gatedSql.sql.replace(/\s+/g, ' ').toLowerCase();
     expect(gatedWhere, 'the restore pins the block origin it read').toContain('"tasks"."pre_block_status" =');
-    expect(gatedSql.params).toContain(STATUS.inReview);
+    expect(gatedSql.params, 'the pin binds the ORIGIN, never the resolved target').toContain(STATUS.doing);
+    expect(gatedSql.params).not.toContain(STATUS.todo);
   });
 
   it('a concurrent owner settle inside the status-map window owns the outcome: no restore, no replay, walk stops', async () => {

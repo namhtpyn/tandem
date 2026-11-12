@@ -93,11 +93,20 @@ export const statusesRouter = os.router({
             .from(taskStatusesTable)
             .where(eq(taskStatusesTable.id, id))
         )[0];
+        // THE BLOCK STATE'S CATEGORY IS FROZEN (#432): it is the anchor every recorded
+        // machine home restores through and every paused-category discriminator resolves
+        // (the settle flip's paused branch, the mint gate, both sweeps, both probe arms).
+        // A recategorized block state re-keys or blinds ALL of them at once (blocked rows
+        // become dispatchable at Blocked→ready, terminal at Blocked→done), so only name,
+        // colour and position stay editable on it.
+        if (existing && id === STATUS.blocked && existing.category !== input.category)
+          throw new ORPCError('BAD_REQUEST', {
+            message: 'the block state category is fixed — name, colour and position stay editable',
+          });
         if (existing && existing.category !== input.category) {
-          // the blocker is the BLOCK STATE by IDENTITY, never the paused CATEGORY: a
-          // recategorized built-in (an admin may edit it) must not turn a genuinely
-          // blocked task's home into "inert" — every gating reader fires on
-          // status === BLOCKED_STATUS, so identity is the load-bearing test.
+          // the blocker is the BLOCK STATE by IDENTITY, never the paused CATEGORY: the
+          // gating arms fire on status === BLOCKED_STATUS, and no live writer leaves an
+          // origin on any other row, so identity is the load-bearing test.
           const homes = await tx
             .select({ id: tasksTable.id })
             .from(tasksTable)
@@ -168,9 +177,9 @@ export const statusesRouter = os.router({
       // task write, the restore falls the unknown id back). Resolve a FAITHFUL target
       // LIVE, by category: a frozen id map would re-home into the wrong category after
       // an admin recategorizes a built-in, and would miss a category that gained a row.
-      // 'paused' has NO faithful target (its only paused-category sibling is the block
-      // state itself: a home re-homed onto it restores the task INTO the block, clears
-      // both origins and strands it).
+      // 'paused' has NO faithful target: a restore into ANY paused-category status
+      // clears the origin and leaves a row no gating arm fires on (the block state
+      // themselves is excluded by identity below, so no paused candidate survives).
       const refs = await tx
         .select({ id: tasksTable.id, status: tasksTable.status })
         .from(tasksTable)
@@ -224,25 +233,41 @@ export const statusesRouter = os.router({
       // UNCONDITIONAL (not gated on the refs read): a block/park that committed inside
       // the refs-read→delete window is caught by this UPDATE's own WHERE, so the repair
       // is right even when the read saw zero references.
+      const touched = new Set<string>();
+      const collect = (rows: Array<{ id: string }>) => {
+        for (const r of rows) touched.add(r.id);
+      };
       if (home) {
-        await tx
-          .update(tasksTable)
-          .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
-          .where(eq(tasksTable.preBlockStatus, input.id));
-        await tx
-          .update(tasksTable)
-          .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
-          .where(eq(tasksTable.parkFromStatus, input.id));
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.preBlockStatus, input.id))
+            .returning({ id: tasksTable.id }),
+        );
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
+            .where(eq(tasksTable.parkFromStatus, input.id))
+            .returning({ id: tasksTable.id }),
+        );
       } else {
         // no faithful home: drop the INERT references (a blocked one would have refused)
-        await tx
-          .update(tasksTable)
-          .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
-          .where(and(eq(tasksTable.preBlockStatus, input.id), ne(tasksTable.status, STATUS.blocked)));
-        await tx
-          .update(tasksTable)
-          .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
-          .where(and(eq(tasksTable.parkFromStatus, input.id), ne(tasksTable.status, STATUS.blocked)));
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.preBlockStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
+            .returning({ id: tasksTable.id }),
+        );
+        collect(
+          await tx
+            .update(tasksTable)
+            .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
+            .where(and(eq(tasksTable.parkFromStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
+            .returning({ id: tasksTable.id }),
+        );
       }
       // the invariant the whole law rests on: after this delete no row may still name the
       // removed id. A reference that landed after the repair statement is the ghost-task
@@ -269,7 +294,7 @@ export const statusesRouter = os.router({
           .set({ nextIds: o.nextIds.filter((n) => n !== input.id), updatedAt: new Date() })
           .where(eq(taskStatusesTable.id, o.id));
       }
-      return refs.map((r) => r.id);
+      return [...touched];
     });
     await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
     // BEST-EFFORT AFTER THE COMMIT (#432): the repair changed restore targets, so re-derive
