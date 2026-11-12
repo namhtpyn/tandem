@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   taskUpdates: [] as Array<Record<string, unknown>>,
   taskWheres: [] as unknown[],
   parkCalls: [] as Array<[string, string]>,
+  parkOpts: [] as Array<Record<string, unknown> | undefined>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -37,11 +38,13 @@ vi.mock('../../server/db/index', async () => {
             const category =
               id === STATUS.inReview || id === 'st-custom-review'
                 ? 'in_review'
-                : id === STATUS.doing || id === 'st-custom-working'
-                  ? 'working'
-                  : id === STATUS.done || id === 'st-custom-done'
-                    ? 'done'
-                    : null;
+                : id === STATUS.blocked
+                  ? 'paused'
+                  : id === STATUS.doing || id === 'st-custom-working'
+                    ? 'working'
+                    : id === STATUS.done || id === 'st-custom-done'
+                      ? 'done'
+                      : null;
             return category ? [{ id, category }] : [];
           },
         },
@@ -82,8 +85,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
   return {
     ...mod,
-    parkRound: async (taskId: string, why: string) => {
+    parkRound: async (taskId: string, why: string, opts?: Record<string, unknown>) => {
       h.parkCalls.push([taskId, why]);
+      h.parkOpts.push(opts);
     },
   };
 });
@@ -106,6 +110,7 @@ beforeEach(() => {
   h.taskUpdates = [];
   h.taskWheres = [];
   h.parkCalls = [];
+  h.parkOpts = [];
 });
 
 describe('reaper routes the follow-up by task status (#199)', () => {
@@ -115,6 +120,7 @@ describe('reaper routes the follow-up by task status (#199)', () => {
     expect(reaped).toBe(1);
     expect(h.runUpdates).toHaveLength(1); // the run row settles FAILED
     expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
+    expect(h.parkOpts[0]).toEqual({ rearmable: true }); // infra-class: the ladder owns it
     expect(h.taskUpdates).toHaveLength(0); // NO work-ladder bounce
   });
 
@@ -143,6 +149,17 @@ describe('reaper routes the follow-up by task status (#199)', () => {
     expect(reaped).toBe(1);
     expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
     expect(h.taskUpdates).toHaveLength(0);
+  });
+
+  it('a GATING auto-block (paused, in-review origin) offers the park — a timed-out review turn strands nowhere (#419)', async () => {
+    // the block case: the reaper's category route used to fall through, so a timed-out
+    // review turn in a derived block never reached parkRound at all
+    h.taskRow = { failStreak: 0, status: STATUS.blocked };
+    const reaped = await reapStaleRuns();
+    expect(reaped).toBe(1);
+    expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
+    expect(h.parkOpts[0]).toEqual({ rearmable: true }); // infra-class: the ladder owns it
+    expect(h.taskUpdates).toHaveLength(0); // never the work ladder
   });
 
   it('a custom WORKING-CATEGORY status bounces with the read-status predicate (#336)', async () => {

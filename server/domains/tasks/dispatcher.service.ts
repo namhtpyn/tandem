@@ -117,10 +117,13 @@ async function reapStaleRunsInner() {
         where: { id: { eq: current.status } },
       });
       const category = categoryRows.find((r) => r.id === current.status)?.category;
-      if (category === CATEGORY.IN_REVIEW) {
+      if (category === CATEGORY.IN_REVIEW || category === CATEGORY.PAUSED) {
         // a review turn that timed out never rides the work ladder (#199): the todo-flip
         // yanks an in-review task out of its open round (rows stay PENDING, nothing
         // re-fires them). Park on the owner; unblock re-dispatches the reviewer.
+        // GATING AUTO-BLOCK (#419): a paused task is offered to parkRound too — it
+        // refuses a park already standing and an owner-moved block, and parks a
+        // child-derived block from an in-review origin (the failed turn's only recovery).
         const { parkRound } = await import('./review.service');
         // REARMABLE (#211): a timed-out review turn is infra-class (env/runner outage).
         await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`, { rearmable: true });

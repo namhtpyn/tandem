@@ -7,11 +7,14 @@
 //  1. the pure decision — every near-miss shape must NOT replay (task left review,
 //     superseded round, live run, run not DONE, a later run) and the crash shape must;
 //  2. the bound: the second replay attempt is the last — the third decision parks;
-//  3. the scan's SQL carries the shape's discriminators (current round, in_review
-//     category, PENDING AI row, no live run, the reviewer's NEWEST run is the DONE one);
+//  3. the scan's SQL carries the shape's discriminators (current round, review-flow
+//     ownership — in review or a child-derived gating auto-block from an in-review
+//     origin, #419 — PENDING AI row, no live run, the reviewer's NEWEST run is DONE);
 //  4. the wiring: a crash-shaped candidate replays exactly one run and reports the heal;
 //     a live run / a task out of review suppresses it; a scan failure resolves 0.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   scan: [] as Array<Record<string, unknown>>,
@@ -20,6 +23,8 @@ const h = vi.hoisted(() => ({
   liveRun: false,
   newest: null as { id: string; status: string } | null,
   taskStatus: 'st-in-review',
+  parkFromStatus: null as string | null,
+  preBlockStatus: null as string | null,
   statusRows: [{ id: 'st-in-review', category: 'in_review' }] as Array<{ id: string; category: string }>,
   replayed: [] as string[],
   replayOutcome: 'settled' as 'settled' | 'backoff' | 'skipped',
@@ -39,7 +44,18 @@ vi.mock('../../server/db/index', () => {
       return h.newest ? [h.newest] : [];
     }
     if (keys.includes('round')) return [{ round: h.round }];
-    if (keys.includes('rearmAttempts')) return [{ status: h.taskStatus, ownerId: null, rearmAttempts: 0 }];
+    // the mint gate's ownership read (reviewTurnAllowed) and parkRound's row read:
+    // status + machine origins + the ladder ledger (columns are NULL, never undefined)
+    if (keys.includes('preBlockStatus'))
+      return [
+        {
+          status: h.taskStatus,
+          ownerId: 'u1',
+          rearmAttempts: 0,
+          parkFromStatus: h.parkFromStatus,
+          preBlockStatus: h.preBlockStatus,
+        },
+      ];
     if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
@@ -124,7 +140,7 @@ const candidate = {
   finishedAt: FINISHED,
 };
 
-const shape = { round: 2, liveRun: false, inReview: true, runStatus: 'DONE', runIsNewest: true };
+const shape = { round: 2, liveRun: false, turnAllowed: true, runStatus: 'DONE', runIsNewest: true };
 
 beforeEach(() => {
   lostSettleAttemptState.clear(); // module state: attempts are per-run and per-process
@@ -134,6 +150,8 @@ beforeEach(() => {
   h.liveRun = false;
   h.newest = { id: RUN, status: 'DONE' };
   h.taskStatus = 'st-in-review';
+  h.parkFromStatus = null;
+  h.preBlockStatus = null;
   h.replayed = [];
   h.replayOutcome = 'settled';
   h.taskUpdates = [];
@@ -144,8 +162,8 @@ describe('lostSettleAction (#402 pure decision)', () => {
     expect(lostSettleAction(candidate, shape, 0)).toBe('replay');
   });
 
-  it('never replays a task that left in-review (manual move / park while scanning)', () => {
-    expect(lostSettleAction(candidate, { ...shape, inReview: false }, 0)).toBeNull();
+  it('never replays a task the review flow no longer owns (manual move / park while scanning)', () => {
+    expect(lostSettleAction(candidate, { ...shape, turnAllowed: false }, 0)).toBeNull();
   });
 
   it('never replays a superseded round', () => {
@@ -177,15 +195,29 @@ describe('lostSettleScan (#402 SQL discriminators)', () => {
     const client = new SQL('postgresql://probe:probe@127.0.0.1:1/probe');
     const query = lostSettleScan(drizzle(client) as never, new Date('2026-11-11T01:00:00Z')).toSQL();
     const text = query.sql.toLowerCase();
-    // placeholders carry the enum values: category = $1 (in_review), row status = $2
-    // (PENDING), run status = $3 (DONE), finished_at < $4 (grace cutoff), live-run
-    // probe = $5 (RUNNING)
-    expect(text).toContain('task_statuses"."category" = $1');
-    expect(text).toContain('task_reviews"."status" = $2');
-    expect(text).toContain('task_runs"."status" = $3');
-    expect(text).toContain('task_runs"."finished_at" < $4');
+    // placeholders carry the enum values; the ownership disjunction prepends
+    // (in_review, paused, in_review-origin) — #419
+    expect(text).toContain('task_statuses"."category" =');
+    expect(text).toContain('"tasks"."park_from_status" is null');
+    expect(text).toContain('"tasks"."pre_block_status" is not null');
+    expect(text).toContain('exists (select 1 from task_statuses o where o.id = "tasks"."pre_block_status"');
+    expect(text).toContain('task_reviews"."status" =');
+    expect(text).toContain('task_runs"."status" =');
+    expect(text).toContain('task_runs"."finished_at" <');
     expect(text).toContain('task_runs"."started_at" >= "task_reviews"."created_at"');
-    expect(query.params.slice(0, 5)).toEqual(['in_review', 'PENDING', 'DONE', expect.any(String), 'RUNNING']);
+    // ORDER-SENSITIVE (#419 r3): the tuple pins WHICH status each predicate reads — a
+    // DONE<->RUNNING swap keeps every toContain assertion green while the scan matches
+    // nothing (a RUNNING row has finished_at NULL), i.e. the whole replay arm dead
+    expect(query.params).toEqual([
+      'in_review',
+      'paused',
+      'in_review',
+      REVIEW_STATUS.PENDING,
+      RUN_STATUS.DONE,
+      expect.any(String),
+      RUN_STATUS.RUNNING,
+      20,
+    ]);
     expect(text).toContain('ai_employees');
     expect(text).toContain('max(r2.round)');
     // the NEWEST-run clause: the later-run subquery compares the (started_at, id) tuple
@@ -212,6 +244,31 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('replays a lost settle in a child-derived GATING auto-block (#419)', async () => {
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    const healed = await sweepLostReviewSettles();
+    expect(healed).toBe(1);
+    expect(h.replayed).toEqual([RUN]);
+  });
+
+  it('never replays a PARKED round (its restore re-fires the turn, #419)', async () => {
+    h.taskStatus = 'st-blocked';
+    h.parkFromStatus = 'st-in-review';
+    h.preBlockStatus = 'st-in-review'; // both origins: the park term must be the refusal
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    const healed = await sweepLostReviewSettles();
+    expect(healed).toBe(0);
+    expect(h.replayed).toEqual([]);
+  });
+
   it('suppresses the replay when the task left the in-review category', async () => {
     h.statusRows = [{ id: 'st-in-review', category: 'done' }];
     const healed = await sweepLostReviewSettles();
@@ -225,6 +282,26 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
     const healed = await sweepLostReviewSettles();
     expect(healed).toBe(0);
     expect(h.replayed).toEqual([]);
+  });
+
+  it('parks a derived-block round with the BLOCK origin as its home (#419)', async () => {
+    // the fix that makes the replay arm's terminal action reachable: parkRound accepts a
+    // gating auto-block and persists the round's in-review home (pre_block_status), not
+    // the blocked id — a park recording BLOCKED would restore into the paused category
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    h.replayOutcome = 'backoff';
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(await sweepLostReviewSettles()).toBe(1); // the third tick parks (attempts exhausted)
+    const park = h.taskUpdates.at(-1);
+    expect(park?.parkFromStatus).toBe('st-in-review');
+    expect(park?.parkRearmAttempts).toBe(1);
+    expect(park?.parkRearmAfter).toBeInstanceOf(Date);
   });
 
   it('keeps the attempt when the settle itself backs off, then parks on the third tick', async () => {

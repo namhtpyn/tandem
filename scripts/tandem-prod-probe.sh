@@ -16,7 +16,23 @@ mkdir -p "$PROBE_STATE" 2>/dev/null || true
 CT=(ssh -i "$CT_KEY" -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$CT_ADDR")
 # Epoch stamps: settings retention stamps are epoch **ms**; probe math is seconds.
 to_epoch_s() { case "${1:-}" in ''|*[!0-9]*) echo 0 ;; *) if [ "$1" -gt 100000000000 ]; then echo $(( $1 / 1000 )); else echo "$1"; fi ;; esac; }
+# OWNERSHIP predicate for the stranded-round arms (#419), factored so --selfcheck can
+# exercise its gating: the block branch is added only when the origin columns exist AND
+# the image's sweeps heal that shape (>= 2.78.20). $1 = prod version (may be empty),
+# $2 = origin-column count.
+own_predicate() {
+  if [ "${2:-}" = "2" ] && [ -n "${1:-}" ] && [ "$(printf '%s\n%s\n' 2.78.20 "${1}" | sort -V | tail -1)" = "${1}" ]; then
+    printf "%s" "(s.category = 'in_review' or (s.category = 'paused' and t.park_from_status is null and t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category = 'in_review')))"
+  else
+    printf "%s" "s.category = 'in_review'"
+  fi
+}
 if [ "${1:-}" = "--selfcheck" ]; then
+  [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
+  [ "$(own_predicate 2.78.20 2)" != "s.category = 'in_review'" ] || { echo "selfcheck fail: own block branch"; exit 1; }
+  [ "$(own_predicate 3.0.0 2)" != "s.category = 'in_review'" ] || { echo "selfcheck fail: own major"; exit 1; }
+  [ "$(own_predicate 2.78.20 1)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own column gate"; exit 1; }
+  [ "$(own_predicate '' 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own empty version"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
@@ -265,15 +281,18 @@ fi
 #       it (ask/forward always name a holder), so it needs no manual-freedom
 #       discriminator. The removal/boot heal returns the task; a surviving count
 #       means the heal itself is broken.
-#   (d) STALLED REVIEW TURN (#397 class): an in_review-category task holding a PENDING
-#       AI reviewer row in its CURRENT round with NO RUNNING run on the task and no run
-#       opened for that reviewer since the row was minted, older than 5 min — the crash
-#       window between the round-open transaction and the reviewer turn (#394 moved the
-#       dispatch after the commit). The tick sweep re-fires it within seconds, so a
+#   (d) STALLED REVIEW TURN (#397 class): a task the review flow still owns — an
+#       in_review-category status, or a PAUSED GATING auto-block whose recorded origin
+#       resolves to in_review (#419: a child-derived block does not stop the round, and a
+#       parked round never matches) — holding a PENDING AI reviewer row in its CURRENT
+#       round with NO RUNNING run on the task and no run opened for that reviewer since
+#       the row was minted, older than 5 min — the crash window between the round-open
+#       transaction and the reviewer turn (#394 moved the dispatch after the commit). The tick sweep re-fires it within seconds, so a
 #       surviving shape means the sweep itself is broken. No legal write path produces
 #       it: a human verdict moves the row off PENDING, a live turn has its run row, and a
 #       reviewer that already had a turn is excluded by the run-since-row predicate.
-#   (e) LOST SETTLE (#402 class): an in_review-category task holding a PENDING AI
+#   (e) LOST SETTLE (#402 class): the same review-flow-owned task (in_review, or a
+#       PAUSED block from an in-review origin, #419) holding a PENDING AI
 #       reviewer row in its CURRENT round whose NEWEST run in that round is DONE,
 #       finished >2 min ago, with no live run on the task — the crash/deploy window
 #       between finish()'s guarded RUNNING→DONE write and its settle. The tick's
@@ -293,10 +312,23 @@ fi
 # ai_employees.user_id, tasks.status/updated_at, task_runs.finished_at/id — all
 # verified against the live schema.
 STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null) || STRCOL="guard-error"
+# OWNERSHIP predicate (#419): the stranded-round arms cover a task the review flow still
+# owns — in_review, plus (from 2.78.20, whose sweeps heal that shape) a PAUSED gating
+# auto-block whose recorded origin resolves to in_review. Both gates are load-bearing:
+# pre-#401 images lack the two origin columns (column-absent law — one missing column
+# kills the whole UNION), and a pre-#419 image cannot heal the block shape, so the arm
+# must stay silent there rather than misattribute cause.
+ORIGCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name in ('park_from_status','pre_block_status')\"" 2>/dev/null) || ORIGCOL="guard-error"
+OWN=$(own_predicate "$V" "$ORIGCOL")
+if [ "$ORIGCOL" = "guard-error" ] && [ -n "$V" ] && [ "$(printf '%s\n%s\n' 2.78.20 "$V" | sort -V | tail -1)" = "$V" ]; then
+  # the image can heal the block shape but the column probe failed: the arm is blind,
+  # never silently degraded (sibling guards PRCOL/STRCOL alert the same way)
+  anom+=("origcol_guard: column probe failed — #419 block detection blind")
+fi
 if [ "$STRCOL" = "guard-error" ]; then
   anom+=("strand_guard: column probe failed — detector blind")
 elif [ "$STRCOL" = "1" ]; then
-  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category = 'in_review' and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category = 'in_review' and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')"
+  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $OWN and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $OWN and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')"
   STRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   STROUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
   if [ "$STROUT" = "db-unreachable" ]; then
@@ -338,7 +370,8 @@ elif [ "$STRCOL" = "1" ]; then
     # (d) stalled review turn: previous-pass presence confirm + id-set dedupe (#397).
     # VERSION FLOOR: the sweep ships in 2.78.13 — on an older image the crash-window shape
     # is real and the sweep does not exist yet, so the arm stays silent (it would
-    # misattribute cause) and leaves no state behind.
+    # misattribute cause) and leaves no state behind. The #419 block branch is gated in
+    # OWN above (2.78.20), so this floor keeps the older in-review detector alive.
     STALLFLOOR=2.78.13
     STALL_ARM=0
     if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$STALLFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then STALL_ARM=1; fi
@@ -346,7 +379,7 @@ elif [ "$STRCOL" = "1" ]; then
       STALLRV=$(echo "$STROUT" | awk -F'|' '/^stallrv/{print $2}')
       if [ -n "${STALLRV:-}" ] && [ "$STALLRV" != "none" ] && [ "$(cat "$PROBE_STATE/stallrv.prev" 2>/dev/null || echo none)" != "none" ]; then
         if [ "$(cat "$PROBE_STATE/stallrv.alerted" 2>/dev/null || echo none)" != "$STALLRV" ]; then
-          anom+=("stalled_review: in_review with a PENDING AI reviewer and no turn in flight [$STALLRV] — stalled-review sweep not re-firing, #397 class")
+          anom+=("stalled_review: review-flow-owned task (in_review or a child-derived auto-block) with a PENDING AI reviewer and no turn in flight [$STALLRV] — stalled-review sweep not re-firing, #397/#419 class")
           echo "$STALLRV" > "$PROBE_STATE/stallrv.alerted"
         fi
       else
@@ -357,7 +390,8 @@ elif [ "$STRCOL" = "1" ]; then
     # (e) lost settle: previous-pass presence confirm + id-set dedupe (#402).
     # VERSION FLOOR: the replay sweep ships in 2.78.18 — on an older image a DONE run
     # whose settle was lost is real and nothing heals it yet, so the arm stays silent
-    # (it would misattribute cause) and leaves no state behind.
+    # (it would misattribute cause) and leaves no state behind. The #419 block branch is
+    # gated in OWN above (2.78.20).
     LOSTFLOOR=2.78.18
     LOST_ARM=0
     if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$LOSTFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then LOST_ARM=1; fi
@@ -365,7 +399,7 @@ elif [ "$STRCOL" = "1" ]; then
       LOSTSETTLE=$(echo "$STROUT" | awk -F'|' '/^lostsettle/{print $2}')
       if [ -n "${LOSTSETTLE:-}" ] && [ "$LOSTSETTLE" != "none" ] && [ "$(cat "$PROBE_STATE/lostsettle.prev" 2>/dev/null || echo none)" != "none" ]; then
         if [ "$(cat "$PROBE_STATE/lostsettle.alerted" 2>/dev/null || echo none)" != "$LOSTSETTLE" ]; then
-          anom+=("lost_settle: in_review with a PENDING AI reviewer whose newest run is DONE >2min and unsettled [$LOSTSETTLE] — settle-replay sweep not healing, #402 class")
+          anom+=("lost_settle: review-flow-owned task with a PENDING AI reviewer whose newest run is DONE >2min and unsettled [$LOSTSETTLE] — settle-replay sweep not healing, #402/#419 class")
           echo "$LOSTSETTLE" > "$PROBE_STATE/lostsettle.alerted"
         fi
       else

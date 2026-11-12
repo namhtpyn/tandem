@@ -20,7 +20,8 @@ const h = vi.hoisted(() => ({
   childrenByParent: new Map<string, Array<{ status: string }>>(),
   statusRows: [] as Array<{ id: string; category: string }>,
   updates: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean }>,
-  writeLog: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean; applied: boolean }>,
+  writeLog: [] as Array<{ set: Record<string, unknown>; cond: unknown; hasPredicate: boolean; applied: boolean }>,
+  readCols: [] as Array<Record<string, unknown>>,
   replayed: [] as string[],
   settled: [] as string[],
   answerHealed: [] as string[],
@@ -60,7 +61,10 @@ vi.mock('../../server/db/index', async () => {
       }),
       query: {
         tasks: {
-          findFirst: async (args: { where: { id: { eq: string } } }) => h.taskRows.get(args.where.id.eq) ?? null,
+          findFirst: async (args: { where: { id: { eq: string } }; columns?: Record<string, unknown> }) => {
+            if (args.columns) h.readCols.push(args.columns);
+            return h.taskRows.get(args.where.id.eq) ?? null;
+          },
           findMany: async (args: { where: { parentTaskId: { eq: string } } }) => {
             // one-shot interleave hook: fires at the children read — the block arm's
             // read→write window (#208)
@@ -79,7 +83,7 @@ vi.mock('../../server/db/index', async () => {
             returning: async () => {
               const lost = h.lossPlan.shift() === true;
               const applied = !lost;
-              if (table === tasks) h.writeLog.push({ set, hasPredicate: cond != null, applied });
+              if (table === tasks) h.writeLog.push({ set, cond, hasPredicate: cond != null, applied });
               if (table === tasks && applied) h.updates.push({ set, hasPredicate: cond != null });
               return applied ? [{ id: 'applied' }] : [];
             },
@@ -115,6 +119,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 import { refreshParentGating, resolveParkRestoreTarget } from '../../server/domains/tasks/gating.service';
+import { mockDb, tasks as dbTasks } from './helpers/mock-db';
 
 const SEED_STATUSES = [
   { id: STATUS.todo, category: 'backlog' },
@@ -132,6 +137,10 @@ function row(id: string, over: Record<string, unknown> = {}) {
     status: STATUS.todo,
     preBlockStatus: null,
     parkFromStatus: null,
+    // the persisted park CLASS marker (#419): a ladder-owned park carries a scheduled
+    // re-arm; a decision park and a final (exhausted) park carry none
+    parkRearmAttempts: 1,
+    parkRearmAfter: new Date('2026-11-11T00:00:00Z'),
     parentTaskId: null,
     ...over,
   });
@@ -143,6 +152,7 @@ beforeEach(() => {
   h.statusRows = SEED_STATUSES;
   h.updates = [];
   h.writeLog = [];
+  h.readCols = [];
   h.replayed = [];
   h.settled = [];
   h.answerHealed = [];
@@ -201,6 +211,52 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('a DECISION-class park is NOT dissolved by a child landing (#419): the owner resumes it', async () => {
+    // a stopped turn / exhausted escalation parks with no scheduled rung — an automatic
+    // restore must neither erase the park nor re-dispatch a turn the owner stopped; the
+    // row stays blocked so the owner's unblock-resume is the single resume
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 0, parkRearmAfter: null });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(0); // no restore, no park memory wiped
+    expect(h.replayed).toEqual([]);
+    expect(h.settled).toEqual([]);
+  });
+
+  it('an EXTINGUISHED decision park is withheld too — the owner resolves it (#419)', async () => {
+    // no live voter (the reviewer was deleted) does not make an automatic restore the
+    // owner: dissolving the park would settle a round the owner deliberately parked
+    h.roundLive = false;
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 0, parkRearmAfter: null });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(0);
+    expect(h.settled).toEqual([]);
+    expect(h.replayed).toEqual([]);
+  });
+
+  it('a FINAL (exhausted-ladder) park is not dissolved by a child landing either (#419)', async () => {
+    // attempts = ladder length + 1 with no scheduled rung: the ladder deliberately gave
+    // up and the watchdog alerts the exhausted shape — a child landing must not revive it
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 5, parkRearmAfter: null });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(0);
+    expect(h.replayed).toEqual([]);
+  });
+
+  it('a machine-parked ANCESTOR restored by the walk re-fires its turn (#419: the ancestor read carries the class)', async () => {
+    row('c', { status: STATUS.doing, parentTaskId: 'p' });
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 1 });
+    h.childrenByParent.set('c', [{ status: STATUS.done }]);
+    h.childrenByParent.set('p', [{ status: STATUS.done }]); // c itself is terminal after its children
+    await refreshParentGating('c');
+    expect(h.replayed).toEqual(['p']);
+    // BOTH reads (the task and the ancestor) must carry the class marker — a drop on
+    // either one silently downgrades that row's park to decision-class
+    expect(h.readCols.filter((c) => c.parkRearmAfter === true)).toHaveLength(2);
+  });
+
   it('a restored parked round whose reviewer was deleted settles instead of replaying (#365)', async () => {
     h.roundLive = false;
     row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
@@ -247,6 +303,48 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('a task carrying a STALE pre-block origin re-blocks with its OWN status as the home (#419)', async () => {
+    // a flip out of a block writes only the status, so a non-BLOCKED row can carry a
+    // stale pre_block_status — promoting it would restore the task to a category it no
+    // longer belongs to (a closed round would land back in-review)
+    row('p', { status: STATUS.todo, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.todo }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.todo);
+  });
+
+  it('a WITHHELD decision park still lets the walk re-derive its ancestors (#419)', async () => {
+    // 'withheld' is not a lost race: the parked row stays blocked and counts as an open
+    // child, so its parent must be re-gated in the same walk
+    row('c', {
+      status: STATUS.blocked,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+      parentTaskId: 'p',
+    });
+    row('p', { status: STATUS.inReview });
+    h.childrenByParent.set('c', [{ status: STATUS.done }]); // c's own children terminal
+    h.childrenByParent.set('p', [{ status: STATUS.blocked }]); // c is still open
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked); // the parent re-derives
+    expect(h.replayed).toEqual([]);
+  });
+
+  it('a working task carrying a STALE park origin blocks with its OWN status as the home (#419)', async () => {
+    // the settle-matrix flip leaves the stale origin behind; promoting it here would
+    // record a home for a round that is not live (the restore would land in-review and
+    // the rework would never be dispatched)
+    row('p', { status: STATUS.doing, parkFromStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.todo }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.doing);
+    expect(h.updates[0]?.set.parkFromStatus).toBeNull();
+  });
+
   it('the block arm on a parked-memory row records the park origin as pre-block, never BLOCKED itself', async () => {
     // parked task whose owner moved it back to in-review by a path that kept the memory:
     // new children spawn -> auto-block seeds pre = park origin (in-review), NOT blocked
@@ -256,6 +354,9 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
     expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.inReview);
+    // the gate SUPERSEDES the stale park memory (#419): both machine origins on one row
+    // would make the park discriminator (park_from_status IS NULL) lie
+    expect(h.updates[0]?.set.parkFromStatus).toBeNull();
   });
 
   it('the walk continues past a restored parked child and gates the ancestor', async () => {
@@ -280,6 +381,33 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(h.writeLog).toHaveLength(1);
     expect(h.writeLog[0]?.hasPredicate).toBe(true);
     expect(h.updates[0]?.set.status).toBe(STATUS.inReview);
+  });
+
+  it('the restore predicate is PARK-AWARE (#419): a park landing in the window must win', async () => {
+    // the block-branch park writes while the status stays BLOCKED, so the still-BLOCKED
+    // term alone cannot arbitrate it between the restore's read and write
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    const parkedSql = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.writeLog[0]?.cond as never)
+      .toSQL();
+    expect(parkedSql.sql.replace(/\s+/g, ' ').toLowerCase()).toContain('"tasks"."park_from_status" =');
+    expect(parkedSql.params).toContain(STATUS.inReview);
+  });
+
+  it('a gated (non-parked) restore requires NO park to have appeared (#419)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    const gatedSql = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.writeLog[0]?.cond as never)
+      .toSQL();
+    expect(gatedSql.sql.replace(/\s+/g, ' ').toLowerCase()).toContain('"tasks"."park_from_status" is null');
   });
 
   it('a concurrent owner settle inside the status-map window owns the outcome: no restore, no replay, walk stops', async () => {
