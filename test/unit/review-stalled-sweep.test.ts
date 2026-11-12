@@ -2,6 +2,9 @@
 // reviewer turn (the crash window #394's re-ordering opened between the round-open
 // transaction and the turn) leaves an in-review task with a PENDING AI reviewer row,
 // no run in flight and no park marker. The dispatcher tick's sweep re-fires it.
+// #419: the same strand exists inside a child-derived GATING auto-block (a PAUSED block
+// from an in-review origin, the #401 mint-gate shape) — the sweep accepts that ownership
+// and still refuses a park, a manual move and a block from a non-review origin.
 //
 // Pins, in order of strength:
 //  1. the pure decision — every near-miss shape must NOT refire (round moved on, live
@@ -27,6 +30,8 @@ const h = vi.hoisted(() => ({
   startedAtQueue: [] as Array<Date | null>,
   reviewRows: [] as Array<Record<string, unknown>>,
   taskStatus: 'st-in-review',
+  parkFromStatus: null as string | null,
+  preBlockStatus: null as string | null,
   statusRows: [{ id: 'st-in-review', category: 'in_review' }] as Array<{ id: string; category: string }>,
   resultBody: 'the submitted result',
   dispatched: [] as Array<{ taskId: string; opts?: { reviewBy?: string } }>,
@@ -56,6 +61,18 @@ vi.mock('../../server/db/index', async () => {
     }
     if (keys.includes('id')) return h.liveRun ? [{ id: 'run-live' }] : [];
     if (keys.includes('round')) return [{ round: h.round }];
+    // the mint gate's ownership read (reviewTurnAllowed) and parkRound's row read:
+    // status + machine origins + the ladder ledger
+    if (keys.includes('preBlockStatus'))
+      return [
+        {
+          status: h.taskStatus,
+          ownerId: 'u1',
+          rearmAttempts: 0,
+          parkFromStatus: h.parkFromStatus,
+          preBlockStatus: h.preBlockStatus,
+        },
+      ];
     if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
@@ -136,6 +153,8 @@ beforeEach(() => {
     { id: 'row-1', taskId: TASK, reviewerId: REV, round: 1, status: REVIEW_STATUS.PENDING, createdAt: ROW_MINTED },
   ];
   h.taskStatus = 'st-in-review';
+  h.parkFromStatus = null;
+  h.preBlockStatus = null;
   h.statusRows = [{ id: 'st-in-review', category: 'in_review' }];
   h.resultBody = 'the submitted result';
   h.dispatched = [];
@@ -148,27 +167,15 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
   const candidate = { taskId: TASK, round: 2, reviewerId: REV, createdAt: ROW_MINTED };
 
   it('fires the crash shape: current round, no live run, reviewer never dispatched', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, inReview: true })).toBe(
-      true,
-    );
-  });
-
-  it('never re-fires a task that left in-review (manual move / park while scanning)', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, inReview: false })).toBe(
-      false,
-    );
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null })).toBe(true);
   });
 
   it('never re-fires a superseded round', () => {
-    expect(stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null, inReview: true })).toBe(
-      false,
-    );
+    expect(stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null })).toBe(false);
   });
 
   it('never re-fires over a live turn (the run row owns the round)', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null, inReview: true })).toBe(
-      false,
-    );
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null })).toBe(false);
   });
 
   it('never re-fires a reviewer that already had a turn this round (the correction/park law owns it)', () => {
@@ -177,7 +184,6 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
         round: 2,
         liveRun: false,
         reviewerRunSince: new Date(ROW_MINTED.getTime() + 1),
-        inReview: true,
       }),
     ).toBe(false);
   });
@@ -232,6 +238,32 @@ describe('stalledReviewScan shape (#397)', () => {
     expect(flat).toContain('tr.employee_id = "task_reviews"."reviewer_id"');
     expect(flat).toContain('tr.started_at >= "task_reviews"."created_at"');
     expect(params).toContain(RUN_STATUS.RUNNING);
+    // ORDER-SENSITIVE (#419 r3): the ownership prefix + row/run/lost-settle-guard
+    // statuses in one tuple — a DONE<->RUNNING swap must not stay green
+    expect(params).toEqual([
+      'in_review',
+      'paused',
+      'in_review',
+      REVIEW_STATUS.PENDING,
+      cutoff.toISOString(),
+      RUN_STATUS.RUNNING,
+      REVIEW_STATUS.PENDING,
+      RUN_STATUS.DONE,
+      20,
+    ]);
+  });
+
+  it('accepts a child-derived GATING auto-block from an in-review origin (#419)', () => {
+    const { sql, params } = stalledReviewScan(mockDb(), cutoff).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    // in_review OR (paused AND no park origin AND a pre-block origin that RESOLVES to
+    // in-review) — the mint gate's own ownership shape, never a park, never a bare origin
+    expect(params).toContain('paused');
+    expect(flat).toContain('"tasks"."park_from_status" is null');
+    expect(flat).toContain('"tasks"."pre_block_status" is not null');
+    expect(flat).toContain('exists (select 1 from task_statuses o where o.id = "tasks"."pre_block_status"');
+    expect(flat).toContain('o.category =');
+    expect(params.filter((v) => v === 'in_review').length).toBeGreaterThanOrEqual(2);
   });
 
   it('is LIMIT-bounded and oldest-first (a wedged round can never starve the scan)', () => {
@@ -331,6 +363,49 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
   it('suppresses the re-fire when the task left in-review between the scan and the mint', async () => {
     h.taskStatus = 'st-todo';
     h.statusRows = [{ id: 'st-todo', category: 'ready' }];
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(0);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it('re-fires a round stranded in a child-derived GATING auto-block (#419)', async () => {
+    // the task is BLOCKED by a gate from its in-review origin: the round still owns the
+    // turn (the mint gate allows it), and this sweep is its only lost-mint recovery
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(1);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]?.opts?.reviewBy).toBe(REV);
+  });
+
+  it('never re-fires a PARKED round (#419: the park restore owns its turn)', async () => {
+    h.taskStatus = 'st-blocked';
+    h.parkFromStatus = 'st-in-review';
+    h.preBlockStatus = 'st-in-review'; // both set is the parked-from-block shape: the
+    // park term alone must refuse it (a null pre-block would pass the OLD guard instead)
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(0);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it('never re-fires a block whose recorded origin is NOT in-review (#419)', async () => {
+    // a gate from a working origin is not the review flow's round — the origin must
+    // RESOLVE to an in-review category (the #401 shape, not a bare non-null id)
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-doing';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-doing', category: 'working' },
+    ];
     const refired = await sweepStalledReviewTurns();
     expect(refired).toBe(0);
     expect(h.dispatched).toEqual([]);

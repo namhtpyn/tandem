@@ -6,7 +6,7 @@
 // defers (no attempt burned) when children are still open.
 // Mock routing (drizzle builder conds are opaque objects): selects dispatch on their
 // PROJECTION SIGNATURE — the scan's {id}, the kids' {status}, parkRound's
-// {ownerId,rearmAttempts,status}, taskStatuses by table — and the kids query rows come
+// {ownerId,parkFromStatus,preBlockStatus,rearmAttempts,status}, taskStatuses by table — and the kids query rows come
 // from a per-test plan (one entry per call, in order). RQB findFirst/findMany args ARE
 // plain objects (predicate honored, gating-park-restore precedent).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,7 +40,8 @@ vi.mock('../../server/db/index', async () => {
             const key = projKey(cols);
             if (key === 'id') return h.dueRows as Array<Record<string, unknown>>; // the re-arm scan
             if (key === 'status') return (h.childrenPlan.shift() ?? []) as Array<Record<string, unknown>>;
-            if (key === 'ownerId,rearmAttempts,status') return h.parkRow ? [h.parkRow] : [];
+            if (key === 'ownerId,parkFromStatus,preBlockStatus,rearmAttempts,status')
+              return h.parkRow ? [h.parkRow] : [];
             return [];
           };
           // the where-path MUST honor predicates (DB-mock predicate law): the only
@@ -222,7 +223,12 @@ describe('parkRound re-arm ladder (#211)', () => {
 
 describe('rearmParkedRounds tick scan (#211)', () => {
   it('a due parked round with terminal children re-runs the unblock arm: restore + turn re-dispatch', async () => {
-    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 1 });
+    row('p', {
+      status: STATUS.blocked,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAttempts: 1,
+      parkRearmAfter: new Date('2026-11-11T00:00:00Z'),
+    });
     h.dueRows = [{ id: 'p' }];
     h.childrenPlan = [[{ status: STATUS.done }]]; // kids read: all terminal
     await rearmParkedRounds();
