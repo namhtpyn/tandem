@@ -38,7 +38,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       const illegal = `probe-wedge-block-${crypto.randomUUID()}`; // fires: block, then a killing verdict
       const legalRequeue = `probe-wedge-requeue-${crypto.randomUUID()}`; // legal: verdict predates the block
       const liveBlock = `probe-wedge-live-${crypto.randomUUID()}`; // legal: PENDING row in the round
-      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // out of scope: a park owns its round (#431)
+      const parked = `probe-wedge-park-${crypto.randomUUID()}`; // out of scope: a park clears its gate origin (#431)
       const parkedStaleOrigin = `probe-wedge-park-origin-${crypto.randomUUID()}`; // defensive: a park outranks a gate origin
       const manualBlock = `probe-wedge-manual-${crypto.randomUUID()}`; // legal: hand-made block, no origins
       const todoOrigin = `probe-wedge-todo-${crypto.randomUUID()}`; // legal: origin resolves to ready
@@ -51,7 +51,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       const inReviewManual = `probe-wedge-irm-${crypto.randomUUID()}`; // legal: verdict older than write
       const inReviewLive = `probe-wedge-irl-${crypto.randomUUID()}`; // legal: the in_review round is live
       const inReviewVoid = `probe-wedge-irv-${crypto.randomUUID()}`; // legal: a void row suspends the in_review round
-      const inReviewOldVerdict = `probe-wedge-iro-${crypto.randomUUID()}`; // legal: only an OLD round has a verdict
+      const inReviewOldVerdict = `probe-wedge-iro-${crypto.randomUUID()}`; // defensive: a stale verdict in an old round
 
       // task write age (minutes ago) per seed; the wedge needs the verdict NEWER than it
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
@@ -73,8 +73,8 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: tornDown, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: suspendedVoid, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
           { id: nonPausedStale, status: DOING, pre: IN_REVIEW, park: null, written: 5 },
-          { id: inReviewOlderPending, status: IN_REVIEW, pre: null, park: null, written: 5 },
-          { id: olderPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
+          { id: inReviewOlderPending, status: IN_REVIEW, pre: null, park: null, written: 10 },
+          { id: olderPending, status: BLOCKED, pre: IN_REVIEW, park: null, written: 10 },
           { id: inReviewWedge, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewManual, status: IN_REVIEW, pre: null, park: null, written: 1 },
           { id: inReviewLive, status: IN_REVIEW, pre: null, park: null, written: 5 },
@@ -125,10 +125,12 @@ test.describe('prod probe wedge arm (#424)', () => {
       // a stale gate origin left on a non-paused row (#427 egress) is not a block at all
       await seedReview(nonPausedStale, 'APPROVED', 1);
       // the in_review half must read the CURRENT round: an older round's PENDING row is debris
-      await seedReview(inReviewOlderPending, 'PENDING', null, 1, 1, adminId);
+      await seedReview(inReviewOlderPending, 'PENDING', null, 15, 1, adminId);
       await seedReview(inReviewOlderPending, 'APPROVED', 1, 10, 2);
       // the CURRENT round is decided; a PENDING row in an OLDER round must not hide it
-      await seedReview(olderPending, 'PENDING', null, 1, 1, adminId);
+      // round 1 is debris from before the round-2 open (created 15 min ago), round 2 was
+      // opened at the task's last write (10 min ago) and decided 1 min ago
+      await seedReview(olderPending, 'PENDING', null, 15, 1, adminId);
       await seedReview(olderPending, 'CHANGE_REQUESTED', 1, 10, 2);
       await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 1);
       await seedReview(inReviewManual, 'APPROVED', 10);
@@ -136,10 +138,10 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedReview(inReviewLive, 'PENDING', null, 1, 1, adminId);
       await seedReview(inReviewVoid, 'APPROVED', 1);
       await seedReview(inReviewVoid, 'PENDING', null, 1);
-      // current round carries no verdict (only a stale teardown row) — the older round's
-      // verdict must not stand in for it (the verdict subquery is round-bound)
-      await seedReview(inReviewOldVerdict, 'APPROVED', 1);
-      await seedReview(inReviewOldVerdict, 'SUPERSEDED', null, 10, 2);
+      // DEFENSIVE (reachable only through the stale-verdict race): the current round has
+      // no verdict, so an older round's late verdict must not stand in for it
+      await seedReview(inReviewOldVerdict, 'APPROVED', 1, 15, 1);
+      await seedReview(inReviewOldVerdict, 'SUPERSEDED', null, 1, 2);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -156,7 +158,7 @@ test.describe('prod probe wedge arm (#424)', () => {
         fired,
         'a block over an already-decided round (verdict older than the block write) is legal',
       ).not.toContain(legalRequeue);
-      expect(fired, 'a park is out of this arm scope (park_from_status set) — #431 tracks the gap').not.toContain(
+      expect(fired, 'a park writes no gate origin — it matches neither branch (#431 declares the gap)').not.toContain(
         parked,
       );
       expect(fired, 'a void row keeps the current round suspended — the block restore settles it').not.toContain(
@@ -167,7 +169,10 @@ test.describe('prod probe wedge arm (#424)', () => {
         inReviewOlderPending,
       );
       expect(fired, 'a PENDING row in an older round must not hide a decided current round').toContain(olderPending);
-      expect(fired, 'a park origin owns a paused row even with a stale gating origin').not.toContain(parkedStaleOrigin);
+      expect(
+        fired,
+        'DEFENSIVE TERM: no live writer emits both origins — the park term keeps a park-owned row out if one ever does',
+      ).not.toContain(parkedStaleOrigin);
       expect(fired, 'a hand-made block clears both origins — legal').not.toContain(manualBlock);
       expect(fired, 'a block whose origin resolves to a non-review status is not the review flow').not.toContain(
         todoOrigin,

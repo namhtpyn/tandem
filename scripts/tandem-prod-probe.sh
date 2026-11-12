@@ -20,7 +20,11 @@ to_epoch_s() { case "${1:-}" in ''|*[!0-9]*) echo 0 ;; *) if [ "$1" -gt 10000000
 # when the origin columns exist AND the image's sweeps heal that shape (>= 2.78.20).
 # $1 = prod version (may be empty), $2 = origin-column count. Empty = branch omitted.
 own_block_predicate() {
-  if [ "${2:-}" = "2" ] && [ -n "${1:-}" ] && [ "$(printf '%s\n%s\n' 2.78.20 "${1}" | sort -V | tail -1)" = "${1}" ]; then
+  case "${1:-}" in
+    [0-9]*.[0-9]*.[0-9]*) ;; # a real semver: sort -V can rank garbage above 2.78.20
+    *) return 0 ;;
+  esac
+  if [ "${2:-}" = "2" ] && [ "$(printf '%s\n%s\n' 2.78.20 "${1}" | sort -V | tail -1)" = "${1}" ]; then
     printf "%s" "(s.category = 'paused' and t.park_from_status is null and t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category = 'in_review'))"
   fi
 }
@@ -80,6 +84,8 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ -n "$(own_block_predicate 2.78.20 2)" ] || { echo "selfcheck fail: block on"; exit 1; }
   [ -z "$(own_block_predicate 2.78.20 1)" ] || { echo "selfcheck fail: block column gate"; exit 1; }
   [ -z "$(own_block_predicate '' 2)" ] || { echo "selfcheck fail: block empty version"; exit 1; }
+  [ -z "$(own_block_predicate guard-error 2)" ] || { echo "selfcheck fail: block non-semver version"; exit 1; }
+  [ -z "$(own_block_predicate 2.78.x 2)" ] || { echo "selfcheck fail: block partial semver"; exit 1; }
   STR_ON=$(strand_sql 2.78.20 2)
   WEDGE_ON=$(strand_wedge_arm 2.78.20 2); WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
   printf '%s' "$STR_ON" | grep -qF "select 'lostsettle'" || { echo "selfcheck fail: strand lostsettle arm"; exit 1; }

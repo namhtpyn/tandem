@@ -54,7 +54,12 @@ describe('prod probe selfcheck', () => {
     // alone would only prove the override works).
     for (const mode of [['--strand-sql', '2.78.20', '2'], ['--selfcheck']]) {
       const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
-      const proc = await $`bash ${script} ${mode}`.env({ TANDEM_PROFILE_DIR: profile }).nothrow().quiet();
+      // TANDEM_PROBE_STATE='' as well: an inherited override would redirect any real
+      // write away from the asserted path and green-light a broken derivation
+      const proc = await $`bash ${script} ${mode}`
+        .env({ TANDEM_PROFILE_DIR: profile, TANDEM_PROBE_STATE: '' })
+        .nothrow()
+        .quiet();
       expect(proc.exitCode, proc.stderr.toString()).toBe(0);
       expect(existsSync(profile), `${mode[0]} must not create the state directory`).toBe(false);
     }

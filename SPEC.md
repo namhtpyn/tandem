@@ -1054,12 +1054,14 @@ non-positive deltas render no duration.
   and is the source of truth for every prod check. The agent-profile copy is a
   deploy of that file (copied, never edited in place); `origin/dev` vs live
   drift is an ops defect the critic alerts on.
-- The dead-round wedge arm covers BOTH review-flow-owned shapes, under ONE
-  predicate: the task's CURRENT round (`max(round)`) holds NO PENDING row — any
-  PENDING row there, a NULL-reviewer void row from a removed reviewer included,
-  means the round is still suspended, never a wedge — and the newest VERDICT row
-  of that round (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the
-  task's last write. The shapes are (1) an `in_review`-category task, and
+- The dead-round wedge arm covers BOTH review-flow-owned shapes with the SAME
+  current-round predicate (one copy of the ownership test, the round/verdict
+  clauses repeated per branch and count-pinned): the task's CURRENT round
+  (`max(round)`) holds NO PENDING row at all — a NULL-reviewer void row counts as
+  an unsettled row (a non-vote the removal/boot heals own; the arm's silence there
+  is a declared choice, not a liveness claim) — and the newest VERDICT row of that
+  round (`APPROVED` / `CHANGE_REQUESTED` / `REJECTED`) is NEWER than the task's
+  last write. The shapes are (1) an `in_review`-category task, and
   (2) from 2.78.20, under the same origin-column and version gates as the other
   #419 arms, a PAUSED gating auto-block (`park_from_status IS NULL`,
   `pre_block_status` resolving to an `in_review` category). The write-vs-verdict
@@ -1067,19 +1069,19 @@ non-positive deltas render no duration.
   last (a manual re-queue into an in-review status over an already-decided round
   puts the verdict BEFORE the move and the later block, and a hand-made block
   writes no origin), while a lost settle flip has the block write first and the
-  killing verdict after it (the verdict ROW is written before the flip's task write,
-  as separate statements). A `park` carries
-  `park_from_status` and owns its round: a parked round that closed is the SAME
-  lost-flip shape and is deliberately OUT of this arm (#431), and the two
-  non-settle block egresses (#427) leave a non-paused row, so no paused-row arm
-  reads them; an origin that no longer RESOLVES (its status was deleted after the
-  block recorded it) is out of scope as well (#432). BOTH branches share one
-  RESIDUAL: ANY task-row write after the killing verdict masks the shape — the
-  child-restore that lands the task back in review, a title/assignee edit, the
-  note-dispatch flip, a park-re-arm bump — because each stamps `updated_at` past
-  the verdict and the row reads as a legal manual move; pre-existing for the
-  in_review branch and tracked, with the activity-stamp design that removes it,
-  in #430.
+  killing verdict after it (the verdict ROW is written before the flip's task
+  write, as separate statements). A `park` clears the gate origin in the SAME
+  write that sets `park_from_status`, so a parked row matches neither branch — and
+  a parked round that closed is the SAME lost-flip shape, deliberately OUT of this
+  arm (#431); the two non-settle block egresses (#427) leave a non-paused row, so
+  no paused-row arm reads them, and an origin that no longer RESOLVES (its status
+  was deleted after the block recorded it) is out of scope as well (#432). BOTH
+  branches share one RESIDUAL: a task-row write that leaves the status unchanged
+  and stamps `updated_at` after the killing verdict masks the shape — the
+  child-restore that lands the task back in review, a title/assignee edit — while
+  a write that MOVES the status out of the review-flow shape is a legal
+  resolution, not a mask. Pre-existing for the in_review branch and tracked, with
+  the activity-stamp design that removes it, in #430.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),
@@ -1087,8 +1089,9 @@ non-positive deltas render no duration.
   test-side copy; `--selfcheck` asserts both ownership predicates and, on the
   WEDGE arm alone (never the whole strand SQL, where the ownership predicate is
   echoed by other arms), the block branch's presence/absence at the version gate
-  and, counted on both branches (never substring-matched), the current-round
-  live-round clause, the verdict status list and the write discriminator.
+  and, counted per branch (never a whole-SQL substring, which other arms satisfy),
+  the current-round live-round clause, the verdict status list, the verdict round
+  binding and the write discriminator.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
