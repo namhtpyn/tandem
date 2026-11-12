@@ -2463,8 +2463,12 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     })
     // atomic re-check: a settle/status change between read and write wins — the
     // predicate pins the status id this call READ (CATEGORY-GATE LAW #336), so a
-    // custom in-review status parks and a concurrent move still beats the park
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+    // custom in-review status parks and a concurrent move still beats the park.
+    // PARK-ONCE (#419): the block branch reads and writes the SAME blocked status, so
+    // the status term alone cannot arbitrate two failure arms parking one round (each
+    // would land a park and burn a ladder rung) — the park memory being unwritten IS
+    // the discriminator; a concurrent owner move clears/re-installs it and wins here.
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), isNull(tasks.parkFromStatus)))
     .returning({ id: tasks.id });
   if (parkedRows.length === 0) return false;
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {

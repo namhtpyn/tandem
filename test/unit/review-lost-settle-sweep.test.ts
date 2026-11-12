@@ -251,6 +251,7 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
   it('never replays a PARKED round (its restore re-fires the turn, #419)', async () => {
     h.taskStatus = 'st-blocked';
     h.parkFromStatus = 'st-in-review';
+    h.preBlockStatus = 'st-in-review'; // both origins: the park term must be the refusal
     h.statusRows = [
       { id: 'st-blocked', category: 'paused' },
       { id: 'st-in-review', category: 'in_review' },

@@ -373,6 +373,8 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
   it('never re-fires a PARKED round (#419: the park restore owns its turn)', async () => {
     h.taskStatus = 'st-blocked';
     h.parkFromStatus = 'st-in-review';
+    h.preBlockStatus = 'st-in-review'; // both set is the parked-from-block shape: the
+    // park term alone must refuse it (a null pre-block would pass the OLD guard instead)
     h.statusRows = [
       { id: 'st-blocked', category: 'paused' },
       { id: 'st-in-review', category: 'in_review' },

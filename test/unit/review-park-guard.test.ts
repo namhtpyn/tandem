@@ -137,6 +137,16 @@ describe('parkRound in-review guard (#199)', () => {
     expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
     expect(h.updates[0]?.set.parkRearmAttempts).toBe(1);
     expect(h.updates[0]?.hasPredicate).toBe(true);
+    // PARK-ONCE (#419): in the block branch the status term alone cannot arbitrate two
+    // concurrent parks (read id == written id) — the unwritten park memory is the guard
+    const rendered = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.updates[0]?.cond as never)
+      .toSQL();
+    const flat = rendered.sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('"tasks"."park_from_status" is null');
+    expect(rendered.params).toEqual(['task-1', STATUS.blocked]);
   });
 
   it('a GATING auto-block from a NON-review origin never parks (#419)', async () => {
@@ -154,7 +164,9 @@ describe('parkRound in-review guard (#199)', () => {
         ownerId: 'u1',
         rearmAttempts: 1,
         parkFromStatus: STATUS.inReview,
-        preBlockStatus: null,
+        // both origins set: the park term alone must refuse (a null pre-block would be
+        // rejected by the older origin guard instead — a vacuous pin)
+        preBlockStatus: STATUS.inReview,
       },
     ];
     expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(false);

@@ -37,11 +37,13 @@ vi.mock('../../server/db/index', async () => {
             const category =
               id === STATUS.inReview || id === 'st-custom-review'
                 ? 'in_review'
-                : id === STATUS.doing || id === 'st-custom-working'
-                  ? 'working'
-                  : id === STATUS.done || id === 'st-custom-done'
-                    ? 'done'
-                    : null;
+                : id === STATUS.blocked
+                  ? 'paused'
+                  : id === STATUS.doing || id === 'st-custom-working'
+                    ? 'working'
+                    : id === STATUS.done || id === 'st-custom-done'
+                      ? 'done'
+                      : null;
             return category ? [{ id, category }] : [];
           },
         },
@@ -143,6 +145,16 @@ describe('reaper routes the follow-up by task status (#199)', () => {
     expect(reaped).toBe(1);
     expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
     expect(h.taskUpdates).toHaveLength(0);
+  });
+
+  it('a GATING auto-block (paused, in-review origin) offers the park — a timed-out review turn strands nowhere (#419)', async () => {
+    // the block case: the reaper's category route used to fall through, so a timed-out
+    // review turn in a derived block never reached parkRound at all
+    h.taskRow = { failStreak: 0, status: STATUS.blocked };
+    const reaped = await reapStaleRuns();
+    expect(reaped).toBe(1);
+    expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
+    expect(h.taskUpdates).toHaveLength(0); // never the work ladder
   });
 
   it('a custom WORKING-CATEGORY status bounces with the read-status predicate (#336)', async () => {
