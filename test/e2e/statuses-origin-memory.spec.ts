@@ -33,6 +33,19 @@ const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
 type Saved = { id: string };
 type StatusRow = { id: string; name: string; color: string; position: number; category: string; nextIds: string[] };
 
+// the transition graph is ADVISORY, and a seeded edge may name a status row this database
+// no longer has (CI seed drift) — a save keeps only the RESOLVABLE edges instead of failing
+// on a graph the status manager does not gate on
+const resolvableEdges = async (
+  page: { request: { post: (u: string, o: { data: unknown }) => Promise<{ json: () => Promise<unknown> }> } },
+  row: StatusRow,
+) => {
+  const all = (
+    (await (await page.request.post('/rpc/statuses/list', { data: { json: null } })).json()) as { json: StatusRow[] }
+  ).json;
+  return row.nextIds.filter((n) => all.some((s) => s.id === n));
+};
+
 test.describe('status origin memory (#432)', () => {
   test('removals re-home recorded homes; unfaithful homes refuse; category edits are scoped', async ({ page }) => {
     await login(page);
@@ -51,6 +64,7 @@ test.describe('status origin memory (#432)', () => {
       return id;
     };
     const remove = (id: string) => page.request.post('/rpc/statuses/remove', { data: { json: { id } } });
+    const edgesOf = (row: StatusRow) => resolvableEdges(page, row);
     const originOf = async (taskId: string, column: 'pre_block_status' | 'park_from_status') => {
       const rows = await sql.unsafe(`select ${column} as home from tasks where id = $1`, [taskId]);
       return String((rows[0] as { home?: string | null } | undefined)?.home ?? '');
@@ -184,7 +198,7 @@ test.describe('status origin memory (#432)', () => {
       // the SURVIVING ready row (the custom one from case (6)), never onto drifted TODO.
       // (Shared boot-seed state: restored in the finally below.)
       const todoRow = (await statusRow(TODO))!;
-      const drift = await save({ ...todoRow, category: 'done' });
+      const drift = await save({ ...todoRow, category: 'done', nextIds: await edgesOf(todoRow) });
       expect(drift.res.status(), 'the built-in can be recategorized by an admin').toBe(200);
       const readyHome = await create(`Triage ${suffix}`, 'ready', 33);
       const blockedE = `status-origin-drift-${suffix}`;
@@ -196,7 +210,7 @@ test.describe('status origin memory (#432)', () => {
       expect(driftRehomed, 'the home never keeps the removed id').not.toBe(readyHome);
       expect(driftRehomed, 'the LOWEST-POSITION ready survivor wins (LIVE, position 25)').toBe(live);
       expect((await statusRow(driftRehomed))?.category, 'the home still carries the ready category').toBe('ready');
-      await save({ ...todoRow, category: 'ready' });
+      await save({ ...todoRow, category: 'ready', nextIds: await edgesOf(todoRow) });
 
       // (9b) the target is resolved LIVE by category, not from a frozen map: a category
       // with no built-in row (backlog) still re-homes onto a surviving sibling
@@ -260,17 +274,19 @@ test.describe('status origin memory (#432)', () => {
     const save = (body: Record<string, unknown>) => page.request.post('/rpc/statuses/save', { data: { json: body } });
     const before = (await list()).find((s) => s.id === BLOCKED)!;
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    const edgesOf = (row: StatusRow) => resolvableEdges(page, row);
     try {
-      const moved = await save({ ...before, category: 'ready' });
+      const beforeEdges = await edgesOf(before);
+      const moved = await save({ ...before, category: 'ready', nextIds: beforeEdges });
       expect(moved.status(), 'the block state category is frozen').toBe(400);
       expect(JSON.stringify(await moved.json())).toContain('block state category is fixed');
-      const renamed = await save({ ...before, name: `${before.name} ${suffix}` });
+      const renamed = await save({ ...before, name: `${before.name} ${suffix}`, nextIds: beforeEdges });
       expect(renamed.status(), 'name edits stay free').toBe(200);
       expect((await list()).find((s) => s.id === BLOCKED)?.category, 'the category never moved').toBe('paused');
       // the freeze is ONE-WAY: a block state drifted by a pre-guard image (seeded here with
       // raw SQL, the only writer left) repairs itself through the API
       await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [BLOCKED]);
-      const repaired = await save({ ...before, category: 'paused' });
+      const repaired = await save({ ...before, category: 'paused', nextIds: beforeEdges });
       expect(repaired.status(), 'a drifted block state can be repaired in-product').toBe(200);
       expect((await list()).find((s) => s.id === BLOCKED)?.category, 'the repair lands').toBe('paused');
     } finally {
@@ -415,12 +431,13 @@ test.describe('status origin memory (#432)', () => {
         }
       ).json;
     const before = (await list()).find((s) => s.id === BLOCKED)!;
+    const edgesOf = (row: StatusRow) => resolvableEdges(page, row);
     try {
       await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [BLOCKED]);
       const drifted = (await list()).find((s) => s.id === BLOCKED)!;
       expect(drifted.category, 'the seed models a pre-guard drift').toBe('ready');
       const renamed = await page.request.post('/rpc/statuses/save', {
-        data: { json: { ...drifted, name: `${drifted.name} ${suffix}` } },
+        data: { json: { ...drifted, name: `${drifted.name} ${suffix}`, nextIds: await edgesOf(drifted) } },
       });
       expect(renamed.status(), 'an unchanged category never trips the freeze').toBe(200);
       expect((await list()).find((s) => s.id === BLOCKED)?.name, 'the rename lands').toBe(`${drifted.name} ${suffix}`);
