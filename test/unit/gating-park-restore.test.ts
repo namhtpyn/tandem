@@ -252,9 +252,9 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     h.childrenByParent.set('p', [{ status: STATUS.done }]); // c itself is terminal after its children
     await refreshParentGating('c');
     expect(h.replayed).toEqual(['p']);
-    // the ANCESTOR read must carry the class marker (a projection drop silently
-    // downgrades every ancestor park to decision-class)
-    expect(h.readCols.some((c) => c.parkRearmAfter === true)).toBe(true);
+    // BOTH reads (the task and the ancestor) must carry the class marker — a drop on
+    // either one silently downgrades that row's park to decision-class
+    expect(h.readCols.filter((c) => c.parkRearmAfter === true)).toHaveLength(2);
   });
 
   it('a restored parked round whose reviewer was deleted settles instead of replaying (#365)', async () => {
