@@ -315,6 +315,25 @@ describe('waiting-answer verdict hold (#288)', () => {
     expect(h.published).toBeGreaterThanOrEqual(1); // the heal publishes
   });
 
+  it('a settle that RE-BLOCKED the task (paused, terminal home) still heals the held round (#423)', async () => {
+    // the settle's re-gate can leave a settled task in a PAUSED block with a terminal
+    // recorded home; a bare terminal-category check would leave our reverted row PENDING
+    // and the approval obligation alive on a closed round
+    h.statuses.push({ id: 'st-blocked', category: CATEGORY.PAUSED });
+    h.taskRows = [
+      { status: WAIT_STATUS },
+      { status: WAIT_STATUS },
+      { status: 'st-blocked', preBlockStatus: 'st-done' },
+      { status: 'st-blocked', preBlockStatus: 'st-done' },
+    ];
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'parked' });
+    expect(h.reviewUpdates).toHaveLength(3);
+    expect(h.reviewUpdates[2]!.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
+    expect(h.cancelledAll).toEqual([OBLIGATION_ROLE.APPROVAL]);
+    expect(h.published).toBeGreaterThanOrEqual(1);
+  });
+
   it('a working-category landing inside the window notes the thread (no flip, no re-fire)', async () => {
     h.taskRows = [{ status: WAIT_STATUS }, { status: WAIT_STATUS }, { status: 'st-doing' }, { status: 'st-doing' }];
     h.statuses.push({ id: 'st-doing', category: CATEGORY.WORKING });

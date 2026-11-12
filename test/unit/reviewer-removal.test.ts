@@ -21,6 +21,7 @@ import {
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
+  taskPreBlockStatus: null as string | null,
   taskFlips: [] as string[],
   trackTaskStatusOnFlip: false,
   statuses: [] as Array<{ id: string; category: string }>,
@@ -111,7 +112,9 @@ vi.mock('../../server/db/index', async () => {
                   h.statusReadThrows -= 1;
                   throw new Error('db down');
                 }
-                return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+                return Promise.resolve([
+                  { status: h.taskStatus, updatedAt: h.taskUpdatedAt, preBlockStatus: h.taskPreBlockStatus },
+                ]);
               }
               if (table === taskRuns) {
                 h.captureCond = cond;
@@ -290,6 +293,7 @@ function renderCond(cond: unknown): string {
 
 beforeEach(() => {
   h.taskStatus = STATUS.inReview;
+  h.taskPreBlockStatus = null;
   h.taskFlips = [];
   h.trackTaskStatusOnFlip = false;
   h.statuses = [
@@ -494,6 +498,26 @@ describe('settleExtinguishedRound (#365)', () => {
     h.regateThrows = true;
     expect(await settleExtinguishedRound('task-1')).toBe(true); // the commit stands
     expect(h.warnings.some((w) => w.includes('re-gate after the round close failed'))).toBe(true);
+  });
+
+  it('a task the settle RE-BLOCKED (paused, terminal home) still heals its residue (#423)', async () => {
+    // healTerminalResidue's discriminator must resolve the re-blocked shape, or a settle
+    // that threw mid-teardown leaves a void row + approvals no healer can reach
+    h.taskStatus = STATUS.blocked;
+    h.taskPreBlockStatus = STATUS.done;
+    h.statuses.push({ id: STATUS.blocked, category: CATEGORY.PAUSED });
+    expect(await settleExtinguishedRound('task-1')).toBe(false); // healed, not settled
+    expect(h.cancelled).toContain('task-1'); // cancelObligations ran
+    expect(h.updates.some((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED)).toBe(true);
+  });
+
+  it('a LIVE block (home in review) is never healed as terminal residue (#423 scope)', async () => {
+    h.taskStatus = STATUS.blocked;
+    h.taskPreBlockStatus = STATUS.inReview;
+    h.statuses.push({ id: STATUS.blocked, category: CATEGORY.PAUSED });
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.cancelled).toEqual([]);
+    expect(h.updates).toHaveLength(0);
   });
 
   it('the void-row sweep is SCOPED: reviewer_id IS NULL, this task, this round, pending only', async () => {

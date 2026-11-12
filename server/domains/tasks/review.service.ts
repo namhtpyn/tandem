@@ -427,16 +427,19 @@ async function supersedeAllPendingRows(taskId: string) {
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
 }
 
-const TERMINAL_CATEGORIES = new Set<string>([CATEGORY.DONE, CATEGORY.CANCELLED]);
-
 /** TERMINAL RESIDUE (#365 r5): the settle's flip is its FIRST write, so a crash or a
  *  throwing teardown after the flip leaves a settled task still carrying the void row
  *  (and its siblings' pending approvals) — and nothing else would ever clear a
  *  CURRENT-round row. A settled task must never keep a pending review row or a
  *  pending approval obligation (#361 r6). Idempotent: on a clean task both writes are
  *  no-ops. Returns true when the task is terminal (the caller must not settle it). */
-async function healTerminalResidue(taskId: string, statusId: string): Promise<boolean> {
-  if (!TERMINAL_CATEGORIES.has((await categoryOf(statusId)) ?? '')) return false;
+async function healTerminalResidue(taskId: string, statusId: string, preBlockStatus: string | null): Promise<boolean> {
+  // SETTLE-CLEARS-GATING (#423): a settle can leave the task in a PAUSED block whose
+  // recorded home is terminal (the re-gate re-blocks a settled task that still owns an
+  // open child). That shape is settled too — a bare terminal-category check would leave
+  // its residue (void row, pending approvals) unreachable by every healer.
+  const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  if (!settledByOwner(cats, statusId, preBlockStatus)) return false;
   // same trigger-last ordering as the settle: the row sweep erases the signature the
   // scans key on, so a failure before it must leave the row for the next trigger
   await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
@@ -472,10 +475,13 @@ export async function discardVoidRows(taskId: string) {
  *  wins and this call reports false. */
 export async function settleExtinguishedRound(taskId: string): Promise<boolean> {
   const taskRow = (
-    await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
+    await db
+      .select({ status: tasks.status, updatedAt: tasks.updatedAt, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
   )[0];
   if (!taskRow) return false;
-  if (await healTerminalResidue(taskId, taskRow.status)) return false;
+  if (await healTerminalResidue(taskId, taskRow.status, taskRow.preBlockStatus)) return false;
   if ((await categoryOf(taskRow.status)) !== CATEGORY.IN_REVIEW) return false;
   const round = await currentRound(taskId);
   if (round === 0) return false;

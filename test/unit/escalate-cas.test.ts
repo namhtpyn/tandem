@@ -266,6 +266,66 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(taskWrites.some((u) => JSON.stringify(u.set.reviewers ?? null) === JSON.stringify(['rev-1']))).toBe(false);
   });
 
+  it('the re-blocked shape resolves BY CATEGORY for BOTH terminal homes (#423)', async () => {
+    // the home is resolved against task_statuses, never a seeded id — and both terminal
+    // categories count (an all-rejected settle re-blocks with home = cancelled)
+    for (const [home, category] of [
+      ['st-done-custom', CATEGORY.DONE],
+      ['st-cancelled-custom', CATEGORY.CANCELLED],
+    ] as const) {
+      h.taskReads = [
+        [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+        [{ status: STATUS.blocked, preBlockStatus: home }],
+      ];
+      h.statuses = [
+        { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+        { id: STATUS.blocked, category: CATEGORY.PAUSED },
+        { id: home, category },
+      ];
+      h.reviewReads = [
+        [{ round: 2 }],
+        [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
+        [{ reviewerId: 'rev-1' }],
+        [{ round: 2 }],
+        [{ id: 'row-t', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'sup-1' }],
+      ];
+      const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+      expect(outcome, home).toEqual({ outcome: 'superseded' });
+      expect(h.updates.filter((u) => u.table === 'tasks')[1]?.set.reviewers, home).toEqual(['rev-1']);
+      h.updates = [];
+      h.inserts = [];
+      h.spawned = [];
+      h.resolved = [];
+    }
+  });
+
+  it('the re-blocked shape needs a RESOLVABLE terminal home: an originless or unknown-home block never heals (#423)', async () => {
+    // a manual block (no origin) and an unresolvable origin are LIVE shapes — healing
+    // them would tear down a round the owner deliberately parked
+    for (const home of [null, 'st-gone']) {
+      h.taskReads = [
+        [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+        [{ status: STATUS.blocked, preBlockStatus: home }],
+      ];
+      h.statuses = [
+        { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+        { id: STATUS.blocked, category: CATEGORY.PAUSED },
+      ];
+      h.reviewReads = [
+        [{ round: 2 }],
+        [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
+        [{ reviewerId: 'rev-1' }],
+      ];
+      const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+      expect(outcome).not.toEqual({ outcome: 'superseded' });
+      expect(h.updates.filter((u) => u.table === 'tasks').some((u) => u.set.reviewers?.[0] === 'rev-1')).toBe(false);
+      h.updates = [];
+      h.inserts = [];
+      h.spawned = [];
+      h.resolved = [];
+    }
+  });
+
   it('a settle landing inside the mint window self-heals — target row superseded, obligation cancelled, roster reverted', async () => {
     // [gate read, heal read] — the settle landed between the mint and the heal
     h.taskReads = [
