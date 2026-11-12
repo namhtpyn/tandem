@@ -58,6 +58,8 @@ const h = vi.hoisted(() => ({
   regatedNotes: [] as number[],
   /** make the obligation teardown throw (the retryable-residue placement pin) */
   obligationsThrow: false,
+  /** one-shot barrier inside the round-close re-gate (await-shape pin) */
+  gateBarrier: null as null | { promise: Promise<void>; release: () => void },
   dispatches: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
   runningReviewRuns: [] as Array<{ id: string }>,
@@ -243,6 +245,7 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
   refreshParentGating: async (taskId: string) => {
+    if (h.gateBarrier) await h.gateBarrier.promise;
     if (h.regateThrows) throw new Error('gating read failed');
     // the witness is the LAST tasks write: a re-gate that ran before any flip records ''
     h.regated.push({ taskId, status: h.lastFlipStatus });
@@ -316,6 +319,7 @@ beforeEach(() => {
   h.regatedWrites = [];
   h.regatedNotes = [];
   h.obligationsThrow = false;
+  h.gateBarrier = null;
   h.dispatches = [];
   h.aiEmployees = [];
   h.runningReviewRuns = [];
@@ -450,7 +454,11 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     const seen = h.regatedWrites[0] ?? [];
-    expect(seen).toContain(`taskReviews:${REVIEW_STATUS.SUPERSEDED}`); // residue writes done
+    // BOTH residue writes must have landed: the task-wide supersede AND the void-row
+    // extinguish (the machine signature every boot/removal scan keys on). A re-gate
+    // merely after the plain supersede would let a teardown throw strand the signature
+    // on a paused task — counting the supersede writes is what separates the two.
+    expect(seen.filter((t) => t === `taskReviews:${REVIEW_STATUS.SUPERSEDED}`)).toHaveLength(2);
     expect(h.regatedNotes[0]).toBe(0); // ... and the settlement note had NOT landed yet
     expect(h.notes).toHaveLength(1); // it lands after the re-gate
   });
@@ -463,6 +471,22 @@ describe('settleExtinguishedRound (#365)', () => {
     await expect(settleExtinguishedRound('task-1')).rejects.toThrow('obligations down');
     expect(h.taskFlips).toEqual([STATUS.todo]); // the flip committed, the row stays terminal
     expect(h.regated).toEqual([]); // no re-gate: the retryable shape is preserved
+  });
+
+  it('the round-close re-gate is AWAITED: the settle cannot resolve before the walk completes (#426 r5)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    let release!: () => void;
+    h.gateBarrier = { promise: new Promise<void>((r) => (release = r)), release: () => release() };
+    let settled = false;
+    const running = settleExtinguishedRound('task-1').then((v) => {
+      settled = true;
+      return v;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(settled).toBe(false); // parked on the gating walk
+    h.gateBarrier = null;
+    release();
+    await expect(running).resolves.toBe(true);
   });
 
   it('a failing round-close re-gate is logged, never surfaced (#423 clause 6)', async () => {

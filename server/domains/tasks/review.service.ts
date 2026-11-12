@@ -79,6 +79,25 @@ async function categoryOf(statusId: string): Promise<string | null> {
   return statuses.find((s) => s.id === statusId)?.category ?? null;
 }
 
+/** SETTLE-CLEARS-GATING (#423): a settle can now leave the task in a PAUSED-category
+ *  block — the re-gate re-blocks a settled task that still owns an open child and records
+ *  the settled status as the block's home. Every heal whose discriminator is "the owner
+ *  settled this round" must resolve that shape too: a bare terminal-category check reads
+ *  the re-blocked row as live and leaves the freshly minted reviewer row + obligation
+ *  alive on a closed round. The home is resolved against task_statuses, never a bare id. */
+function settledByOwner(
+  cats: ReadonlyArray<{ id: string; category: string }>,
+  status: string,
+  preBlockStatus: string | null,
+): boolean {
+  const catOf = (id: string) => cats.find((c) => c.id === id)?.category;
+  const cat = catOf(status);
+  if (cat === CATEGORY.DONE || cat === CATEGORY.CANCELLED) return true;
+  if (cat !== CATEGORY.PAUSED || preBlockStatus === null) return false;
+  const home = catOf(preBlockStatus);
+  return home === CATEGORY.DONE || home === CATEGORY.CANCELLED;
+}
+
 export async function logActivity(
   taskId: string,
   kind: ActivityKind,
@@ -2032,9 +2051,14 @@ async function holdVerdictForWaitingAnswer(
   //    only), so heal — supersede the just-reverted row and cancel the APPROVAL
   //    obligations the teardown skipped, including anything the spawn above
   //    inserted. Never resurrect state on a settled task.
-  const after = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const after = (
+    await db
+      .select({ status: tasks.status, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+  )[0];
   const afterCat = after ? cats.find((c) => c.id === after.status)?.category : undefined;
-  if (!after || afterCat === CATEGORY.DONE || afterCat === CATEGORY.CANCELLED) {
+  if (!after || settledByOwner(cats, after.status, after.preBlockStatus)) {
     await db
       .update(taskReviews)
       .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
@@ -2289,11 +2313,15 @@ export async function listReviews(taskId: string) {
  * strand the parked round); the standard teardown supersedes PENDING rows, cancels
  * approval obligations and the roster reverts. A vanished task heals nothing. */
 async function selfHealEscalationIfSettled(taskId: string, originalReviewers: string[]): Promise<boolean> {
-  const postGate = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const postGate = (
+    await db
+      .select({ status: tasks.status, preBlockStatus: tasks.preBlockStatus })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+  )[0];
   if (postGate == null) return false;
   const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
-  const cat = cats.find((c) => c.id === postGate.status)?.category;
-  if (cat !== CATEGORY.DONE && cat !== CATEGORY.CANCELLED) return false;
+  if (!settledByOwner(cats, postGate.status, postGate.preBlockStatus)) return false;
   await teardownOpenRound(taskId, 'escalation lost the race');
   await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   return true;
