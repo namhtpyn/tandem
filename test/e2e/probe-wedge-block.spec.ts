@@ -69,13 +69,19 @@ test.describe('prod probe wedge arm (#424)', () => {
         );
       }
 
-      // decidedMinutesAgo = null seeds a still-PENDING row
-      const seedReview = async (taskId: string, status: string, decidedMinutesAgo: number | null) => {
+      // decidedMinutesAgo = null seeds a still-PENDING row; createdMinutesAgo places the
+      // round's rows relative to the task's last write (a teardown lands AFTER its block)
+      const seedReview = async (
+        taskId: string,
+        status: string,
+        decidedMinutesAgo: number | null,
+        createdMinutesAgo = 10,
+      ) => {
         await sql.unsafe(
           `insert into task_reviews (id, task_id, round, status, created_at, decided_at)
-           values ($1, $2, 1, $3, now() - interval '10 minutes',
+           values ($1, $2, 1, $3, now() - ($5::int * interval '1 minute'),
                    case when $4::int is null then null else now() - ($4::int * interval '1 minute') end)`,
-          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo],
+          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo, createdMinutesAgo],
         );
       };
       await seedReview(illegal, 'APPROVED', 1);
@@ -86,8 +92,10 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedReview(parkedStaleOrigin, 'APPROVED', 1);
       await seedReview(manualBlock, 'APPROVED', 1);
       await seedReview(todoOrigin, 'APPROVED', 1);
-      await seedReview(tornDown, 'SUPERSEDED', null);
-      await seedReview(tornDown, 'ESCALATED', null);
+      // torn down INSIDE the block (rows newer than the block write): the round holds no
+      // verdict row, so it is not a decided round — only the verdict status list sees that
+      await seedReview(tornDown, 'SUPERSEDED', null, 1);
+      await seedReview(tornDown, 'ESCALATED', null, 1);
       await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 1);
       await seedReview(inReviewManual, 'APPROVED', 10);
 
