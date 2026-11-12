@@ -2479,7 +2479,12 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
       and(
         eq(tasks.id, taskId),
         eq(tasks.status, task.status),
-        taskCategory === CATEGORY.PAUSED ? isNull(tasks.parkFromStatus) : undefined,
+        taskCategory === CATEGORY.PAUSED
+          ? // the block branch must also pin the ORIGIN it read: the status term is the
+            // same id on both sides and a re-block inside the read→write window would
+            // otherwise let the park persist a stale home (#419)
+            and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(task.preBlockStatus)))
+          : undefined,
       ),
     )
     .returning({ id: tasks.id });

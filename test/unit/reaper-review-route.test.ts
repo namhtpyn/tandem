@@ -158,6 +158,7 @@ describe('reaper routes the follow-up by task status (#199)', () => {
     const reaped = await reapStaleRuns();
     expect(reaped).toBe(1);
     expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
+    expect(h.parkOpts[0]).toEqual({ rearmable: true }); // infra-class: the ladder owns it
     expect(h.taskUpdates).toHaveLength(0); // never the work ladder
   });
 

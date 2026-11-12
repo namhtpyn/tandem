@@ -27,11 +27,11 @@ export const BLOCKED_STATUS = STATUS.blocked;
 /** #365: a restore that lands in-review replays a LIVE round's parked turn or settles
  *  an extinguished one (its reviewer was deleted while the task was blocked) — never
  *  leave a round nothing can ever decide. A non-parked restore to in-review replays
- *  nothing (#202 parity: only a park carries a parked turn). MACHINE-CLASS ONLY (#419):
- *  an automatic restore re-fires only a park the ladder owns (park_rearm_attempts > 0) —
- *  a DECISION-class park (a stopped turn, an exhausted escalation, a verdict-less round
- *  after its retry) is the round's own stop and waits for the owner, never for a child
- *  to land. */
+ *  nothing (#202 parity: only a park carries a parked turn). LADDER-OWNED ONLY (#419):
+ *  an automatic restore re-fires only a park that still schedules a rung
+ *  (park_rearm_after set) — a DECISION-class park (a stopped turn, an exhausted
+ *  escalation, a verdict-less round after its retry) and a FINAL park (past the ladder)
+ *  are the round's own stop and wait for the owner, never for a child to land. */
 async function resumeRestoredRound(taskId: string, resumeTurn: boolean, restoreCategory: string | undefined) {
   // #369: a restore into the QUESTION flow re-runs the answer arm — a holder removed
   // while the task was BLOCKED left its NULL-holder row as the machine signature (the
@@ -127,7 +127,11 @@ async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restor
   // and a FINAL (exhausted) park are the round's own stop: the owner resolves them,
   // and dissolving the park here would leave a live round nothing fires.
   const ladderOwns = parked && (cur.parkRearmAfter ?? null) !== null;
-  if (parked && !ladderOwns && (await openRoundLive(cur.id))) return 'withheld';
+  // a decision/final park is the round's OWN stop, extinguished round or not: the owner
+  // resolves it (the boot/removal heals refuse a paused task by contract, and the void
+  // row survives) — dissolving it here would settle a round the owner deliberately
+  // parked, and a live one would be left with nothing to fire it
+  if (parked && !ladderOwns) return 'withheld';
   const known = await statusCategoryMap(ex);
   const restore = parked
     ? resolveParkRestoreTarget(nonNull(cur.parkFromStatus), known)
@@ -176,7 +180,6 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       status: true,
       preBlockStatus: true,
       parkFromStatus: true,
-      parkRearmAttempts: true,
       parkRearmAfter: true,
       parentTaskId: true,
     },
@@ -191,11 +194,12 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
     });
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
-      // pre-block memory: an existing pre_block_status wins; else the park origin
-      // (#202 — a parked-but-unblocked-status row restores to its park origin, never
-      // to its current status); the block arm never fires on BLOCKED, so the status
-      // term below can never record BLOCKED itself
-      const pre = cur.preBlockStatus ?? cur.parkFromStatus ?? cur.status;
+      // pre-block memory: an existing pre_block_status wins; else the task's OWN
+      // current status. A stale park origin is NOT a fallback here (#419): the gate
+      // clears it in this same write, and promoting it would record a home for a round
+      // that is not live (the settle-matrix flip left the origin behind). The block arm
+      // never fires on BLOCKED, so the status term can never record BLOCKED itself.
+      const pre = cur.preBlockStatus ?? cur.status;
       // GUARDED GATING WRITE (#208): one conditional flip — a row that flipped BLOCKED
       // between the read and this write (a park, another gate) wins; zero rows = the
       // concurrent writer owns the outcome and its own thread note
@@ -224,7 +228,6 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         status: true,
         preBlockStatus: true,
         parkFromStatus: true,
-        parkRearmAttempts: true,
         parkRearmAfter: true,
         parentTaskId: true,
       },

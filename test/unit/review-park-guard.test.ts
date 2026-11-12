@@ -166,7 +166,10 @@ describe('parkRound in-review guard (#199)', () => {
       .toSQL();
     const flat = rendered.sql.replace(/\s+/g, ' ').toLowerCase();
     expect(flat).toContain('"tasks"."park_from_status" is null');
-    expect(rendered.params).toEqual(['task-1', STATUS.blocked]);
+    // the branch pins the ORIGIN it read as well (a re-block in the read→write window
+    // must not let a stale home persist)
+    expect(flat).toContain('"tasks"."pre_block_status" =');
+    expect(rendered.params).toEqual(['task-1', STATUS.blocked, STATUS.inReview]);
   });
 
   it('a GATING auto-block from a NON-review origin never parks (#419)', async () => {
