@@ -1,3 +1,20 @@
+## [2.78.20](https://github.com/namhtpyn/tandem/compare/v2.78.19...v2.78.20) (2026-11-12)
+
+
+### Bug Fixes
+
+* [#419](https://github.com/namhtpyn/tandem/issues/419) probe arms cover the derived-block strand shape (floors -> 2.78.20) ([29cc16c](https://github.com/namhtpyn/tandem/commit/29cc16c6e0d20a39bd1027a2eb094ae7fdad8a19))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r1 — parkRound accepts a gating auto-block (origin = the block's in-review home); sweep drops the duplicated ownership read; probe gates the new branch on column + version ([436243f](https://github.com/namhtpyn/tandem/commit/436243f414e12079a0361d4b5f8a1340b652bdbf))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r1 — pin the park-from-block origin and the ladder; probe branch validated live ([63a0e57](https://github.com/namhtpyn/tandem/commit/63a0e577b315f90d35358649b1f67e163603de3f))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r2 — the reaper offers a paused gating block to parkRound; park-once CAS; probe guard + parkrearm exclusion; pins carry both origins ([0d7cf97](https://github.com/namhtpyn/tandem/commit/0d7cf972fbc3fc10e5149f0b9093a3d01e5cc03c))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r3 — pin the park-once term's branch scoping (a stale origin must not block the in-review park) ([2a4969a](https://github.com/namhtpyn/tandem/commit/2a4969a82fc51959f564081bfb912af8512dc0bd))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r3 — restore re-fires only a machine-class park; park-once CAS scoped to the block branch; positional scan-param pins ([a6ca121](https://github.com/namhtpyn/tandem/commit/a6ca121a49b2b149151ebda1c7b23c39323760e5))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r4 — the automatic restore never dissolves a decision/final park (ladder-owned only); park-aware restore CAS + park/block memory supersession; pins for the class axis ([7beedcb](https://github.com/namhtpyn/tandem/commit/7beedcb87944385ee6b3d3836d14f7a9bec2b570))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r5 — a decision/final park is never dissolved by an automatic restore; block arm records the task's own status; probe own-predicate selfcheck ([04e946a](https://github.com/namhtpyn/tandem/commit/04e946a92dd2fb3f86371dad0cf63c248ec386e6))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r5 — pin BOTH gating reads for the class column ([5d23733](https://github.com/namhtpyn/tandem/commit/5d23733d7f1a9b96eedc55da3d3600cfcd95f687))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) r6 — the block arm records the current status (a surviving origin is stale); a withheld park does not stop the ancestor walk ([d27d08c](https://github.com/namhtpyn/tandem/commit/d27d08ccf8d85e7b7d065d9688873d7a5a628a0e))
+* [#419](https://github.com/namhtpyn/tandem/issues/419) the review recovery sweeps accept a child-derived gating auto-block ([8184c90](https://github.com/namhtpyn/tandem/commit/8184c904baf5fc394df68d1eb1fb2e6bdc9d5b39))
+
 ## [2.78.19](https://github.com/namhtpyn/tandem/compare/v2.78.18...v2.78.19) (2026-11-11)
 
 
