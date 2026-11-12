@@ -326,6 +326,22 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.done);
   });
 
+  it('the ancestor walk releases a blocked parent only for a TERMINAL landing (#423)', async () => {
+    // the settled status is what the walk reads: a returned-to-todo child keeps its
+    // parent's open count — only a terminal landing lowers it and releases the gate
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.todo });
+    row('c', { status: STATUS.todo, parentTaskId: 'p' });
+    h.childrenByParent.set('p', [{ status: STATUS.todo }]);
+    h.childrenByParent.set('c', []);
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(0); // non-terminal landing: nothing released
+    h.taskRows.set('c', { ...h.taskRows.get('c'), status: STATUS.done });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // the recorded home restores
+  });
+
   it('a WITHHELD decision park still lets the walk re-derive its ancestors (#419)', async () => {
     // 'withheld' is not a lost race: the parked row stays blocked and counts as an open
     // child, so its parent must be re-gated in the same walk

@@ -34,6 +34,10 @@ const h = vi.hoisted(() => ({
   regateThrows: false,
   /** #423 clause 6: the best-effort re-gate's LOGGED half */
   warnings: [] as string[],
+  /** #423 composition pin: run the REAL gating service for one test */
+  realGating: false,
+  /** the task's children, read by the real gating walk */
+  children: [] as Array<{ status: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -141,6 +145,22 @@ vi.mock('../../server/db/index', async () => {
         taskStatuses: { findMany: async () => h.statuses },
         aiEmployees: { findMany: async () => h.aiEmployees },
         user: { findMany: async () => [] },
+        // the real gating walk's reads (composition pin, #423)
+        tasks: {
+          findFirst: async (args: { where: { id: { eq: string } } }) =>
+            args.where.id.eq === h.task.id
+              ? {
+                  id: h.task.id,
+                  status: h.task.status,
+                  preBlockStatus: null,
+                  parkFromStatus: null,
+                  parkRearmAfter: null,
+                  parentTaskId: null,
+                }
+              : null,
+          findMany: async (args: { where: { parentTaskId: { eq: string } } }) =>
+            args.where.parentTaskId.eq === h.task.id ? h.children : [],
+        },
       },
     },
   };
@@ -200,12 +220,18 @@ vi.mock('consola', async (importOriginal) => {
 // #423: the settle flip re-gates through a dynamic import (module graph stays acyclic at
 // load time). The mock records the call with the status the flip already wrote, so the
 // pin proves gating ran AFTER the write and from the FLIPPED status.
-vi.mock('../../server/domains/tasks/gating.service', () => ({
-  refreshParentGating: async (taskId: string) => {
-    if (h.regateThrows) throw new Error('gating read failed');
-    h.regated.push({ taskId, status: h.task.status });
-  },
-}));
+vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/gating.service')>();
+  return {
+    ...mod,
+    refreshParentGating: async (taskId: string) => {
+      if (h.regateThrows) throw new Error('gating read failed');
+      h.regated.push({ taskId, status: h.task.status });
+      // the composition pin runs the REAL walk against this file's db mock
+      if (h.realGating) await mod.refreshParentGating(taskId);
+    },
+  };
+});
 
 import { dispatchAiReviewTurns, recordVerdict } from '../../server/domains/tasks/review.service';
 
@@ -234,6 +260,8 @@ beforeEach(() => {
   h.regated = [];
   h.regateThrows = false;
   h.warnings = [];
+  h.realGating = false;
+  h.children = [];
 });
 
 describe('off-review settle refusal (#401)', () => {
@@ -496,6 +524,19 @@ describe('settle exhausts the gating context and re-gates (#423)', () => {
     expect(set.status).toBe(STATUS.done);
     expect(set.preBlockStatus).toBeNull();
     expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.done }]);
+  });
+
+  it('COMPOSITION: a settle that still owns an open child lands BLOCKED with the settled status as its home (#423)', async () => {
+    // every other #423 test stubs gating, so none of them composes the two halves: here
+    // the REAL walk runs against this file's db mock, and the block write it produces is
+    // the assertion — a settle that never re-gates leaves the task in `done` (red)
+    h.realGating = true;
+    h.children = [{ status: STATUS.doing }];
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    const blockWrite = h.flips.at(-1)?.set ?? {};
+    expect(blockWrite.status).toBe(STATUS.blocked);
+    expect(blockWrite.preBlockStatus).toBe(STATUS.done);
   });
 
   it('a failing re-gate is logged, never surfaced — the committed settle stands', async () => {

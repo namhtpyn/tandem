@@ -45,7 +45,13 @@ const h = vi.hoisted(() => ({
   deletedById: [] as string[],
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
-  regated: [] as string[],
+  /** #423: the round-close re-gate, with the status the flip already wrote */
+  regated: [] as Array<{ taskId: string; status: string }>,
+  /** the status of the LAST tasks write — the re-gate's "already written" witness */
+  lastFlipStatus: '' as string,
+  regateThrows: false,
+  /** #423 clause 6: the best-effort re-gate's LOGGED half */
+  warnings: [] as string[],
   dispatches: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
   runningReviewRuns: [] as Array<{ id: string }>,
@@ -145,6 +151,7 @@ vi.mock('../../server/db/index', async () => {
                 cond,
               });
               if (table === tasks) {
+                if (typeof set.status === 'string') h.lastFlipStatus = set.status;
                 if (h.flipWins && typeof set.status === 'string') {
                   h.taskFlips.push(set.status);
                   if (h.trackTaskStatusOnFlip) h.taskStatus = set.status;
@@ -229,9 +236,23 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
   refreshParentGating: async (taskId: string) => {
-    h.regated.push(taskId);
+    if (h.regateThrows) throw new Error('gating read failed');
+    // the witness is the LAST tasks write: a re-gate that ran before any flip records ''
+    h.regated.push({ taskId, status: h.lastFlipStatus });
   },
 }));
+
+// #423 clause 6: consola child loggers carry their own warn (a root-instance spy cannot
+// see the service's lines) — mock the module and record every warn.
+vi.mock('consola', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('consola')>();
+  const record = (...args: unknown[]) => void h.warnings.push(args.map((a) => String(a)).join(' '));
+  const child = new Proxy({} as Record<string, unknown>, { get: (_t, p) => (p === 'warn' ? record : () => {}) });
+  const root = new Proxy({} as Record<string, unknown>, {
+    get: (_t, p) => (p === 'withTag' ? () => child : p === 'warn' ? record : () => {}),
+  });
+  return { ...mod, consola: root, default: root };
+});
 
 import {
   dispatchAiReviewTurns,
@@ -280,6 +301,9 @@ beforeEach(() => {
   h.resolved = [];
   h.notes = [];
   h.regated = [];
+  h.lastFlipStatus = '';
+  h.regateThrows = false;
+  h.warnings = [];
   h.dispatches = [];
   h.aiEmployees = [];
   h.runningReviewRuns = [];
@@ -338,7 +362,7 @@ describe('settleExtinguishedRound (#365)', () => {
     // SETTLE-CLEARS-GATING (#423): EVERY landing re-gates — a still-open child must
     // re-block the task from the landed status, and a last-open-child landing must
     // release its parent's gate whatever it landed in (never only terminal arm).
-    expect(h.regated).toEqual(['task-1']);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
     // the flip exhausts the round's gating context: both machine origins clear in
     // the same write (a surviving origin reads as a live block/park on a closed round)
     expect(flip?.set.preBlockStatus).toBeNull();
@@ -371,7 +395,7 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.cancelled).toEqual(['task-1']);
     expect(h.cancelledAll).toEqual([]);
     // a TERMINAL settle re-gates the task's parents (an auto-blocked parent unblocks)
-    expect(h.regated).toEqual(['task-1']);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.done }]);
   });
 
   it('a deleted reviewer plus a decided rejection cancels the task', async () => {
@@ -384,7 +408,22 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.cancelled);
     // every landing re-gates, the cancelled one included (#423)
-    expect(h.regated).toEqual(['task-1']);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.cancelled }]);
+  });
+
+  it('the round-close re-gate runs AFTER the flip, from the landed status (#423)', async () => {
+    // the recorded witness is the status of the LAST tasks write: a re-gate that ran
+    // before the flip (or on a lost one) records nothing
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    expect(await settleExtinguishedRound('task-1')).toBe(true);
+    expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
+  });
+
+  it('a failing round-close re-gate is logged, never surfaced (#423 clause 6)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    h.regateThrows = true;
+    expect(await settleExtinguishedRound('task-1')).toBe(true); // the commit stands
+    expect(h.warnings.some((w) => w.includes('re-gate after the round close failed'))).toBe(true);
   });
 
   it('the void-row sweep is SCOPED: reviewer_id IS NULL, this task, this round, pending only', async () => {
