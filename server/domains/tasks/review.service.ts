@@ -2457,6 +2457,10 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     .set({
       status: BLOCKED_STATUS,
       parkFromStatus: parkOrigin,
+      // PARK-SUPERSESSION (#419): the park names the round's home itself — a stale
+      // pre_block_status must not survive beside it (both machine origins on one row
+      // make the park discriminator (park_from_status IS NULL) lie for every reader)
+      preBlockStatus: null,
       updatedAt: new Date(),
       parkRearmAttempts: attempts,
       parkRearmAfter: rearmAfter,

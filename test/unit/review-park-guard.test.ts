@@ -152,6 +152,9 @@ describe('parkRound in-review guard (#199)', () => {
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
     expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
+    // the park supersedes a stale block origin (#419): both machine origins on one row
+    // would make the park discriminator lie
+    expect(h.updates[0]?.set.preBlockStatus).toBeNull();
     expect(h.updates[0]?.set.parkRearmAttempts).toBe(1);
     expect(h.updates[0]?.hasPredicate).toBe(true);
     // PARK-ONCE (#419): in the block branch the status term alone cannot arbitrate two

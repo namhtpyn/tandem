@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   childrenByParent: new Map<string, Array<{ status: string }>>(),
   statusRows: [] as Array<{ id: string; category: string }>,
   updates: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean }>,
-  writeLog: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean; applied: boolean }>,
+  writeLog: [] as Array<{ set: Record<string, unknown>; cond: unknown; hasPredicate: boolean; applied: boolean }>,
   replayed: [] as string[],
   settled: [] as string[],
   answerHealed: [] as string[],
@@ -79,7 +79,7 @@ vi.mock('../../server/db/index', async () => {
             returning: async () => {
               const lost = h.lossPlan.shift() === true;
               const applied = !lost;
-              if (table === tasks) h.writeLog.push({ set, hasPredicate: cond != null, applied });
+              if (table === tasks) h.writeLog.push({ set, cond, hasPredicate: cond != null, applied });
               if (table === tasks && applied) h.updates.push({ set, hasPredicate: cond != null });
               return applied ? [{ id: 'applied' }] : [];
             },
@@ -115,6 +115,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 import { refreshParentGating, resolveParkRestoreTarget } from '../../server/domains/tasks/gating.service';
+import { mockDb, tasks as dbTasks } from './helpers/mock-db';
 
 const SEED_STATUSES = [
   { id: STATUS.todo, category: 'backlog' },
@@ -132,8 +133,10 @@ function row(id: string, over: Record<string, unknown> = {}) {
     status: STATUS.todo,
     preBlockStatus: null,
     parkFromStatus: null,
-    // the persisted park CLASS marker (#419): a machine park burned a ladder rung
+    // the persisted park CLASS marker (#419): a ladder-owned park carries a scheduled
+    // re-arm; a decision park and a final (exhausted) park carry none
     parkRearmAttempts: 1,
+    parkRearmAfter: new Date('2026-11-11T00:00:00Z'),
     parentTaskId: null,
     ...over,
   });
@@ -203,14 +206,35 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
-  it('a DECISION-class park is NOT auto-fired by a child landing (#419): the owner resumes it', async () => {
-    // a stopped turn / exhausted escalation parks with attempts 0 and no re-arm — the
-    // automatic restore must not re-dispatch a turn the owner stopped
-    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 0 });
+  it('a DECISION-class park is NOT dissolved by a child landing (#419): the owner resumes it', async () => {
+    // a stopped turn / exhausted escalation parks with no scheduled rung — an automatic
+    // restore must neither erase the park nor re-dispatch a turn the owner stopped; the
+    // row stays blocked so the owner's unblock-resume is the single resume
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 0, parkRearmAfter: null });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     await refreshParentGating('p');
-    expect(h.updates[0]?.set.status).toBe(STATUS.inReview); // the restore still lands
-    expect(h.replayed).toEqual([]); // but no turn re-fires
+    expect(h.updates).toHaveLength(0); // no restore, no park memory wiped
+    expect(h.replayed).toEqual([]);
+    expect(h.settled).toEqual([]);
+  });
+
+  it('a FINAL (exhausted-ladder) park is not dissolved by a child landing either (#419)', async () => {
+    // attempts = ladder length + 1 with no scheduled rung: the ladder deliberately gave
+    // up and the watchdog alerts the exhausted shape — a child landing must not revive it
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 5, parkRearmAfter: null });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(0);
+    expect(h.replayed).toEqual([]);
+  });
+
+  it('a machine-parked ANCESTOR restored by the walk re-fires its turn (#419: the ancestor read carries the class)', async () => {
+    row('c', { status: STATUS.doing, parentTaskId: 'p' });
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 1 });
+    h.childrenByParent.set('c', [{ status: STATUS.done }]);
+    h.childrenByParent.set('p', [{ status: STATUS.done }]); // c itself is terminal after its children
+    await refreshParentGating('c');
+    expect(h.replayed).toEqual(['p']);
   });
 
   it('a restored parked round whose reviewer was deleted settles instead of replaying (#365)', async () => {
@@ -268,6 +292,9 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
     expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.inReview);
+    // the gate SUPERSEDES the stale park memory (#419): both machine origins on one row
+    // would make the park discriminator (park_from_status IS NULL) lie
+    expect(h.updates[0]?.set.parkFromStatus).toBeNull();
   });
 
   it('the walk continues past a restored parked child and gates the ancestor', async () => {
@@ -292,6 +319,33 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(h.writeLog).toHaveLength(1);
     expect(h.writeLog[0]?.hasPredicate).toBe(true);
     expect(h.updates[0]?.set.status).toBe(STATUS.inReview);
+  });
+
+  it('the restore predicate is PARK-AWARE (#419): a park landing in the window must win', async () => {
+    // the block-branch park writes while the status stays BLOCKED, so the still-BLOCKED
+    // term alone cannot arbitrate it between the restore's read and write
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    const parkedSql = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.writeLog[0]?.cond as never)
+      .toSQL();
+    expect(parkedSql.sql.replace(/\s+/g, ' ').toLowerCase()).toContain('"tasks"."park_from_status" =');
+    expect(parkedSql.params).toContain(STATUS.inReview);
+  });
+
+  it('a gated (non-parked) restore requires NO park to have appeared (#419)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    const gatedSql = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.writeLog[0]?.cond as never)
+      .toSQL();
+    expect(gatedSql.sql.replace(/\s+/g, ' ').toLowerCase()).toContain('"tasks"."park_from_status" is null');
   });
 
   it('a concurrent owner settle inside the status-map window owns the outcome: no restore, no replay, walk stops', async () => {

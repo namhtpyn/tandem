@@ -6,7 +6,7 @@
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
 import { consola } from 'consola';
-import { and, asc, eq, inArray, isNotNull, lte, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm';
 
 import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -102,6 +102,65 @@ async function statusCategoryMap(ex: DbExecutor = db): Promise<Map<string, strin
   return new Map(rows.map((r) => [r.id, r.category]));
 }
 
+type GatingRow = {
+  id: string;
+  status: string;
+  preBlockStatus: string | null;
+  parkFromStatus: string | null;
+  parkRearmAfter: Date | null;
+};
+
+/** the unblock arm (#208/#202/#365/#419): restore a row whose children all landed
+ *  terminal. A park the LADDER does not own (a decision-class park, or a FINAL park
+ *  past the ladder) is the round's own stop while its round is live — it is withheld
+ *  for the owner, never dissolved by an automatic restore. Returns 'restored' (the
+ *  write landed), 'lost' (a concurrent writer owns the outcome) or 'withheld'. */
+async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restored' | 'lost' | 'withheld'> {
+  const d = asDb(ex);
+  // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
+  // recorded pre-park status even with no pre_block_status — pure parks stranded here
+  // forever before. Park origin outranks a stale pre_block_status (a gate that
+  // pre-dated the park); a plain gated unblock keeps the #88 restore law.
+  const parked = Boolean(cur.parkFromStatus);
+  // MACHINE-CLASS ONLY (#419): the automatic restore belongs to the LADDER — only a
+  // park with a scheduled rung (park_rearm_after set) is resumed here. A DECISION park
+  // and a FINAL (exhausted) park are the round's own stop: the owner resolves them,
+  // and dissolving the park here would leave a live round nothing fires.
+  const ladderOwns = parked && (cur.parkRearmAfter ?? null) !== null;
+  if (parked && !ladderOwns && (await openRoundLive(cur.id))) return 'withheld';
+  const known = await statusCategoryMap(ex);
+  const restore = parked
+    ? resolveParkRestoreTarget(nonNull(cur.parkFromStatus), known)
+    : resolveRestoreTarget(nonNull(cur.preBlockStatus), known);
+  // GUARDED GATING WRITE (#208): atomic on the row still being BLOCKED (same pattern
+  // as bounceTaskAfterRun) — the statusCategoryMap await above opens a window a
+  // concurrent owner settle/unblock can win. PARK-AWARE CAS (#419): a park landing in
+  // that window writes while the status stays BLOCKED, so the status term alone cannot
+  // arbitrate it — the parked branch pins the origin it read, the gated branch
+  // requires NO park to have appeared.
+  const restored = await d
+    .update(tasks)
+    .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tasks.id, cur.id),
+        eq(tasks.status, BLOCKED_STATUS),
+        parked ? eq(tasks.parkFromStatus, nonNull(cur.parkFromStatus)) : isNull(tasks.parkFromStatus),
+      ),
+    )
+    .returning({ id: tasks.id });
+  if (restored.length === 0) return 'lost';
+  await logActivity(cur.id, `unblocked: all subtasks terminal → ${restore}`, {
+    autoUnblocked: true,
+    restored: restore,
+    ...(parked ? { parkResumed: true } : {}),
+  });
+  // unblock-resume parity (#202) + #365 + #419: replay a restored LADDER park's turn,
+  // settle a restore that lands in-review with no live voter (leaf helper)
+  await resumeRestoredRound(cur.id, ladderOwns, known.get(restore));
+  return 'restored';
+}
+
 /**
  * recompute the auto-block for every ancestor of this task. Call after ANY status
  * change on a task (its own transition may release or tighten its parents' gates).
@@ -118,6 +177,7 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       preBlockStatus: true,
       parkFromStatus: true,
       parkRearmAttempts: true,
+      parkRearmAfter: true,
       parentTaskId: true,
     },
     where: { id: { eq: taskId } },
@@ -141,46 +201,21 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       // concurrent writer owns the outcome and its own thread note
       const gated = await d
         .update(tasks)
-        .set({ status: BLOCKED_STATUS, preBlockStatus: pre, updatedAt: new Date() })
+        // PARK-MEMORY SUPERSESSION (#419): the gate records the round home in
+        // pre_block_status and CLEARS any stale park origin — a parked row can never
+        // look like a gated one (both machine origins on one row make the park
+        // discriminator (park_from_status IS NULL) lie for every reader)
+        .set({ status: BLOCKED_STATUS, preBlockStatus: pre, parkFromStatus: null, updatedAt: new Date() })
         .where(and(eq(tasks.id, cur.id), ne(tasks.status, BLOCKED_STATUS)))
         .returning({ id: tasks.id });
       if (gated.length > 0) {
         await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
       }
     } else if (open === 0 && cur.status === BLOCKED_STATUS && (cur.preBlockStatus || cur.parkFromStatus)) {
-      // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
-      // recorded pre-park status even with no pre_block_status — pure parks stranded
-      // here forever before. Park origin outranks a stale pre_block_status (a gate that
-      // pre-dated the park); a plain gated unblock keeps the #88 restore law.
-      const parked = Boolean(cur.parkFromStatus);
-      const known = await statusCategoryMap(ex);
-      const restore = parked
-        ? resolveParkRestoreTarget(nonNull(cur.parkFromStatus), known)
-        : resolveRestoreTarget(nonNull(cur.preBlockStatus), known);
-      // GUARDED GATING WRITE (#208): atomic on the row still being BLOCKED (same
-      // pattern as bounceTaskAfterRun) — the statusCategoryMap await above opens a
-      // window a concurrent owner settle/unblock can win
-      const restored = await d
-        .update(tasks)
-        .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
-        .where(and(eq(tasks.id, cur.id), eq(tasks.status, BLOCKED_STATUS)))
-        .returning({ id: tasks.id });
-      if (restored.length === 0) {
-        // the concurrent writer is the verdict of record: no restore, no note, no
-        // turn replay, and the walk stops — the winner re-runs refreshParentGating
-        // itself (every status write path does), so its outcome propagates upstream
-        break;
-      }
-      await logActivity(cur.id, `unblocked: all subtasks terminal → ${restore}`, {
-        autoUnblocked: true,
-        restored: restore,
-        ...(parked ? { parkResumed: true } : {}),
-      });
-      // unblock-resume parity (#202) + #365 + #419: replay a restored MACHINE park's
-      // turn (the ladder ledger is the persisted class marker), settle a restore that
-      // lands in-review with no live voter (leaf helper); a decision park waits for the
-      // owner, never for a child to land
-      await resumeRestoredRound(cur.id, parked && (cur.parkRearmAttempts ?? 0) > 0, known.get(restore));
+      // the unblock arm (leaf helper): 'lost' means a concurrent writer owns the
+      // outcome and 'withheld' means the round's own park waits for its owner — either
+      // way this row is still blocked, so the walk stops (the winner re-gates itself)
+      if ((await restoreUnblocked(cur, ex)) !== 'restored') break;
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({
@@ -190,6 +225,7 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         preBlockStatus: true,
         parkFromStatus: true,
         parkRearmAttempts: true,
+        parkRearmAfter: true,
         parentTaskId: true,
       },
       where: { id: { eq: cur.parentTaskId } },

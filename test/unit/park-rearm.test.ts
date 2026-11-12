@@ -223,7 +223,12 @@ describe('parkRound re-arm ladder (#211)', () => {
 
 describe('rearmParkedRounds tick scan (#211)', () => {
   it('a due parked round with terminal children re-runs the unblock arm: restore + turn re-dispatch', async () => {
-    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 1 });
+    row('p', {
+      status: STATUS.blocked,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAttempts: 1,
+      parkRearmAfter: new Date('2026-11-11T00:00:00Z'),
+    });
     h.dueRows = [{ id: 'p' }];
     h.childrenPlan = [[{ status: STATUS.done }]]; // kids read: all terminal
     await rearmParkedRounds();

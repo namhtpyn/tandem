@@ -115,11 +115,6 @@ OIDCP=$(echo "$OUT" | awk -F'|' '/^oidc_plain/{print $2}')
 # pre-2.62.6 image has no park_rearm columns and one bad arm would kill every check
 # (the UNION-type law). Column-absent guard skips silently on the old image.
 PRSQL="select coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and t.park_from_status is not null and t.park_rearm_attempts >= 5"
-# a park raised from a GATING auto-block (>= 2.78.20, #419) keeps its pre_block origin
-# until the block's restore resumes it — that round is recoverable, not frozen silently
-if [ -n "$V" ] && [ "$(printf '%s\n%s\n' 2.78.20 "$V" | sort -V | tail -1)" = "$V" ]; then
-  PRSQL="$PRSQL and t.pre_block_status is null"
-fi
 PRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name='park_rearm_attempts'\"" 2>/dev/null) || PRCOL="guard-error"
 if [ "$PRCOL" = "guard-error" ]; then
   anom+=("parkrearm_guard: column probe failed — detector blind")
