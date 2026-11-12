@@ -1,3 +1,17 @@
+## [2.78.23](https://github.com/namhtpyn/tandem/compare/v2.78.22...v2.78.23) (2026-11-12)
+
+
+### Bug Fixes
+
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r2 — paused homes refuse, the re-home target's live category is verified, the repair holds updated_at back; orphan arm column-gated and per-column; pins for every clause ([17d2d37](https://github.com/namhtpyn/tandem/commit/17d2d37e47d737a759ef56eea1e47d8ee934603b))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r3 — resolve the re-home target live by category under FOR UPDATE, clear inert references instead of refusing forever, repair after the delete ([969f67c](https://github.com/namhtpyn/tandem/commit/969f67c4f4c8d9d6286af0a5a5eb93ebc0c578a9))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r4 — status-mutation mutex, identity-keyed block state (never a target, never inert), unconditional repair with a straggler rollback, post-commit re-gate, restore CAS pins the origin it read ([2af282b](https://github.com/namhtpyn/tandem/commit/2af282bdf522c1f25a519b7bbd27dfe4d5af1e8c))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r5 — freeze the block state's category, re-gate every repaired row (the repair's RETURNING set), make the origin-CAS pin falsifiable ([995c7f8](https://github.com/namhtpyn/tandem/commit/995c7f8714758fa2184857714012b20a1dbf6852))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r6 — the block-state freeze is one-way (a pre-guard drift repairs to paused), pin the candidate exclusion on a SQL-seeded drift, exact-id + leak fixes in the origin specs ([1b93a90](https://github.com/namhtpyn/tandem/commit/1b93a9009420be101b7416611f1c53bea80aadcd))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) r7 — re-gate only rows left in the block state, drop the refs FOR UPDATE and its false rationale, let an unchanged-category save through the freeze, name the stale-gating producer in the straggler comment ([64cdbfb](https://github.com/namhtpyn/tandem/commit/64cdbfb2e156388b40d47012a42869894f228c02))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) re-home a deleted status's recorded block/park homes; refuse a live category edit; probe orphan-home arm ([2dc05a2](https://github.com/namhtpyn/tandem/commit/2dc05a2e78645cdcece12909bfcccd26c824982f))
+* [#432](https://github.com/namhtpyn/tandem/issues/432) spec — a status mutation must not strand a block's recorded home ([99f1233](https://github.com/namhtpyn/tandem/commit/99f12333678620e173e2dc45194412d23d7bb2e6))
+
 ## [2.78.22](https://github.com/namhtpyn/tandem/compare/v2.78.21...v2.78.22) (2026-11-12)
 
 
