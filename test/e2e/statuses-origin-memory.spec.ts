@@ -362,6 +362,74 @@ test.describe('status origin memory (#432)', () => {
     }
   });
 
+  // The repair re-gates only rows it left IN THE BLOCK STATE. An INERT origin on a live
+  // row is re-homed without a re-gate: re-deriving that row's gate would BLOCK it when it
+  // owns open children, silently undoing a manual unblock (and bumping its stamp).
+  test('re-homing an inert origin never blocks a live row', async ({ page }) => {
+    await login(page);
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    const suffix = crypto.randomUUID().slice(0, 8);
+    let home = '';
+    try {
+      const made = await page.request.post('/rpc/statuses/save', {
+        data: { json: { name: `Inert home ${suffix}`, position: 43, category: 'in_review' } },
+      });
+      expect(made.status()).toBe(200);
+      home = ((await made.json()) as { json: Saved }).json.id;
+      const live = `status-origin-live-row-${suffix}`;
+      // an in_review task carrying a STALE origin (the #427 egress shape) with an open child
+      await sql.unsafe(
+        `insert into tasks (id, title, status, pre_block_status, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [live, IN_REVIEW, home],
+      );
+      await sql.unsafe(
+        `insert into tasks (id, title, status, parent_task_id, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [`${live}-c`, DOING, live],
+      );
+      const removed = await page.request.post('/rpc/statuses/remove', { data: { json: { id: home } } });
+      expect(removed.status()).toBe(200);
+      const rows = await sql.unsafe(`select status, pre_block_status from tasks where id = $1`, [live]);
+      const row = rows[0] as { status: string; pre_block_status: string | null };
+      expect(row.status, 'a live row is never re-gated into the block').toBe(IN_REVIEW);
+      expect(row.pre_block_status, 'the inert origin is re-homed, not dropped').toBe(IN_REVIEW);
+    } finally {
+      await sql.unsafe(`delete from tasks where id like 'status-origin-%'`);
+      if (home) await sql.unsafe(`delete from task_statuses where id = $1`, [home]);
+      await sql.close();
+    }
+  });
+
+  // A save that leaves the block state's category untouched still lands, even on a row
+  // drifted by a pre-guard image — the freeze refuses CHANGES away from 'paused', never
+  // the untouched payload the status manager posts for a rename.
+  test('a drifted block state can still be renamed', async ({ page }) => {
+    await login(page);
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const list = async (): Promise<StatusRow[]> =>
+      (
+        (await (await page.request.post('/rpc/statuses/list', { data: { json: null } })).json()) as {
+          json: StatusRow[];
+        }
+      ).json;
+    const before = (await list()).find((s) => s.id === BLOCKED)!;
+    try {
+      await sql.unsafe(`update task_statuses set category = 'ready' where id = $1`, [BLOCKED]);
+      const drifted = (await list()).find((s) => s.id === BLOCKED)!;
+      expect(drifted.category, 'the seed models a pre-guard drift').toBe('ready');
+      const renamed = await page.request.post('/rpc/statuses/save', {
+        data: { json: { ...drifted, name: `${drifted.name} ${suffix}` } },
+      });
+      expect(renamed.status(), 'an unchanged category never trips the freeze').toBe(200);
+      expect((await list()).find((s) => s.id === BLOCKED)?.name, 'the rename lands').toBe(`${drifted.name} ${suffix}`);
+    } finally {
+      await sql.unsafe(`update task_statuses set category = 'paused', name = $2 where id = $1`, [BLOCKED, before.name]);
+      await sql.close();
+    }
+  });
+
   // A ready-category origin is the other half of the mapping: a delete must land the
   // recorded home on THAT category's built-in row, never on in-review (a wrong category
   // would restore a plain gated task into the review flow).

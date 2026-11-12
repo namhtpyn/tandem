@@ -98,9 +98,15 @@ export const statusesRouter = os.router({
         // resolves (the settle flip's paused branch, the mint gate, both sweeps, both
         // probe arms). A recategorized block state re-keys or blinds ALL of them at once
         // (blocked rows become dispatchable at Blocked→ready, terminal at Blocked→done).
-        // The freeze is ONE-WAY: moving the category TO 'paused' always lands, so a
-        // workspace drifted on a pre-guard image can repair itself in-product.
-        if (existing && id === STATUS.blocked && input.category !== CATEGORY.PAUSED)
+        // The freeze is ONE-WAY: a category change TO 'paused' always lands, so a
+        // workspace drifted on a pre-guard image repairs itself in-product, and a save
+        // that leaves the category untouched (a rename on the drifted row) still lands.
+        if (
+          existing &&
+          id === STATUS.blocked &&
+          existing.category !== input.category &&
+          input.category !== CATEGORY.PAUSED
+        )
           throw new ORPCError('BAD_REQUEST', {
             message: "the block state category is fixed to 'paused' — name, colour and position stay editable",
           });
@@ -184,10 +190,7 @@ export const statusesRouter = os.router({
       const refs = await tx
         .select({ id: tasksTable.id, status: tasksTable.status })
         .from(tasksTable)
-        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)))
-        // FOR UPDATE: hold the referencing rows so a concurrent gating block waits for
-        // this delete instead of landing a home behind it
-        .for('update');
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)));
       // A FAITHFUL target carries the same category AND is not the block state itself
       // (by IDENTITY: a home re-homed onto BLOCKED restores the task INTO the block,
       // clears both origins and strands it), and 'paused' has none — a restore into any
@@ -235,8 +238,12 @@ export const statusesRouter = os.router({
       // the refs-read→delete window is caught by this UPDATE's own WHERE, so the repair
       // is right even when the read saw zero references.
       const touched = new Set<string>();
-      const collect = (rows: Array<{ id: string }>) => {
-        for (const r of rows) touched.add(r.id);
+      const collect = (rows: Array<{ id: string; status: string }>) => {
+        // ONLY rows still in the BLOCK STATE are re-gated: the repair also re-homes
+        // INERT origins on live rows, and refreshParentGating would BLOCK any of them
+        // that owns an open child (silently undoing a manual unblock and bumping the
+        // stamp). A non-blocked row has no gate to restore — nothing to re-derive.
+        for (const r of rows) if (r.status === STATUS.blocked) touched.add(r.id);
       };
       if (home) {
         collect(
@@ -244,14 +251,14 @@ export const statusesRouter = os.router({
             .update(tasksTable)
             .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
             .where(eq(tasksTable.preBlockStatus, input.id))
-            .returning({ id: tasksTable.id }),
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
         );
         collect(
           await tx
             .update(tasksTable)
             .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
             .where(eq(tasksTable.parkFromStatus, input.id))
-            .returning({ id: tasksTable.id }),
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
         );
       } else {
         // no faithful home: drop the INERT references (a blocked one would have refused)
@@ -260,20 +267,23 @@ export const statusesRouter = os.router({
             .update(tasksTable)
             .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
             .where(and(eq(tasksTable.preBlockStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
-            .returning({ id: tasksTable.id }),
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
         );
         collect(
           await tx
             .update(tasksTable)
             .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
             .where(and(eq(tasksTable.parkFromStatus, input.id), ne(tasksTable.status, STATUS.blocked)))
-            .returning({ id: tasksTable.id }),
+            .returning({ id: tasksTable.id, status: tasksTable.status }),
         );
       }
       // the invariant the whole law rests on: after this delete no row may still name the
-      // removed id. A reference that landed after the repair statement is the ghost-task
-      // race (a task moved into a status being deleted) — roll the delete back and let the
-      // caller retry against the settled state instead of shipping a dangling home.
+      // removed id. Two legal producers can land one: a task moved into the status between
+      // the in-use check and the DELETE (the ghost-task race), and a STALE gating write —
+      // refreshParentGating captures `pre = cur.status` before its conditional write, so a
+      // task moved out of the status in that window still records it as its home. Both
+      // commit before this read are caught here; the rollback lets the caller retry
+      // against the settled state instead of shipping a dangling home.
       const stragglers = await tx
         .select({ id: tasksTable.id })
         .from(tasksTable)
