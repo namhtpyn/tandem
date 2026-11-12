@@ -46,35 +46,87 @@ own_predicate() {
 # The 5f strand-shape SQL, factored so the live pass, --selfcheck and --strand-sql share
 # ONE copy: the arms' regression test executes exactly these bytes against a seeded test
 # database, so the detector is pinned by the SQL that ships, never a test-side copy.
-# #424: the wedge arm's inner set gains the gating-block branch. BOTH branches read the
+# #424: the wedge arm's inner set carries the gating-block branch. BOTH branches read the
 # CURRENT round only: no PENDING row in max(round) (any PENDING row there — a
 # NULL-reviewer void row from a removed reviewer included — means the round is still
-# suspended and its block restore settles it, never a wedge) and the newest VERDICT row
-# of that round NEWER than the task's last write. The discriminator is load-bearing here
-# too: a legal re-queue into an in-review status over an already-decided round carries
-# its verdict BEFORE the move and the later block (a child opening then records that
-# home, block write last), while a lost settle flip has the block write first and the
-# killing verdict after it (the verdict ROW is written before the flip's task write).
+# suspended and its block restore settles it, never a wedge), at least one VERDICT row,
+# and NO OWNER STATUS WRITE newer than that round's newest verdict (#430).
+# THE OWNER-STATUS DISCRIMINATOR replaces the old verdict-vs-updated_at ordering, whose
+# mask was fatal: a machine status write (the child-restore that lands the task back in
+# review) or a title/assignee edit stamped updated_at past the killing verdict and the
+# shape read as a legal manual move. The manual move is the ONLY writer of a `status: …`
+# activity body (tasks.setStatus); every machine path logs its OWN body (auto-blocked /
+# unblocked / park / round closed), so the row is unforgeable by machine paths and a
+# legal re-queue into an in-review status over an already-decided round always carries
+# its move NEWER than the verdict. Free text cannot forge it either: the 1:1 activity
+# payload must carry kind='STATUS' (a note or a human verdict body that merely starts
+# `status: ` is not a status write), and the row commits in the SAME transaction as the
+# status write. The body — not the author — is the key: author_id is ON DELETE SET NULL,
+# so a deleted mover would read as a machine write.
+# Columns verified against the live prod schema (probe law #5): task_messages.task_id /
+# body / created_at and task_message_activities.message_id / payload, riding
+# task_messages_task_idx.
+# A lost settle flip has the block write first and the killing verdict after it (the
+# verdict ROW is written before the flip's task write).
 # A park carries park_from_status and owns its round — a parked round that closed is the
 # same lost-flip shape and is OUT of this arm by declaration (#431). The two non-settle
 # block egresses (#427) leave a non-paused row, so no paused-row arm reads them. An
 # origin that no longer RESOLVES (its status was deleted after the block recorded it) is
 # the ORPHAN-HOME arm's shape (#432), appended last so this slice never carries it.
-# RESIDUAL (both branches, #430): a task write AFTER the killing verdict masks the shape
-# — the child-restore that lands the task back in review writes updated_at past the
-# verdict and reads as a legal manual move. Pre-existing for the in_review branch since
-# #292; tracked with an activity-stamp design in #430.
+# current round holds at least one VERDICT row (a closed round, not a minted-empty one)
+decided_clause() {
+  printf "%s" "exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))"
+}
+# no OWNER status write (tasks.setStatus's `status: …` activity row) newer than the
+# newest verdict of the current round. Two filters make the row unforgeable by free text:
+# the `status: …` body has exactly one writer in the codebase (tasks.setStatus — every
+# machine path logs its own body: auto-blocked / unblocked / park / round closed), and
+# the 1:1 activity payload must carry kind='STATUS' (a NOTE or VERDICT row whose text
+# merely starts with `status: ` is not a status write). The body — not the author — is
+# the key: author_id is ON DELETE SET NULL, so a deleted mover would read as a machine
+# write. tasks.setStatus commits the row in the SAME transaction as the status write, so
+# a landed owner move always carries it.
+owner_gap_clause() {
+  printf "%s" "not exists (select 1 from task_messages m where m.task_id = t.id and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)))"
+}
+# #430 OWNER-STATUS RULE FLOOR: the absence of an owner record is decisive ONLY when the
+# server guarantees that every landed manual move carries its row. `tasks.setStatus`
+# writes the row in the same transaction as the status write from 2.78.24 (OWNER-MOVE
+# RECORD); on an older image the row was written later, outside the transaction, so a
+# crash between the status write and the log could lose it — a missing record there
+# proves nothing. Old images therefore keep the retired verdict-vs-updated_at ordering
+# (maskable by a later write, but never a false alarm); 2.78.24+ uses the owner record.
+OWNER_FLOOR=2.78.24
+owner_floor_met() {
+  case "${1:-}" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) return 1 ;;
+  esac
+  case "${1}" in
+    *[!0-9.]*) return 1 ;;
+  esac
+  [ "$(printf '%s\n%s\n' "$OWNER_FLOOR" "${1}" | sort -V | tail -1)" = "${1}" ]
+}
+# the retired rule (pre-2.78.24 images): a verdict newer than the task's last write
+legacy_rule() {
+  printf "%s" "(select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
+}
 strand_sql() {
-  local own blkarm orphan
+  local own blkarm orphan decided gap rule
   own=$(own_predicate "${1:-}" "${2:-}")
+  decided=$(decided_clause)
+  gap=$(owner_gap_clause)
+  if owner_floor_met "${1:-}"; then rule="$decided and $gap"; else rule="$(legacy_rule)"; fi
   blkarm=""
   if [ -n "$(own_block_predicate "${1:-}" "${2:-}")" ]; then
-    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
+    blkarm=" union select distinct t.id from tasks t join task_statuses s on s.id = t.status where $(own_block_predicate "${1:-}" "${2:-}") and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $rule"
   fi
   # ORPHAN-HOME arm (#432): a PAUSED row with a recorded origin (block or park home) that
   # names NO task_statuses row — the home was deleted after the block recorded it — with
-  # the same current-round predicate as the wedge (no PENDING row in max(round), the
-  # newest verdict of that round NEWER than the task's last write). EITHER column alone
+  # the wedge's current-round clause (no PENDING row in max(round), at least one verdict
+  # row) plus its OWN verdict-vs-write ordering (the newest verdict of that round NEWER
+  # than the task's last write; the wedge's owner-status discriminator is #430's, this arm
+  # keeps the simpler test). EITHER column alone
   # dangles: a row carrying both origins (no live writer emits that, but the schema
   # permits it) still fires when one of them lost its row. No legal write path produces
   # it: a gating block records the task's own status (a row that exists at write time), a
@@ -92,7 +144,7 @@ strand_sql() {
   if [ "${2:-}" = "2" ]; then
     orphan=" union all select 'orphanhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
   fi
-  printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${orphan}"
+  printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $rule${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${orphan}"
 }
 # the wedge arm alone (the SQL's first emission) — selfcheck greps THIS, never the whole
 # strand SQL: `park_from_status` also rides $own inside the stallrv/lostsettle arms, so a
@@ -120,17 +172,37 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ -z "$(own_block_predicate 2.78.20-rc1 2)" ] || { echo "selfcheck fail: block pre-release semver"; exit 1; }
   printf '%s' "$(own_predicate 2.78.20 2)" | grep -qF "s.category = 'in_review'" || { echo "selfcheck fail: own in_review half"; exit 1; }
   printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "where (s.category = 'in_review' or (s.category = 'paused'" || { echo "selfcheck fail: own predicate not reaching stallrv/lostsettle"; exit 1; }
-  STR_ON=$(strand_sql 2.78.20 2)
-  WEDGE_ON=$(strand_wedge_arm 2.78.20 2); WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
+  STR_ON=$(strand_sql 2.78.24 2)
+  WEDGE_ON=$(strand_wedge_arm 2.78.24 2)
+  WEDGE_PRE=$(strand_wedge_arm 2.78.23 2)
+  WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
   printf '%s' "$STR_ON" | grep -qF "select 'lostsettle'" || { echo "selfcheck fail: strand lostsettle arm"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge arm"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "park_from_status is null" || { echo "selfcheck fail: wedge block branch"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: wedge decided rows"; exit 1; }
-  [ "$(printf '%s' "$WEDGE_ON" | grep -oF ") > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge write discriminator (both branches)"; exit 1; }
-  [ "$(printf '%s' "$WEDGE_OFF" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: wedge floor discriminator"; exit 1; }
+  # #430: at the atomic-writer floor (2.78.24+) the manual-freedom discriminator is the
+  # ABSENT OWNER status write — an activity row whose body is `status: …` AND whose 1:1
+  # payload carries kind='STATUS', NEWER than the current round's newest verdict — carried
+  # by BOTH branches. The FULL clause is pinned (body + kind + verdict filter + round
+  # binding): a pin that stops before any one of those terms stays green when that term is
+  # dropped. Older images MUST keep the retired verdict-vs-write ordering (a lost record
+  # there proves nothing), so its presence is pinned below the floor and its absence at it.
+  GAP_CLAUSE="m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)))"
+  DEC_CLAUSE="exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))"
+  [ "$(printf '%s' "$WEDGE_ON" | grep -oF "$GAP_CLAUSE" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge owner-status clause (both branches)"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_ON" | grep -oF "$DEC_CLAUSE" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge decided-round clause (both branches)"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_PRE" | grep -oF "$GAP_CLAUSE" | wc -l)" = "0" ] || { echo "selfcheck fail: owner clause must not reach a pre-floor image"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_PRE" | grep -oF ') > t.updated_at' | wc -l)" = "2" ] || { echo "selfcheck fail: pre-floor wedge must keep the verdict-vs-write rule (both branches)"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_OFF" | grep -oF ') > t.updated_at' | wc -l)" = "1" ] || { echo "selfcheck fail: pre-block floor verdict-vs-write rule"; exit 1; }
+  printf '%s' "$WEDGE_ON" | grep -qF "t.updated_at" && { echo "selfcheck fail: floor wedge still keys on updated_at"; exit 1; }
+  owner_floor_met 2.78.24 || { echo "selfcheck fail: owner floor met at 2.78.24"; exit 1; }
+  owner_floor_met 2.78.100 || { echo "selfcheck fail: owner floor met above (sort -V)"; exit 1; }
+  owner_floor_met 3.0.0 || { echo "selfcheck fail: owner floor met at the next major"; exit 1; }
+  owner_floor_met 2.78.23 && { echo "selfcheck fail: owner floor met below 2.78.24"; exit 1; }
+  owner_floor_met 2.78.24-rc1 && { echo "selfcheck fail: owner floor met on a pre-release"; exit 1; }
+  owner_floor_met '' && { echo "selfcheck fail: owner floor met on an empty version"; exit 1; }
+  owner_floor_met guard-error && { echo "selfcheck fail: owner floor met on a non-semver"; exit 1; }
   [ "$(printf '%s' "$WEDGE_ON" | grep -oF "r.status = 'PENDING' and r.round = (select max(r3.round)" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge live-round clause (both branches)"; exit 1; }
-  [ "$(printf '%s' "$WEDGE_ON" | grep -oF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge verdict scope (both branches)"; exit 1; }
-  [ "$(printf '%s' "$WEDGE_ON" | grep -oF "and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge verdict round binding (both branches)"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: wedge block branch not gated"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: wedge floor"; exit 1; }
   # ORPHAN-HOME arm (#432) — clauses pinned on the arm's own slice (the wedge shares the
@@ -388,22 +460,29 @@ fi
 
 # 5f. strand shapes — watchdog coverage for the shipped bug classes that no other
 # check covers (watchlist "candidate probe" entries, probed 2026-11-06):
-#   (a) DEAD-ROUND WEDGE (#292 class): an in_review-category task whose CURRENT
-#       round has NO PENDING row and a verdict row NEWER than the task's last write —
-#       the round opened, its verdicts landed, and the task never left in_review
-#       (round-open teardown / settle-arbitration regressions). The
-#       newest-verdict-after-last-write invariant is what separates the machine
-#       wedge from a LEGAL manual move into in_review (the human re-open bumps
-#       tasks.updated_at past every verdict, so it never matches); a PENDING row in
-#       the current round means a live (or suspended) round, and an older round's
-#       rows are debris the current-round clause ignores.
+#   (a) DEAD-ROUND WEDGE (#292 class, #430): a review-flow-owned task whose CURRENT
+#       round has NO PENDING row, holds at least one VERDICT row, was decided after the
+#       activity store existed, and takes NO OWNER status write newer than that round's
+#       newest verdict — the round opened, its verdicts landed, and the task never left
+#       the review-flow shape (round-open teardown / settle-arbitration regressions).
+#       The OWNER-status discriminator replaces the retired verdict-vs-updated_at
+#       ordering: a manual move is an authored `status: …` activity row (body + payload
+#       kind STATUS, committed in the same transaction as the status write), so a legal
+#       re-queue over a decided round always carries its move AFTER the verdict, while a
+#       machine status write (auto-block/unblock, park, settle) logs its own body and can
+#       never look like one; a task write that is NOT a status write (a title edit, the
+#       child-restore) no longer masks the shape. VERSION-GATED: this rule is sound only
+#       on an image that writes the record ATOMICALLY with the status move (2.78.24+);
+#       below the floor the arm keeps the retired verdict-vs-write ordering, because an
+#       old image could lose a move's record to a crash and a missing row would prove
+#       nothing. A PENDING row in the current round means a live (or suspended) round,
+#       and an older round's rows are debris the current-round clause ignores.
 #       BLOCK BRANCH (#424): the same wedge can strand a task in a child-derived
 #       gating auto-block — #419 keeps the round running there, so a kill between
 #       recordVerdict's row write and flipTask leaves a PAUSED block (origin
 #       resolving to in_review, no park origin) with a CLOSED current round: no
 #       PENDING row in max(round) and at least one verdict row in it. That branch
-#       carries the SAME write-vs-verdict discriminator as the in_review half (a legal
-#       re-queue over a decided round has its verdict before the move and the block),
+#       carries the SAME owner-status discriminator as the in_review half,
 #       and it reads the CURRENT round only: any PENDING row there — a void row from a
 #       removed reviewer included — means the round is still suspended, never a wedge.
 #       A PARK's closed round is out of this arm's scope (#431).
@@ -446,9 +525,10 @@ fi
 # (probe law #4) + to_regclass guard for pre-review images (column-absent law).
 # SCHEMA-SYMMETRY (probe law #5): task_statuses.category, task_reviews.task_id/
 # status/decided_at/created_at, task_obligations.task_id/role/status/resolved_at/
-# created_at, task_runs.status/employee_id/started_at, task_messages.task_id,
-# ai_employees.user_id, tasks.status/updated_at, task_runs.finished_at/id — all
-# verified against the live schema.
+# created_at, task_runs.status/employee_id/started_at, task_messages.task_id/body/
+# created_at, task_message_activities.message_id/payload, ai_employees.user_id,
+# tasks.status/updated_at, task_runs.finished_at/id — all verified against the live
+# schema.
 STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null) || STRCOL="guard-error"
 # OWNERSHIP predicate (#419), built INSIDE strand_sql so the pass, --selfcheck and
 # --strand-sql share one copy: the stranded-round arms cover a task the review flow still
@@ -477,7 +557,7 @@ elif [ "$STRCOL" = "1" ]; then
     # (a) dead-round wedge: previous-pass presence confirm + id-set dedupe (mirrors ghostset)
     if [ -n "${WEDGE:-}" ] && [ "$WEDGE" != "none" ] && [ "$(cat "$PROBE_STATE/wedge.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/wedge.alerted" 2>/dev/null || echo none)" != "$WEDGE" ]; then
-        anom+=("wedge_round: review-flow-owned task (in_review or gating block) with no PENDING row in its current round [$WEDGE] — dead round, #292/#424 class")
+        anom+=("wedge_round: review-flow-owned task (in_review or gating block) with no PENDING row in its current round [$WEDGE] — dead round, #292/#424/#430 class")
         echo "$WEDGE" > "$PROBE_STATE/wedge.alerted"
       fi
     else
