@@ -14,7 +14,7 @@
 //     a live run / a task out of review suppresses it; a scan failure resolves 0.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REVIEW_STATUS } from '#shared/enums';
+import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   scan: [] as Array<Record<string, unknown>>,
@@ -205,11 +205,19 @@ describe('lostSettleScan (#402 SQL discriminators)', () => {
     expect(text).toContain('task_runs"."status" =');
     expect(text).toContain('task_runs"."finished_at" <');
     expect(text).toContain('task_runs"."started_at" >= "task_reviews"."created_at"');
-    expect(query.params).toContain('in_review');
-    expect(query.params).toContain('paused');
-    expect(query.params).toContain(REVIEW_STATUS.PENDING);
-    expect(query.params).toContain('DONE');
-    expect(query.params).toContain('RUNNING');
+    // ORDER-SENSITIVE (#419 r3): the tuple pins WHICH status each predicate reads — a
+    // DONE<->RUNNING swap keeps every toContain assertion green while the scan matches
+    // nothing (a RUNNING row has finished_at NULL), i.e. the whole replay arm dead
+    expect(query.params).toEqual([
+      'in_review',
+      'paused',
+      'in_review',
+      REVIEW_STATUS.PENDING,
+      RUN_STATUS.DONE,
+      expect.any(String),
+      RUN_STATUS.RUNNING,
+      20,
+    ]);
     expect(text).toContain('ai_employees');
     expect(text).toContain('max(r2.round)');
     // the NEWEST-run clause: the later-run subquery compares the (started_at, id) tuple

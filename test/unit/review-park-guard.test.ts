@@ -110,6 +110,16 @@ describe('parkRound in-review guard (#199)', () => {
     expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
   });
 
+  it('an IN-REVIEW task carrying a stale park origin still parks (#419: the memory term is block-scoped)', async () => {
+    // a settle-matrix flip out of a park writes only the status; a resubmit brings the
+    // origin back into in-review. The status write is that branch's arbiter — refusing
+    // here would wedge every later park of the round.
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1', rearmAttempts: 0, parkFromStatus: STATUS.inReview }];
+    const parked = await parkRound('task-1', 'review turn timed out — reaped after 45 min', { rearmable: true });
+    expect(parked).toBe(true);
+    expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
+  });
+
   it('the park activity row records the from-status (#202)', async () => {
     h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');

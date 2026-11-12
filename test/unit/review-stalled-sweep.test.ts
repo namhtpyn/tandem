@@ -238,6 +238,19 @@ describe('stalledReviewScan shape (#397)', () => {
     expect(flat).toContain('tr.employee_id = "task_reviews"."reviewer_id"');
     expect(flat).toContain('tr.started_at >= "task_reviews"."created_at"');
     expect(params).toContain(RUN_STATUS.RUNNING);
+    // ORDER-SENSITIVE (#419 r3): the ownership prefix + row/run/lost-settle-guard
+    // statuses in one tuple — a DONE<->RUNNING swap must not stay green
+    expect(params).toEqual([
+      'in_review',
+      'paused',
+      'in_review',
+      REVIEW_STATUS.PENDING,
+      cutoff.toISOString(),
+      RUN_STATUS.RUNNING,
+      REVIEW_STATUS.PENDING,
+      RUN_STATUS.DONE,
+      20,
+    ]);
   });
 
   it('accepts a child-derived GATING auto-block from an in-review origin (#419)', () => {

@@ -27,8 +27,12 @@ export const BLOCKED_STATUS = STATUS.blocked;
 /** #365: a restore that lands in-review replays a LIVE round's parked turn or settles
  *  an extinguished one (its reviewer was deleted while the task was blocked) — never
  *  leave a round nothing can ever decide. A non-parked restore to in-review replays
- *  nothing (#202 parity: only a park carries a parked turn). */
-async function resumeRestoredRound(taskId: string, parked: boolean, restoreCategory: string | undefined) {
+ *  nothing (#202 parity: only a park carries a parked turn). MACHINE-CLASS ONLY (#419):
+ *  an automatic restore re-fires only a park the ladder owns (park_rearm_attempts > 0) —
+ *  a DECISION-class park (a stopped turn, an exhausted escalation, a verdict-less round
+ *  after its retry) is the round's own stop and waits for the owner, never for a child
+ *  to land. */
+async function resumeRestoredRound(taskId: string, resumeTurn: boolean, restoreCategory: string | undefined) {
   // #369: a restore into the QUESTION flow re-runs the answer arm — a holder removed
   // while the task was BLOCKED left its NULL-holder row as the machine signature (the
   // arm never cancels it on a blocked task), and no other path would return it.
@@ -42,10 +46,10 @@ async function resumeRestoredRound(taskId: string, parked: boolean, restoreCateg
       log.warn(`gating: answer-holder restore heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
-  if (!parked && restoreCategory !== CATEGORY.IN_REVIEW) return;
+  if (!resumeTurn && restoreCategory !== CATEGORY.IN_REVIEW) return;
   try {
     const roundLive = await openRoundLive(taskId);
-    if (parked && roundLive) await dispatchAiReviewTurns(taskId);
+    if (resumeTurn && roundLive) await dispatchAiReviewTurns(taskId);
     else if (!roundLive && restoreCategory === CATEGORY.IN_REVIEW) await settleExtinguishedRound(taskId);
   } catch (e) {
     // FAULT ISOLATION (#365 r6): this runs inside refreshParentGating, which every task
@@ -108,7 +112,14 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
   // gate the task itself, then every ancestor; guard against cycles defensively
   const seen = new Set<string>();
   let cur = await d.query.tasks.findFirst({
-    columns: { id: true, status: true, preBlockStatus: true, parkFromStatus: true, parentTaskId: true },
+    columns: {
+      id: true,
+      status: true,
+      preBlockStatus: true,
+      parkFromStatus: true,
+      parkRearmAttempts: true,
+      parentTaskId: true,
+    },
     where: { id: { eq: taskId } },
   });
   while (cur && !seen.has(cur.id)) {
@@ -165,13 +176,22 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         restored: restore,
         ...(parked ? { parkResumed: true } : {}),
       });
-      // unblock-resume parity (#202) + #365: replay a restored parked round's turn,
-      // settle a restore that lands in-review with no live voter (leaf helper)
-      await resumeRestoredRound(cur.id, parked, known.get(restore));
+      // unblock-resume parity (#202) + #365 + #419: replay a restored MACHINE park's
+      // turn (the ladder ledger is the persisted class marker), settle a restore that
+      // lands in-review with no live voter (leaf helper); a decision park waits for the
+      // owner, never for a child to land
+      await resumeRestoredRound(cur.id, parked && (cur.parkRearmAttempts ?? 0) > 0, known.get(restore));
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({
-      columns: { id: true, status: true, preBlockStatus: true, parkFromStatus: true, parentTaskId: true },
+      columns: {
+        id: true,
+        status: true,
+        preBlockStatus: true,
+        parkFromStatus: true,
+        parkRearmAttempts: true,
+        parentTaskId: true,
+      },
       where: { id: { eq: cur.parentTaskId } },
     });
   }

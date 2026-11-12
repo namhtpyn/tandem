@@ -2466,9 +2466,18 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     // custom in-review status parks and a concurrent move still beats the park.
     // PARK-ONCE (#419): the block branch reads and writes the SAME blocked status, so
     // the status term alone cannot arbitrate two failure arms parking one round (each
-    // would land a park and burn a ladder rung) — the park memory being unwritten IS
-    // the discriminator; a concurrent owner move clears/re-installs it and wins here.
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), isNull(tasks.parkFromStatus)))
+    // would land a park and burn a ladder rung) — the unwritten park memory is that
+    // branch's arbiter. It is scoped to the block branch on purpose: an in-review task
+    // can legally carry a stale park origin (a settle-matrix flip out of a park writes
+    // only the status; a resubmit brings the origin back), and refusing there would
+    // wedge every later park of that round.
+    .where(
+      and(
+        eq(tasks.id, taskId),
+        eq(tasks.status, task.status),
+        taskCategory === CATEGORY.PAUSED ? isNull(tasks.parkFromStatus) : undefined,
+      ),
+    )
     .returning({ id: tasks.id });
   if (parkedRows.length === 0) return false;
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {

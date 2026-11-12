@@ -132,6 +132,8 @@ function row(id: string, over: Record<string, unknown> = {}) {
     status: STATUS.todo,
     preBlockStatus: null,
     parkFromStatus: null,
+    // the persisted park CLASS marker (#419): a machine park burned a ladder rung
+    parkRearmAttempts: 1,
     parentTaskId: null,
     ...over,
   });
@@ -199,6 +201,16 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates[0]?.set.preBlockStatus).toBeNull();
     expect(h.updates[0]?.set.parkFromStatus).toBeNull();
     expect(h.replayed).toEqual([]);
+  });
+
+  it('a DECISION-class park is NOT auto-fired by a child landing (#419): the owner resumes it', async () => {
+    // a stopped turn / exhausted escalation parks with attempts 0 and no re-arm — the
+    // automatic restore must not re-dispatch a turn the owner stopped
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 0 });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.inReview); // the restore still lands
+    expect(h.replayed).toEqual([]); // but no turn re-fires
   });
 
   it('a restored parked round whose reviewer was deleted settles instead of replaying (#365)', async () => {
