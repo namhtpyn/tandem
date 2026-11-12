@@ -380,9 +380,13 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
     const ledger2 = await sql3`
       select park_rearm_attempts::int as attempts, park_rearm_after as after from tasks where id = ${taskId}
     `;
-    // the ledger keeps the ladder's history (attempts survive the resume); a stale
-    // park_rearm_after is INERT — the scan keys on BLOCKED, and the round is done
-    expect(Number(ledger2[0]!.attempts)).toBe(1);
+    // SETTLE-CLEARS-GATING LAW (#423): the settle flip exhausts the round's machine
+    // context, so the park ladder does NOT survive into the task's next round — a
+    // carried ledger would start the next infra park mid-ladder (or past it, parking
+    // FINAL with no auto-recovery). The ladder still survives a RESUME (the unblock arm
+    // never rewrites it): this assertion is the SETTLE, which closes the round.
+    expect(Number(ledger2[0]!.attempts)).toBe(0);
+    expect(ledger2[0]!.after).toBeNull();
   } finally {
     await sql3.close();
   }
