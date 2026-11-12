@@ -497,22 +497,6 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
-  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones, and
-  // do it IMMEDIATELY after the won flip — this flip changed the task's status, so a
-  // still-open child must re-block it FROM the landed status and a task that was its
-  // parent's last open child must release that parent's gate whatever it landed in.
-  // IMMEDIATE is load-bearing: the teardown below has five awaited writes and any of
-  // them can throw, after which no retry can re-gate (the task already left the in-review
-  // category, so the CAS cannot re-win and a terminal landing short-circuits on the
-  // residue heal) — the parent would stay gated with zero open children. Best-effort:
-  // the flip already committed, so a gating failure is logged, never surfaced. Dynamic
-  // import keeps the module graph acyclic at load time.
-  try {
-    const { refreshParentGating } = await import('./gating.service');
-    await refreshParentGating(taskId);
-  } catch (e) {
-    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-  }
   // TRIGGER LAST (#365 r6): the void row is the ONLY thing the boot/removal scans key
   // on, so every write that can fail runs BEFORE it is erased — a crash mid-teardown
   // leaves the signature intact and the next trigger retries the whole settle.
@@ -522,6 +506,24 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
   await extinguishVoidPendingRows(taskId, round);
+  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones. This
+  // flip changed the task's status, so a still-open child must re-block it FROM the
+  // landed status (a re-blocking settle keeps its ancestors gated, since the settled task
+  // is still open), and a task that was its parent's LAST open child releases that
+  // parent's gate by landing TERMINAL — a to-do landing lowers no open count. PLACEMENT
+  // is load-bearing both ways: the residue writes above must run FIRST (they are
+  // retryable only while the row is still terminal — a throw after a re-block would
+  // strand a closed round's void row on a paused task no healer can reach), and the
+  // re-gate itself must not be skippable by the notification writes below (a skipped
+  // re-gate leaves a parent gated with zero open children, and no retry can re-gate
+  // since the CAS cannot re-win). Best-effort: the flip already committed, so a gating
+  // failure is logged, never surfaced. Dynamic import keeps the module graph acyclic.
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,

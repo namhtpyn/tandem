@@ -303,6 +303,18 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('the unblock restore never rewrites the park re-arm ledger (#423: the settle does, the resume does not)', async () => {
+    // PARK-REARM LAW (#211): attempts survive a resume — the retry cycle is bounded by
+    // the ledger, so a restore that zeroed it would restart the ladder from rung 1
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 2 });
+    h.childrenByParent.set('p', []);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    const set = h.updates[0]?.set ?? {};
+    expect('parkRearmAttempts' in set).toBe(false);
+    expect('parkRearmAfter' in set).toBe(false);
+  });
+
   it('a task carrying a STALE pre-block origin re-blocks with its OWN status as the home (#419)', async () => {
     // a flip out of a block writes only the status, so a non-BLOCKED row can carry a
     // stale pre_block_status — promoting it would restore the task to a category it no

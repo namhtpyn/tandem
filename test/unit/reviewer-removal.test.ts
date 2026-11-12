@@ -52,6 +52,12 @@ const h = vi.hoisted(() => ({
   regateThrows: false,
   /** #423 clause 6: the best-effort re-gate's LOGGED half */
   warnings: [] as string[],
+  /** the writes already applied when the round-close re-gate ran (placement pin) */
+  regatedWrites: [] as string[][],
+  /** notes already on the thread when the re-gate ran (placement pin: 0) */
+  regatedNotes: [] as number[],
+  /** make the obligation teardown throw (the retryable-residue placement pin) */
+  obligationsThrow: false,
   dispatches: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
   runningReviewRuns: [] as Array<{ id: string }>,
@@ -214,6 +220,7 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
       h.cancelled.push(String(args[0]));
     },
     cancelAllObligations: async (...args: unknown[]) => {
+      if (h.obligationsThrow) throw new Error('obligations down');
       h.cancelledAll.push(String(args[0]));
     },
     deleteObligationById: async (id: string) => {
@@ -239,6 +246,8 @@ vi.mock('../../server/domains/tasks/gating.service', () => ({
     if (h.regateThrows) throw new Error('gating read failed');
     // the witness is the LAST tasks write: a re-gate that ran before any flip records ''
     h.regated.push({ taskId, status: h.lastFlipStatus });
+    h.regatedWrites.push(h.updates.map((u) => `${u.table}:${String(u.set.status ?? '')}`));
+    h.regatedNotes.push(h.notes.length);
   },
 }));
 
@@ -304,6 +313,9 @@ beforeEach(() => {
   h.lastFlipStatus = '';
   h.regateThrows = false;
   h.warnings = [];
+  h.regatedWrites = [];
+  h.regatedNotes = [];
+  h.obligationsThrow = false;
   h.dispatches = [];
   h.aiEmployees = [];
   h.runningReviewRuns = [];
@@ -360,8 +372,8 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.cancelledAll).toEqual(['task-1']);
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
     // SETTLE-CLEARS-GATING (#423): EVERY landing re-gates — a still-open child must
-    // re-block the task from the landed status, and a last-open-child landing must
-    // release its parent's gate whatever it landed in (never only terminal arm).
+    // re-block the task from the landed status; a parent is released only by a TERMINAL
+    // landing (it is what lowers the parent's open count), never by this to-do bounce.
     expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
     // the flip exhausts the round's gating context: both machine origins clear in
     // the same write (a surviving origin reads as a live block/park on a closed round)
@@ -424,6 +436,33 @@ describe('settleExtinguishedRound (#365)', () => {
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.todo }]);
+  });
+
+  it('the round-close re-gate runs AFTER the residue writes, before the notification ones (#426 r4)', async () => {
+    // PLACEMENT is two-sided: the void-row teardown must be retryable when the row is
+    // still terminal, and the re-gate must not be skipped by a later notification write.
+    // So the re-gate runs after the supersede/extinguish writes and before the note.
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+      ],
+    ];
+    expect(await settleExtinguishedRound('task-1')).toBe(true);
+    const seen = h.regatedWrites[0] ?? [];
+    expect(seen).toContain(`taskReviews:${REVIEW_STATUS.SUPERSEDED}`); // residue writes done
+    expect(h.regatedNotes[0]).toBe(0); // ... and the settlement note had NOT landed yet
+    expect(h.notes).toHaveLength(1); // it lands after the re-gate
+  });
+
+  it('a teardown throw leaves a still-TERMINAL row and re-gates nothing (the boot heal retries it) (#426 r4)', async () => {
+    // the other side of the placement: a throw BEFORE the residue writes must not be
+    // preceded by a re-block, or the void row strands on a paused row no healer reaches
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    h.obligationsThrow = true;
+    await expect(settleExtinguishedRound('task-1')).rejects.toThrow('obligations down');
+    expect(h.taskFlips).toEqual([STATUS.todo]); // the flip committed, the row stays terminal
+    expect(h.regated).toEqual([]); // no re-gate: the retryable shape is preserved
   });
 
   it('a failing round-close re-gate is logged, never surfaced (#423 clause 6)', async () => {
