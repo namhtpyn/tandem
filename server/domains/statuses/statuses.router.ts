@@ -1,6 +1,7 @@
 import { os } from '@orpc/server';
+import { consola } from 'consola';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { and, asc, eq, inArray, ne, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -19,6 +20,8 @@ import {
   protectedProcedure,
   publishChange,
 } from '../kernel/kernel';
+
+const log = consola.withTag('tandem');
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -70,6 +73,13 @@ export const statusesRouter = os.router({
         updatedAt: now,
       };
       await db.transaction(async (tx) => {
+        // STATUS MUTATION MUTEX (#432): every writer of task_statuses (this upsert, the
+        // removal and its origin re-home) serializes on ONE transaction-scoped advisory
+        // lock, so a category edit can never interleave with a delete's re-home (a save
+        // racing the re-home TARGET would otherwise re-categorize a home that just
+        // landed) and two same-category removals can never deadlock on each other's
+        // target row.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))`);
         // STATUS-ORIGIN MEMORY LAW (#432): a CATEGORY change re-keys every reader that
         // resolves this status as a recorded block/park home (the settle flip's
         // machine-home term, the restore target) — a blocked task would then restore
@@ -84,24 +94,19 @@ export const statusesRouter = os.router({
             .where(eq(taskStatusesTable.id, id))
         )[0];
         if (existing && existing.category !== input.category) {
-          const pausedIds = (
-            await tx
-              .select({ id: taskStatusesTable.id })
-              .from(taskStatusesTable)
-              .where(eq(taskStatusesTable.category, CATEGORY.PAUSED))
-          ).map((s) => s.id);
-          const homes =
-            pausedIds.length === 0
-              ? []
-              : await tx
-                  .select({ id: tasksTable.id })
-                  .from(tasksTable)
-                  .where(
-                    and(
-                      inArray(tasksTable.status, pausedIds),
-                      or(eq(tasksTable.preBlockStatus, id), eq(tasksTable.parkFromStatus, id)),
-                    ),
-                  );
+          // the blocker is the BLOCK STATE by IDENTITY, never the paused CATEGORY: a
+          // recategorized built-in (an admin may edit it) must not turn a genuinely
+          // blocked task's home into "inert" — every gating reader fires on
+          // status === BLOCKED_STATUS, so identity is the load-bearing test.
+          const homes = await tx
+            .select({ id: tasksTable.id })
+            .from(tasksTable)
+            .where(
+              and(
+                eq(tasksTable.status, STATUS.blocked),
+                or(eq(tasksTable.preBlockStatus, id), eq(tasksTable.parkFromStatus, id)),
+              ),
+            );
           if (homes.length > 0)
             throw new ORPCError('BAD_REQUEST', {
               message: `status is the recorded home of ${homes.length} blocked task(s) — unblock them before changing its category`,
@@ -138,17 +143,16 @@ export const statusesRouter = os.router({
     if ((Object.values(STATUS) as string[]).includes(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
     }
-    await db.transaction(async (tx) => {
-      // FOR UPDATE: this row is the category source for the origin re-home, and its lock
-      // serializes a concurrent statuses.save (whose upsert needs the same row) — a
-      // category drifting between the read and the re-home would land the home on the
-      // wrong category. A missing row is the NOT_FOUND the delete always answered.
+    const touched = await db.transaction(async (tx) => {
+      // STATUS MUTATION MUTEX (#432): see save — the category read below must not drift
+      // under a concurrent edit, and two same-category removals must not deadlock.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))`);
+      // a missing row is the NOT_FOUND the delete always answered
       const statusRow = (
         await tx
           .select({ id: taskStatusesTable.id, category: taskStatusesTable.category })
           .from(taskStatusesTable)
           .where(eq(taskStatusesTable.id, input.id))
-          .for('update')
       )[0];
       if (!statusRow) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
       const inUse = await tx.query.tasks.findMany({
@@ -167,12 +171,6 @@ export const statusesRouter = os.router({
       // 'paused' has NO faithful target (its only paused-category sibling is the block
       // state itself: a home re-homed onto it restores the task INTO the block, clears
       // both origins and strands it).
-      const pausedIds = (
-        await tx
-          .select({ id: taskStatusesTable.id })
-          .from(taskStatusesTable)
-          .where(eq(taskStatusesTable.category, CATEGORY.PAUSED))
-      ).map((s) => s.id);
       const refs = await tx
         .select({ id: tasksTable.id, status: tasksTable.status })
         .from(tasksTable)
@@ -180,21 +178,32 @@ export const statusesRouter = os.router({
         // FOR UPDATE: hold the referencing rows so a concurrent gating block waits for
         // this delete instead of landing a home behind it
         .for('update');
+      // A FAITHFUL target carries the same category AND is not the block state itself
+      // (by IDENTITY: a home re-homed onto BLOCKED restores the task INTO the block,
+      // clears both origins and strands it), and 'paused' has none — a restore into any
+      // paused status clears the origin and leaves a row no arm can fire.
       let home: string | null = null;
-      if (refs.length > 0 && statusRow.category !== CATEGORY.PAUSED) {
+      if (statusRow.category !== CATEGORY.PAUSED) {
         const candidates = await tx
           .select({ id: taskStatusesTable.id })
           .from(taskStatusesTable)
-          .where(and(eq(taskStatusesTable.category, statusRow.category), ne(taskStatusesTable.id, input.id)))
+          .where(
+            and(
+              eq(taskStatusesTable.category, statusRow.category),
+              ne(taskStatusesTable.id, input.id),
+              ne(taskStatusesTable.id, STATUS.blocked),
+            ),
+          )
           .orderBy(asc(taskStatusesTable.position))
-          .limit(1)
-          .for('update');
+          .limit(1);
         home = candidates[0]?.id ?? null;
       }
-      // only a LOAD-BEARING (paused-row) reference can refuse: an inert leftover on a
-      // non-paused row (#427 egress) means nothing to any reader, so it is CLEARED
-      // instead of making the status undeletable forever with no in-product remedy.
-      const liveRefs = refs.filter((r) => pausedIds.includes(r.status)).length;
+      // only a LOAD-BEARING reference can refuse: one held by a BLOCKED task (by
+      // IDENTITY — the only state a gating block/park ever writes, and the only state
+      // every reader fires on). An inert leftover on any other row (#427 egress) means
+      // nothing to any reader, so it is CLEARED instead of making the status undeletable
+      // forever with no in-product remedy.
+      const liveRefs = refs.filter((r) => r.status === STATUS.blocked).length;
       if (!home && liveRefs > 0)
         throw new ORPCError('BAD_REQUEST', {
           message: `status is the recorded home of ${liveRefs} blocked task(s) and category '${statusRow.category}' has no faithful home`,
@@ -212,28 +221,42 @@ export const statusesRouter = os.router({
       // The stamp is HELD BACK (`updated_at = updated_at`): this is metadata repair, and
       // a bumped stamp would miss an in-flight settle flip's CAS (the exact strand this
       // law removes) and mask the #430 wedge discriminator (`verdict > updated_at`).
-      if (refs.length > 0) {
-        if (home) {
-          await tx
-            .update(tasksTable)
-            .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
-            .where(eq(tasksTable.preBlockStatus, input.id));
-          await tx
-            .update(tasksTable)
-            .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
-            .where(eq(tasksTable.parkFromStatus, input.id));
-        } else {
-          // no faithful home and nothing load-bearing: drop the inert references
-          await tx
-            .update(tasksTable)
-            .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
-            .where(and(eq(tasksTable.preBlockStatus, input.id), notInArray(tasksTable.status, pausedIds)));
-          await tx
-            .update(tasksTable)
-            .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
-            .where(and(eq(tasksTable.parkFromStatus, input.id), notInArray(tasksTable.status, pausedIds)));
-        }
+      // UNCONDITIONAL (not gated on the refs read): a block/park that committed inside
+      // the refs-read→delete window is caught by this UPDATE's own WHERE, so the repair
+      // is right even when the read saw zero references.
+      if (home) {
+        await tx
+          .update(tasksTable)
+          .set({ preBlockStatus: home, updatedAt: sql`updated_at` })
+          .where(eq(tasksTable.preBlockStatus, input.id));
+        await tx
+          .update(tasksTable)
+          .set({ parkFromStatus: home, updatedAt: sql`updated_at` })
+          .where(eq(tasksTable.parkFromStatus, input.id));
+      } else {
+        // no faithful home: drop the INERT references (a blocked one would have refused)
+        await tx
+          .update(tasksTable)
+          .set({ preBlockStatus: null, updatedAt: sql`updated_at` })
+          .where(and(eq(tasksTable.preBlockStatus, input.id), ne(tasksTable.status, STATUS.blocked)));
+        await tx
+          .update(tasksTable)
+          .set({ parkFromStatus: null, updatedAt: sql`updated_at` })
+          .where(and(eq(tasksTable.parkFromStatus, input.id), ne(tasksTable.status, STATUS.blocked)));
       }
+      // the invariant the whole law rests on: after this delete no row may still name the
+      // removed id. A reference that landed after the repair statement is the ghost-task
+      // race (a task moved into a status being deleted) — roll the delete back and let the
+      // caller retry against the settled state instead of shipping a dangling home.
+      const stragglers = await tx
+        .select({ id: tasksTable.id })
+        .from(tasksTable)
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)))
+        .limit(1);
+      if (stragglers.length > 0)
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'status changed while it was being removed — a task now records it as its home; retry',
+        });
       // edges pointing at the removed status would become dead transitions — strip them atomically
       const others = await tx.query.taskStatuses.findMany({
         columns: { id: true, nextIds: true },
@@ -246,8 +269,22 @@ export const statusesRouter = os.router({
           .set({ nextIds: o.nextIds.filter((n) => n !== input.id), updatedAt: new Date() })
           .where(eq(taskStatusesTable.id, o.id));
       }
+      return refs.map((r) => r.id);
     });
     await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
+    // BEST-EFFORT AFTER THE COMMIT (#432): the repair changed restore targets, so re-derive
+    // the gating of every touched task — a task whose children all landed while it was
+    // blocked restores onto its NEW home now instead of waiting for an unrelated write
+    // (a restore that raced this delete lost its CAS on the pinned origin and cannot).
+    // The outcome stands either way; a gating failure is logged, never surfaced.
+    for (const taskId of touched) {
+      try {
+        const { refreshParentGating } = await import('../tasks/gating.service');
+        await refreshParentGating(taskId);
+      } catch (e) {
+        log.warn(`statuses: re-gate after the origin repair failed for ${taskId}:`, e instanceof Error ? e.message : e);
+      }
+    }
     return { ok: true };
   }),
 

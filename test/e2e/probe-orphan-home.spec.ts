@@ -5,7 +5,9 @@ import { E2E_DATABASE_URL } from './helpers/env';
 
 // Contract: SPEC.md "Probe versioning" — the ORPHAN-HOME arm (#432) reads a PAUSED row
 // whose recorded block/park home names NO task_statuses row (the home was deleted after
-// the block recorded it) together with the wedge's current-round predicate: no PENDING
+// the block recorded it) — and whose OTHER origin does not resolve into review, since a
+// resolvable park home still lets the settle flip land — together with the wedge's
+// current-round predicate: no PENDING
 // row in `max(round)`, and the newest VERDICT row of that round NEWER than the task's
 // last write. No legal write path produces it — a gating block records the task's own
 // status, a park records an in-review home, a hand-made block clears both origins, and
@@ -20,11 +22,13 @@ import { E2E_DATABASE_URL } from './helpers/env';
 const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pathname;
 
 // Baseline status rows the e2e global setup re-seeds (test/e2e/global-setup.ts).
+const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
 const DOING = '01a14743-43f5-759d-a00e-9ccda502cc88';
 const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 /** a canonical uuid that names no task_statuses row — the shape a deleted home leaves */
 const DANGLING = '01a14743-dead-7e57-8000-000000000001';
+const DANGLING_TWO = '01a14743-dead-7e57-8000-000000000002';
 
 test.describe('prod probe orphan-home arm (#432)', () => {
   test('fires on a dangling home over a closed round, silent on every legal shape', async () => {
@@ -43,14 +47,18 @@ test.describe('prod probe orphan-home arm (#432)', () => {
     try {
       const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
       expect(adminId, 'the e2e boot admin must exist for a live-reviewer seed').not.toBe('');
-      const danglingRow = await sql.unsafe('select id from task_statuses where id = $1', [DANGLING]);
-      expect(danglingRow.length, 'the seed id must name no status row').toBe(0);
+      for (const seed of [DANGLING, DANGLING_TWO]) {
+        const danglingRow = await sql.unsafe('select id from task_statuses where id = $1', [seed]);
+        expect(danglingRow.length, 'the seed id must name no status row').toBe(0);
+      }
 
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
       const tag = crypto.randomUUID();
       const danglingBlock = `probe-orphan-block-${tag}`; // fires: block home dangling, verdict after the write
       const danglingPark = `probe-orphan-park-${tag}`; // fires: park home dangling, same shape
-      const mixedOrigins = `probe-orphan-mixed-${tag}`; // fires: one origin dangles, the other still resolves
+      const mixedInert = `probe-orphan-mixed-${tag}`; // fires: one origin dangles, the other resolves OUTSIDE review
+      const mixedReview = `probe-orphan-mixedrev-${tag}`; // silent: the park origin still resolves to in-review
+      const bothDangling = `probe-orphan-both-${tag}`; // fires: both origins dangle
       const legalRequeue = `probe-orphan-requeue-${tag}`; // legal: the verdict predates the last write
       const liveRound = `probe-orphan-live-${tag}`; // legal: a PENDING row keeps the round open
       const tornDown = `probe-orphan-void-${tag}`; // legal: the round holds no verdict row
@@ -64,8 +72,12 @@ test.describe('prod probe orphan-home arm (#432)', () => {
           { id: danglingBlock, status: BLOCKED, pre: DANGLING, park: null, written: 5 },
           { id: danglingPark, status: BLOCKED, pre: null, park: DANGLING, written: 5 },
           // both origins on one row is not producible by a live writer, but the schema
-          // permits it: the arm fires per COLUMN, so one dangling origin is enough
-          { id: mixedOrigins, status: BLOCKED, pre: DANGLING, park: IN_REVIEW, written: 5 },
+          // permits it: the arm fires per COLUMN, so one dangling origin is enough when
+          // the other does not resolve into review (a resolvable park home still lets the
+          // settle flip land — that row belongs to no arm)
+          { id: mixedInert, status: BLOCKED, pre: DANGLING, park: TODO, written: 5 },
+          { id: mixedReview, status: BLOCKED, pre: DANGLING, park: IN_REVIEW, written: 5 },
+          { id: bothDangling, status: BLOCKED, pre: DANGLING, park: DANGLING_TWO, written: 5 },
           // a block over an already-decided round (the verdict predates the block write) is
           // the legal manual-move shape the write-vs-verdict discriminator exists for
           { id: legalRequeue, status: BLOCKED, pre: DANGLING, park: null, written: 1 },
@@ -100,7 +112,9 @@ test.describe('prod probe orphan-home arm (#432)', () => {
       };
       await seedReview(danglingBlock, 'APPROVED', 1);
       await seedReview(danglingPark, 'CHANGE_REQUESTED', 1);
-      await seedReview(mixedOrigins, 'APPROVED', 1);
+      await seedReview(mixedInert, 'APPROVED', 1);
+      await seedReview(mixedReview, 'APPROVED', 1);
+      await seedReview(bothDangling, 'APPROVED', 1);
       await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveRound, 'APPROVED', 1);
       await seedReview(liveRound, 'PENDING', null, adminId);
@@ -121,7 +135,11 @@ test.describe('prod probe orphan-home arm (#432)', () => {
         danglingBlock,
       );
       expect(fired, 'a park whose recorded home was deleted strands the same way').toContain(danglingPark);
-      expect(fired, 'either column dangling is enough — the clause is per column').toContain(mixedOrigins);
+      expect(fired, 'either column dangling is enough when the other home is outside review').toContain(mixedInert);
+      expect(fired, 'both origins dangling is the same shape').toContain(bothDangling);
+      expect(fired, 'a resolvable in-review park home still lets the settle flip land — not this arm').not.toContain(
+        mixedReview,
+      );
       expect(fired, 'a verdict older than the task write is a legal manual move').not.toContain(legalRequeue);
       expect(fired, 'a PENDING row in the current round means the round is still live').not.toContain(liveRound);
       expect(fired, 'a round with no verdict row is not a decided round').not.toContain(tornDown);

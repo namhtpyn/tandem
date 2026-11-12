@@ -25,6 +25,7 @@ import { login } from './helpers/login';
 
 // Baseline status rows the e2e global setup re-seeds (test/e2e/global-setup.ts).
 const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
+const DOING = '01a14743-43f5-759d-a00e-9ccda502cc88';
 const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
 const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
@@ -69,6 +70,17 @@ test.describe('status origin memory (#432)', () => {
          values ($1, $1, $2, $3, $4, now(), now() - ($5::int * interval '1 minute'))`,
         [taskId, status, home.pre ?? null, home.park ?? null, writtenMinutesAgo],
       );
+      // a BLOCKED seed needs an OPEN child, or the repair's post-commit re-gate legitimately
+      // restores it (children all terminal) and the origin it asserts is already cleared.
+      // DOING (working) on purpose: the drift case recategorizes TODO, which would make a
+      // TODO-status child TERMINAL mid-test and quietly open the gate.
+      if (status === BLOCKED) {
+        await sql.unsafe(
+          `insert into tasks (id, title, status, parent_task_id, created_at, updated_at)
+           values ($1, $1, $2, $3, now(), now())`,
+          [`${taskId}-c`, DOING, taskId],
+        );
+      }
     };
     const statusRow = async (id: string): Promise<StatusRow | undefined> =>
       (await page.request.post('/rpc/statuses/list', { data: { json: null } }).then((r) => r.json())).json.find(
@@ -228,6 +240,63 @@ test.describe('status origin memory (#432)', () => {
     }
   });
 
+  // The BLOCK STATE is never a faithful target, by IDENTITY — not because of the paused
+  // CATEGORY. An admin may recategorize the built-in Blocked row (the status manager
+  // offers it, and save only refuses while a blocked task homes the EDITED status), and
+  // a re-home onto it would restore the task INTO the block, clear both origins and
+  // strand it. Shared boot-seed rows are restored in the finally (SCRATCH-SPEC RESTORE LAW).
+  test('the block state is never a faithful re-home target, even recategorized', async ({ page }) => {
+    await login(page);
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const list = async (): Promise<StatusRow[]> =>
+      (
+        (await (await page.request.post('/rpc/statuses/list', { data: { json: null } })).json()) as {
+          json: StatusRow[];
+        }
+      ).json;
+    const save = (body: Record<string, unknown>) => page.request.post('/rpc/statuses/save', { data: { json: body } });
+    let home = '';
+    try {
+      const before = await list();
+      const todoRow = before.find((s) => s.id === TODO)!;
+      const blockedRow = before.find((s) => s.id === BLOCKED)!;
+      const madeHome = await page.request.post('/rpc/statuses/save', {
+        data: { json: { name: `Ready home ${suffix}`, position: 40, category: 'ready' } },
+      });
+      expect(madeHome.status()).toBe(200);
+      home = ((await madeHome.json()) as { json: Saved }).json.id;
+      // the only other ready-category row becomes the block state itself
+      expect((await save({ ...todoRow, category: 'done' })).status()).toBe(200);
+      expect((await save({ ...blockedRow, category: 'ready' })).status()).toBe(200);
+      const blocked = `status-origin-blockstate-${suffix}`;
+      await sql.unsafe(
+        `insert into tasks (id, title, status, pre_block_status, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [blocked, BLOCKED, home],
+      );
+      await sql.unsafe(
+        `insert into tasks (id, title, status, parent_task_id, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [`${blocked}-c`, DOING, blocked],
+      );
+      const refused = await page.request.post('/rpc/statuses/remove', { data: { json: { id: home } } });
+      expect(refused.status(), 'the block state cannot take a home').toBe(400);
+      expect(JSON.stringify(await refused.json())).toContain('no faithful home');
+      const rows = await sql.unsafe(`select pre_block_status as home from tasks where id = $1`, [blocked]);
+      expect(String((rows[0] as { home: string }).home), 'the blocked home survives the refusal').toBe(home);
+    } finally {
+      const after = await list();
+      const todoNow = after.find((s) => s.id === TODO);
+      const blockedNow = after.find((s) => s.id === BLOCKED);
+      if (todoNow && todoNow.category !== 'ready') await save({ ...todoNow, category: 'ready' });
+      if (blockedNow && blockedNow.category !== 'paused') await save({ ...blockedNow, category: 'paused' });
+      await sql.unsafe(`delete from tasks where id like 'status-origin-%'`);
+      if (home) await sql.unsafe(`delete from task_statuses where id = $1`, [home]);
+      await sql.close();
+    }
+  });
+
   // A ready-category origin is the other half of the mapping: a delete must land the
   // recorded home on THAT category's built-in row, never on in-review (a wrong category
   // would restore a plain gated task into the review flow).
@@ -242,10 +311,17 @@ test.describe('status origin memory (#432)', () => {
       expect(res.status()).toBe(200);
       const home = ((await res.json()) as { json: Saved }).json.id;
       const blocked = `status-origin-ready-${suffix}`;
+      // a BLOCKED seed needs an OPEN child, or the repair's post-commit re-gate
+      // legitimately restores it (children all terminal) and clears the asserted origin
       await sql.unsafe(
         `insert into tasks (id, title, status, pre_block_status, created_at, updated_at)
          values ($1, $1, $2, $3, now(), now())`,
         [blocked, BLOCKED, home],
+      );
+      await sql.unsafe(
+        `insert into tasks (id, title, status, parent_task_id, created_at, updated_at)
+         values ($1, $1, $2, $3, now(), now())`,
+        [`${blocked}-c`, DOING, blocked],
       );
       const removed = await page.request.post('/rpc/statuses/remove', { data: { json: { id: home } } });
       expect(removed.status()).toBe(200);

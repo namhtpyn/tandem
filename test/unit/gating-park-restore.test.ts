@@ -438,7 +438,7 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(parkedSql.params).toContain(STATUS.inReview);
   });
 
-  it('a gated (non-parked) restore requires NO park to have appeared (#419)', async () => {
+  it('a gated (non-parked) restore requires NO park to have appeared (#419) and pins the origin it read (#432)', async () => {
     row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     await refreshParentGating('p');
@@ -448,6 +448,12 @@ describe('GUARDED GATING WRITE (#208)', () => {
       .where(h.writeLog[0]?.cond as never)
       .toSQL();
     expect(gatedSql.sql.replace(/\s+/g, ' ').toLowerCase()).toContain('"tasks"."park_from_status" is null');
+    // #432: the gated origin is REWRITABLE on a blocked row (statuses.remove re-homes a
+    // deleted home), so a restore that resolved its target from the pre-rewrite id must
+    // lose the CAS — otherwise it writes the stale target (a deleted id = ghost task).
+    const gatedWhere = gatedSql.sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(gatedWhere, 'the restore pins the block origin it read').toContain('"tasks"."pre_block_status" =');
+    expect(gatedSql.params).toContain(STATUS.inReview);
   });
 
   it('a concurrent owner settle inside the status-map window owns the outcome: no restore, no replay, walk stops', async () => {
