@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   realGating: false,
   /** the task's children, read by the real gating walk */
   children: [] as Array<{ status: string }>,
+  /** one-shot barrier inside the real gating walk's children read (await-shape pin) */
+  barrier: null as null | { promise: Promise<void>; release: () => void },
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -158,8 +160,10 @@ vi.mock('../../server/db/index', async () => {
                   parentTaskId: null,
                 }
               : null,
-          findMany: async (args: { where: { parentTaskId: { eq: string } } }) =>
-            args.where.parentTaskId.eq === h.task.id ? h.children : [],
+          findMany: async (args: { where: { parentTaskId: { eq: string } } }) => {
+            if (h.barrier) await h.barrier.promise;
+            return args.where.parentTaskId.eq === h.task.id ? h.children : [];
+          },
         },
       },
     },
@@ -262,6 +266,7 @@ beforeEach(() => {
   h.warnings = [];
   h.realGating = false;
   h.children = [];
+  h.barrier = null;
 });
 
 describe('off-review settle refusal (#401)', () => {
@@ -537,6 +542,27 @@ describe('settle exhausts the gating context and re-gates (#423)', () => {
     const blockWrite = h.flips.at(-1)?.set ?? {};
     expect(blockWrite.status).toBe(STATUS.blocked);
     expect(blockWrite.preBlockStatus).toBe(STATUS.done);
+  });
+
+  it('the re-gate is AWAITED: the settle does not resolve before the gating walk completes (#426 r3)', async () => {
+    // fire-and-forget (`void refreshParentGating(...).catch()`) would let the verdict
+    // return — and publish — before the re-block lands; park the walk on a barrier and
+    // prove the settle is still pending behind it
+    h.realGating = true;
+    h.children = [{ status: STATUS.doing }];
+    let release!: () => void;
+    h.barrier = { promise: new Promise<void>((r) => (release = r)), release: () => release() };
+    let settled = false;
+    const running = recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human').then((v) => {
+      settled = true;
+      return v;
+    });
+    await new Promise((r) => setTimeout(r, 50)); // every other await drains; this one cannot
+    expect(settled).toBe(false);
+    h.barrier = null;
+    release();
+    await expect(running).resolves.toEqual({ outcome: 'done' });
+    expect(h.flips.at(-1)?.set.status).toBe(STATUS.blocked);
   });
 
   it('a failing re-gate is logged, never surfaced — the committed settle stands', async () => {

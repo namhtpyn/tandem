@@ -497,6 +497,22 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
+  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones, and
+  // do it IMMEDIATELY after the won flip — this flip changed the task's status, so a
+  // still-open child must re-block it FROM the landed status and a task that was its
+  // parent's last open child must release that parent's gate whatever it landed in.
+  // IMMEDIATE is load-bearing: the teardown below has five awaited writes and any of
+  // them can throw, after which no retry can re-gate (the task already left the in-review
+  // category, so the CAS cannot re-win and a terminal landing short-circuits on the
+  // residue heal) — the parent would stay gated with zero open children. Best-effort:
+  // the flip already committed, so a gating failure is logged, never surfaced. Dynamic
+  // import keeps the module graph acyclic at load time.
+  try {
+    const { refreshParentGating } = await import('./gating.service');
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
   // TRIGGER LAST (#365 r6): the void row is the ONLY thing the boot/removal scans key
   // on, so every write that can fail runs BEFORE it is erased — a crash mid-teardown
   // leaves the signature intact and the next trigger retries the whole settle.
@@ -518,18 +534,6 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     { roundClosed: true, round, reviewersRemoved: true },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-  // SETTLE-CLEARS-GATING (#423): re-gate every landing, not only the terminal ones —
-  // this flip changed the task's status, so a still-open child must re-block it FROM
-  // the landed status and a task that was its parent's last open child must release
-  // that parent's gate whatever it landed in. Best-effort: the flip already committed,
-  // so a gating failure is logged and never surfaced to the caller. Dynamic import
-  // keeps the module graph acyclic at load time.
-  try {
-    const { refreshParentGating } = await import('./gating.service');
-    await refreshParentGating(taskId);
-  } catch (e) {
-    log.warn(`settle: re-gate after the round close failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-  }
   return true;
 }
 
@@ -1931,14 +1935,14 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
       status,
       updatedAt: new Date(),
       // ORIGIN EXHAUSTION (#423): the flip ENDS the round's machine context, so the same
-      // write exhausts it. A surviving pre_block_status is gating drift: a decided round
-      // settles out of a child-derived block with an open child still present, and the
-      // stale in-review origin both reads as "the flow still owns a live round" and
-      // makes the NEXT block's restore land in review with a closed round (nothing
-      // dispatches it — the dispatcher scans ready only). A surviving park origin is the
-      // same lie for a settled park. The ladder is reset with it (the settled-round law
-      // settleExtinguishedRound already applies): a settled round must never hand a
-      // spent re-arm ledger to the task's next park.
+      // write exhausts it. A surviving origin is drift: an origin is the restore home of
+      // a block that exists, and every discriminator resolves those columns on a PAUSED
+      // row only — so a non-blocked row carrying one is exactly the shape the #419 arms
+      // defend against promoting (they keep the block arm recording `cur.status`, never a
+      // surviving memory). The ladder reset is the load-bearing half: parkRound
+      // INCREMENTS a surviving ledger, so a settled round must never hand its spent
+      // re-arm ladder to the task's next park (a mid-ladder start, or a FINAL park with
+      // no auto-recovery).
       preBlockStatus: null,
       parkFromStatus: null,
       parkRearmAttempts: 0,
@@ -2512,9 +2516,9 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     // the status term alone cannot arbitrate two failure arms parking one round (each
     // would land a park and burn a ladder rung) — the unwritten park memory is that
     // branch's arbiter. It is scoped to the block branch on purpose: an in-review task
-    // can legally carry a stale park origin (a settle-matrix flip out of a park writes
-    // only the status; a resubmit brings the origin back), and refusing there would
-    // wedge every later park of that round.
+    // can legally carry a stale park origin (a resubmit of a task whose block/park memory
+    // an egress left behind — #427 covers the two non-settle egresses), and refusing
+    // there would wedge every later park of that round.
     .where(
       and(
         eq(tasks.id, taskId),

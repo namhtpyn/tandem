@@ -406,7 +406,14 @@ describe('settleExtinguishedRound (#365)', () => {
       ],
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
-    expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.cancelled);
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.set.status).toBe(STATUS.cancelled);
+    // the clears are arm-INDEPENDENT: pin them on this arm too, or a branch-conditional
+    // clear regresses silently here (#426 r3)
+    expect(flip?.set.preBlockStatus).toBeNull();
+    expect(flip?.set.parkFromStatus).toBeNull();
+    expect(flip?.set.parkRearmAttempts).toBe(0);
+    expect(flip?.set.parkRearmAfter).toBeNull();
     // every landing re-gates, the cancelled one included (#423)
     expect(h.regated).toEqual([{ taskId: 'task-1', status: STATUS.cancelled }]);
   });
@@ -477,6 +484,9 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(
       h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED),
     ).toHaveLength(0);
+    // ... and a LOST flip re-gates nothing: the owner's move owns the outcome and
+    // propagates gating itself (a re-gate here would re-block/re-home the owner's row)
+    expect(h.regated).toEqual([]);
   });
 });
 

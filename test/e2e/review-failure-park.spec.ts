@@ -373,6 +373,16 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
       .poll(() => countRuns(), { timeout: 15_000, intervals: [500, 1000, 2000] })
       .toBeGreaterThanOrEqual(before + 1); // the re-arm re-minted the reviewer's turn
 
+    // the RESUME keeps the ledger (PARK-REARM LAW: the unblock arm never rewrites it) —
+    // read it HERE, before the settle, so the settle's zero cannot stand in for a reset
+    // that a restore might have done (#426 r3)
+    const resumed = await sql3`
+      select park_rearm_attempts::int as attempts, park_rearm_after is not null as scheduled
+      from tasks where id = ${taskId}
+    `;
+    expect(Number(resumed[0]!.attempts)).toBe(1);
+    expect(resumed[0]!.scheduled).toBe(true);
+
     // the re-fired turn settles verdict-less; the per-round bound's corrected
     // re-dispatch (#276) then carries the CORRECTION block and the corrected script
     // settles the round — the ladder recovered it, no owner action, no re-park
