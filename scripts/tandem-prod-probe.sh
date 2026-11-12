@@ -37,17 +37,20 @@ own_predicate() {
 # The 5f strand-shape SQL, factored so the live pass, --selfcheck and --strand-sql share
 # ONE copy: the arms' regression test executes exactly these bytes against a seeded test
 # database, so the detector is pinned by the SQL that ships, never a test-side copy.
-# #424: the wedge arm's inner set gains the gating-block branch — a block recording an
-# in-review home whose CURRENT round is closed (no PENDING row naming a reviewer in
-# max(round) — a NULL-reviewer void row is not a live round, the #365 shape — at least
-# one verdict row in it) with that verdict NEWER than the task's last write. The
-# discriminator is load-bearing here too: a legal re-queue into an in-review status over
-# an already-decided round carries its verdict BEFORE the move and the later block (a
-# child opening then records that home, block write last), while a lost settle flip has
-# the block write first and the killing verdict after it (recordVerdict touches no task
-# row). A park carries park_from_status, a hand-made block writes no origin, and a
-# settle re-blocks from the LANDED status; the two non-settle block egresses (#427)
-# leave a non-paused row, so no paused-row arm reads them.
+# #424: the wedge arm's inner set gains the gating-block branch. BOTH branches read the
+# CURRENT round only: no PENDING row in max(round) (any PENDING row there — a
+# NULL-reviewer void row from a removed reviewer included — means the round is still
+# suspended and its block restore settles it, never a wedge) and the newest VERDICT row
+# of that round NEWER than the task's last write. The discriminator is load-bearing here
+# too: a legal re-queue into an in-review status over an already-decided round carries
+# its verdict BEFORE the move and the later block (a child opening then records that
+# home, block write last), while a lost settle flip has the block write first and the
+# killing verdict after it (the verdict ROW is written before the flip's task write).
+# A park carries park_from_status and owns its round — a parked round that closed is the
+# same lost-flip shape and is OUT of this arm by declaration (#431). The two non-settle
+# block egresses (#427) leave a non-paused row, so no paused-row arm reads them. An
+# origin that no longer RESOLVES (its status was deleted after the block recorded it) is
+# out of scope too — #432 tracks that strand.
 # RESIDUAL (both branches, #430): a task write AFTER the killing verdict masks the shape
 # — the child-restore that lands the task back in review writes updated_at past the
 # verdict and reads as a legal manual move. Pre-existing for the in_review branch since
@@ -77,7 +80,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ -n "$(own_block_predicate 2.78.20 2)" ] || { echo "selfcheck fail: block on"; exit 1; }
   [ -z "$(own_block_predicate 2.78.20 1)" ] || { echo "selfcheck fail: block column gate"; exit 1; }
   [ -z "$(own_block_predicate '' 2)" ] || { echo "selfcheck fail: block empty version"; exit 1; }
-  STR_ON=$(strand_sql 2.78.20 2); STR_OFF=$(strand_sql 2.78.19 2)
+  STR_ON=$(strand_sql 2.78.20 2)
   WEDGE_ON=$(strand_wedge_arm 2.78.20 2); WEDGE_OFF=$(strand_wedge_arm 2.78.19 2)
   printf '%s' "$STR_ON" | grep -qF "select 'lostsettle'" || { echo "selfcheck fail: strand lostsettle arm"; exit 1; }
   printf '%s' "$WEDGE_ON" | grep -qF "select 'wedge'" || { echo "selfcheck fail: strand wedge arm"; exit 1; }
@@ -87,6 +90,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(printf '%s' "$WEDGE_OFF" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: wedge floor discriminator"; exit 1; }
   [ "$(printf '%s' "$WEDGE_ON" | grep -oF "r.status = 'PENDING' and r.round = (select max(r3.round)" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge live-round clause (both branches)"; exit 1; }
   [ "$(printf '%s' "$WEDGE_ON" | grep -oF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge verdict scope (both branches)"; exit 1; }
+  [ "$(printf '%s' "$WEDGE_ON" | grep -oF "and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: wedge verdict round binding (both branches)"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "park_from_status" && { echo "selfcheck fail: wedge block branch not gated"; exit 1; }
   printf '%s' "$WEDGE_OFF" | grep -qF "select 'wedge'" || { echo "selfcheck fail: wedge floor"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
@@ -445,7 +449,7 @@ elif [ "$STRCOL" = "1" ]; then
     # VERSION FLOOR: the sweep ships in 2.78.13 — on an older image the crash-window shape
     # is real and the sweep does not exist yet, so the arm stays silent (it would
     # misattribute cause) and leaves no state behind. The #419 block branch is gated in
-    # OWN above (2.78.20), so this floor keeps the older in-review detector alive.
+    # inside strand_sql (2.78.20), so this floor keeps the older in-review detector alive.
     STALLFLOOR=2.78.13
     STALL_ARM=0
     if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$STALLFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then STALL_ARM=1; fi
@@ -465,7 +469,7 @@ elif [ "$STRCOL" = "1" ]; then
     # VERSION FLOOR: the replay sweep ships in 2.78.18 — on an older image a DONE run
     # whose settle was lost is real and nothing heals it yet, so the arm stays silent
     # (it would misattribute cause) and leaves no state behind. The #419 block branch is
-    # gated in OWN above (2.78.20).
+    # gated inside strand_sql (2.78.20).
     LOSTFLOOR=2.78.18
     LOST_ARM=0
     if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$LOSTFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then LOST_ARM=1; fi

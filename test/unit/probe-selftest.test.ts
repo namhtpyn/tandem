@@ -48,10 +48,15 @@ describe('prod probe selfcheck', () => {
     expect(noColumns).not.toContain('park_from_status');
   });
 
-  it('writes no probe state in the emit mode (SPEC: no state writes)', async () => {
-    const dir = `${process.env.TMPDIR ?? '/tmp'}/probe-strand-${crypto.randomUUID()}`;
-    const proc = await $`bash ${script} --strand-sql 2.78.20 2`.env({ TANDEM_PROBE_STATE: dir }).nothrow().quiet();
-    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
-    expect(existsSync(dir)).toBe(false);
+  it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
+    // The DEFAULT state path derives from TANDEM_PROFILE_DIR — override THAT, so a broken
+    // derivation cannot pass by writing the real prod trail (an overridden PROBE_STATE
+    // alone would only prove the override works).
+    for (const mode of [['--strand-sql', '2.78.20', '2'], ['--selfcheck']]) {
+      const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
+      const proc = await $`bash ${script} ${mode}`.env({ TANDEM_PROFILE_DIR: profile }).nothrow().quiet();
+      expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+      expect(existsSync(profile), `${mode[0]} must not create the state directory`).toBe(false);
+    }
   });
 });

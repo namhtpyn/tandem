@@ -1067,14 +1067,19 @@ non-positive deltas render no duration.
   last (a manual re-queue into an in-review status over an already-decided round
   puts the verdict BEFORE the move and the later block, and a hand-made block
   writes no origin), while a lost settle flip has the block write first and the
-  killing verdict after it (`recordVerdict` touches no task row). A `park` carries
-  `park_from_status` and owns its round: a parked round that closed is OUT of this
-  arm's scope (#431), and the two non-settle block egresses (#427) leave a
-  non-paused row, so no paused-row arm reads them. BOTH branches share one
-  RESIDUAL: a task-row write AFTER the killing verdict masks the shape (the
-  child-restore that lands the task back in review writes `updated_at` past the
-  verdict and reads as a legal manual move) — pre-existing for the in_review
-  branch and tracked, with the activity-stamp design that removes it, in #430.
+  killing verdict after it (the verdict ROW is written before the flip's task write,
+  as separate statements). A `park` carries
+  `park_from_status` and owns its round: a parked round that closed is the SAME
+  lost-flip shape and is deliberately OUT of this arm (#431), and the two
+  non-settle block egresses (#427) leave a non-paused row, so no paused-row arm
+  reads them; an origin that no longer RESOLVES (its status was deleted after the
+  block recorded it) is out of scope as well (#432). BOTH branches share one
+  RESIDUAL: ANY task-row write after the killing verdict masks the shape — the
+  child-restore that lands the task back in review, a title/assignee edit, the
+  note-dispatch flip, a park-re-arm bump — because each stamps `updated_at` past
+  the verdict and the row reads as a legal manual move; pre-existing for the
+  in_review branch and tracked, with the activity-stamp design that removes it,
+  in #430.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),

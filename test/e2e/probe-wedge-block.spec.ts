@@ -50,6 +50,8 @@ test.describe('prod probe wedge arm (#424)', () => {
       const inReviewWedge = `probe-wedge-ir-${crypto.randomUUID()}`; // fires: in_review branch
       const inReviewManual = `probe-wedge-irm-${crypto.randomUUID()}`; // legal: verdict older than write
       const inReviewLive = `probe-wedge-irl-${crypto.randomUUID()}`; // legal: the in_review round is live
+      const inReviewVoid = `probe-wedge-irv-${crypto.randomUUID()}`; // legal: a void row suspends the in_review round
+      const inReviewOldVerdict = `probe-wedge-iro-${crypto.randomUUID()}`; // legal: only an OLD round has a verdict
 
       // task write age (minutes ago) per seed; the wedge needs the verdict NEWER than it
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
@@ -76,6 +78,8 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: inReviewWedge, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewManual, status: IN_REVIEW, pre: null, park: null, written: 1 },
           { id: inReviewLive, status: IN_REVIEW, pre: null, park: null, written: 5 },
+          { id: inReviewVoid, status: IN_REVIEW, pre: null, park: null, written: 5 },
+          { id: inReviewOldVerdict, status: IN_REVIEW, pre: null, park: null, written: 5 },
         ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -130,6 +134,12 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedReview(inReviewManual, 'APPROVED', 10);
       await seedReview(inReviewLive, 'APPROVED', 1, 10, 1, null);
       await seedReview(inReviewLive, 'PENDING', null, 1, 1, adminId);
+      await seedReview(inReviewVoid, 'APPROVED', 1);
+      await seedReview(inReviewVoid, 'PENDING', null, 1);
+      // current round carries no verdict (only a stale teardown row) — the older round's
+      // verdict must not stand in for it (the verdict subquery is round-bound)
+      await seedReview(inReviewOldVerdict, 'APPROVED', 1);
+      await seedReview(inReviewOldVerdict, 'SUPERSEDED', null, 10, 2);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
