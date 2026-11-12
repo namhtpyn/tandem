@@ -303,6 +303,18 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('the unblock restore never rewrites the park re-arm ledger (#423: the settle does, the resume does not)', async () => {
+    // PARK-REARM LAW (#211): attempts survive a resume — the retry cycle is bounded by
+    // the ledger, so a restore that zeroed it would restart the ladder from rung 1
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAttempts: 2 });
+    h.childrenByParent.set('p', []);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    const set = h.updates[0]?.set ?? {};
+    expect('parkRearmAttempts' in set).toBe(false);
+    expect('parkRearmAfter' in set).toBe(false);
+  });
+
   it('a task carrying a STALE pre-block origin re-blocks with its OWN status as the home (#419)', async () => {
     // a flip out of a block writes only the status, so a non-BLOCKED row can carry a
     // stale pre_block_status — promoting it would restore the task to a category it no
@@ -312,6 +324,34 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     await refreshParentGating('p');
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.todo);
+  });
+
+  it('a TERMINAL settle that still owns an open child re-blocks from its OWN settled status (#423)', async () => {
+    // the settle flip exhausts the origins, so the re-gate it triggers must derive the
+    // block from the status the flip just wrote — a done task whose child is still open
+    // is blocked again with `done` as its recorded home (never the pre-flip in-review id)
+    row('p', { status: STATUS.done });
+    h.childrenByParent.set('p', [{ status: STATUS.doing }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+    expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.done);
+  });
+
+  it('the ancestor walk releases a blocked parent only for a TERMINAL landing (#423)', async () => {
+    // the settled status is what the walk reads: a returned-to-todo child keeps its
+    // parent's open count — only a terminal landing lowers it and releases the gate
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.todo });
+    row('c', { status: STATUS.todo, parentTaskId: 'p' });
+    h.childrenByParent.set('p', [{ status: STATUS.todo }]);
+    h.childrenByParent.set('c', []);
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(0); // non-terminal landing: nothing released
+    h.taskRows.set('c', { ...h.taskRows.get('c'), status: STATUS.done });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // the recorded home restores
   });
 
   it('a WITHHELD decision park still lets the walk re-derive its ancestors (#419)', async () => {
