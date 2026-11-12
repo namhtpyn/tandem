@@ -1,16 +1,16 @@
 import { os } from '@orpc/server';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
+import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
 import {
   ORPCError,
   adminProcedure,
@@ -19,6 +19,26 @@ import {
   protectedProcedure,
   publishChange,
 } from '../kernel/kernel';
+
+/** STATUS-ORIGIN MEMORY LAW (#432, SPEC "STATUS FREEDOM / CATEGORY-GATE LAW"): a
+ *  machine origin (tasks.pre_block_status / tasks.park_from_status) is a raw id with no
+ *  FK whose CATEGORY every reader resolves — the settle flip's machine-home term, the
+ *  unblock restore target, the review-turn mint gate, both recovery sweeps and the
+ *  probe. A status mutation must therefore never leave a recorded home naming no row:
+ *  a removal RE-HOMES every recorded reference onto the canonical built-in status of
+ *  the SAME category inside the delete's own transaction. 'backlog' has no built-in
+ *  row, so a removal that would orphan a block there refuses instead of guessing a
+ *  different category (the #88 to-do demotion is the restore path's job, never the
+ *  delete's). */
+const CANONICAL_BY_CATEGORY: Record<string, string> = {
+  [CATEGORY.READY]: STATUS.todo,
+  [CATEGORY.WORKING]: STATUS.doing,
+  [CATEGORY.PAUSED]: STATUS.blocked,
+  [CATEGORY.WAITING_ANSWER]: STATUS.waitingAnswer,
+  [CATEGORY.IN_REVIEW]: STATUS.inReview,
+  [CATEGORY.DONE]: STATUS.done,
+  [CATEGORY.CANCELLED]: STATUS.cancelled,
+};
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -70,6 +90,43 @@ export const statusesRouter = os.router({
         updatedAt: now,
       };
       await db.transaction(async (tx) => {
+        // STATUS-ORIGIN MEMORY LAW (#432): a CATEGORY change re-keys every reader that
+        // resolves this status as a recorded block/park home (the settle flip's
+        // machine-home term, the restore target) — a blocked task would then restore
+        // into the wrong category and a live round would be bypassed. Refuse while a
+        // BLOCKED task records it as its home; a stale reference on a non-paused row
+        // (the #427 egress leftovers) is inert and never gates an edit. Name, colour
+        // and position edits stay free — only the category is load-bearing.
+        const existing = (
+          await tx
+            .select({ category: taskStatusesTable.category })
+            .from(taskStatusesTable)
+            .where(eq(taskStatusesTable.id, id))
+        )[0];
+        if (existing && existing.category !== input.category) {
+          const pausedIds = (
+            await tx
+              .select({ id: taskStatusesTable.id })
+              .from(taskStatusesTable)
+              .where(eq(taskStatusesTable.category, CATEGORY.PAUSED))
+          ).map((s) => s.id);
+          const homes =
+            pausedIds.length === 0
+              ? []
+              : await tx
+                  .select({ id: tasksTable.id })
+                  .from(tasksTable)
+                  .where(
+                    and(
+                      inArray(tasksTable.status, pausedIds),
+                      or(eq(tasksTable.preBlockStatus, id), eq(tasksTable.parkFromStatus, id)),
+                    ),
+                  );
+          if (homes.length > 0)
+            throw new ORPCError('BAD_REQUEST', {
+              message: `status is the recorded home of ${homes.length} blocked task(s) — unblock them before changing its category`,
+            });
+        }
         // transitions must reference existing statuses (self ok) — validated against the same snapshot we upsert
         const all = await tx.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
         const ids = new Set([...all.map((a) => a.id), id]);
@@ -102,6 +159,15 @@ export const statusesRouter = os.router({
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
     }
     await db.transaction(async (tx) => {
+      // the row is the category source for the origin re-home below; a missing row is
+      // the NOT_FOUND the delete used to answer (same message)
+      const statusRow = (
+        await tx
+          .select({ id: taskStatusesTable.id, category: taskStatusesTable.category })
+          .from(taskStatusesTable)
+          .where(eq(taskStatusesTable.id, input.id))
+      )[0];
+      if (!statusRow) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
       const inUse = await tx.query.tasks.findMany({
         columns: { id: true },
         where: { status: { eq: input.id } },
@@ -109,6 +175,27 @@ export const statusesRouter = os.router({
       });
       if (inUse.length > 0)
         throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` });
+      // STATUS-ORIGIN MEMORY LAW (#432): a recorded block/park home is a raw id with no
+      // FK — deleting the row without re-homing strands every block that recorded it
+      // (the settle flip's machine-home term stops matching, the round closes with no
+      // task write, the restore falls the unknown id back to to-do). Re-home EVERY
+      // recorded reference in this same transaction, before the row disappears; the
+      // category has to survive the move, so one without a built-in status refuses.
+      // Stale references on non-paused rows (#427 egress leftovers) ride along: they
+      // are inert drift, and leaving them would state a home that no longer exists.
+      const refs = await tx
+        .select({ id: tasksTable.id })
+        .from(tasksTable)
+        .where(or(eq(tasksTable.preBlockStatus, input.id), eq(tasksTable.parkFromStatus, input.id)));
+      if (refs.length > 0) {
+        const home = CANONICAL_BY_CATEGORY[statusRow.category];
+        if (!home)
+          throw new ORPCError('BAD_REQUEST', {
+            message: `status is the recorded home of ${refs.length} task(s) and category '${statusRow.category}' has no built-in status`,
+          });
+        await tx.update(tasksTable).set({ preBlockStatus: home }).where(eq(tasksTable.preBlockStatus, input.id));
+        await tx.update(tasksTable).set({ parkFromStatus: home }).where(eq(tasksTable.parkFromStatus, input.id));
+      }
       const del = await tx
         .delete(taskStatusesTable)
         .where(eq(taskStatusesTable.id, input.id))
