@@ -303,6 +303,36 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]);
   });
 
+  it('a task carrying a STALE pre-block origin re-blocks with its OWN status as the home (#419)', async () => {
+    // a flip out of a block writes only the status, so a non-BLOCKED row can carry a
+    // stale pre_block_status — promoting it would restore the task to a category it no
+    // longer belongs to (a closed round would land back in-review)
+    row('p', { status: STATUS.todo, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.todo }]);
+    await refreshParentGating('p');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.preBlockStatus).toBe(STATUS.todo);
+  });
+
+  it('a WITHHELD decision park still lets the walk re-derive its ancestors (#419)', async () => {
+    // 'withheld' is not a lost race: the parked row stays blocked and counts as an open
+    // child, so its parent must be re-gated in the same walk
+    row('c', {
+      status: STATUS.blocked,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+      parentTaskId: 'p',
+    });
+    row('p', { status: STATUS.inReview });
+    h.childrenByParent.set('c', [{ status: STATUS.done }]); // c's own children terminal
+    h.childrenByParent.set('p', [{ status: STATUS.blocked }]); // c is still open
+    await refreshParentGating('c');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked); // the parent re-derives
+    expect(h.replayed).toEqual([]);
+  });
+
   it('a working task carrying a STALE park origin blocks with its OWN status as the home (#419)', async () => {
     // the settle-matrix flip leaves the stale origin behind; promoting it here would
     // record a home for a round that is not live (the restore would land in-review and

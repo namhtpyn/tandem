@@ -194,12 +194,13 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
     });
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
-      // pre-block memory: an existing pre_block_status wins; else the task's OWN
-      // current status. A stale park origin is NOT a fallback here (#419): the gate
-      // clears it in this same write, and promoting it would record a home for a round
-      // that is not live (the settle-matrix flip left the origin behind). The block arm
-      // never fires on BLOCKED, so the status term can never record BLOCKED itself.
-      const pre = cur.preBlockStatus ?? cur.status;
+      // the home this block records is the task's OWN current status (#419). An
+      // existing pre_block_status here is stale by construction — the restore clears
+      // both origins and a flip out of a block writes only the status, so on a
+      // non-BLOCKED row any surviving origin is a leftover; promoting it would restore
+      // the task to a category it no longer belongs to. (The arm never fires on BLOCKED,
+      // so the recorded home can never be BLOCKED itself.)
+      const pre = cur.status;
       // GUARDED GATING WRITE (#208): one conditional flip — a row that flipped BLOCKED
       // between the read and this write (a park, another gate) wins; zero rows = the
       // concurrent writer owns the outcome and its own thread note
@@ -216,10 +217,11 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
       }
     } else if (open === 0 && cur.status === BLOCKED_STATUS && (cur.preBlockStatus || cur.parkFromStatus)) {
-      // the unblock arm (leaf helper): 'lost' means a concurrent writer owns the
-      // outcome and 'withheld' means the round's own park waits for its owner — either
-      // way this row is still blocked, so the walk stops (the winner re-gates itself)
-      if ((await restoreUnblocked(cur, ex)) !== 'restored') break;
+      // the unblock arm (leaf helper): a 'lost' CAS means a concurrent writer owns the
+      // outcome and the walk stops (the winner re-gates itself). A WITHHELD park is not
+      // a lost race — the row is still blocked and counts in its parent's open set, so
+      // the walk continues and the ancestors re-derive (#419).
+      if ((await restoreUnblocked(cur, ex)) === 'lost') break;
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({
