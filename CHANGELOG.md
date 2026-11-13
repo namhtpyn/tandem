@@ -1,3 +1,14 @@
+## [2.78.31](https://github.com/namhtpyn/tandem/compare/v2.78.30...v2.78.31) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#454](https://github.com/namhtpyn/tandem/issues/454) — CATEGORY-OWNERSHIP AT FLIP: openReviewRound key-shares the landing status row as the tx's first lock and re-verifies its category; a left-in_review status declines the mint (declined:'category') — submit routes the decline through its zero-review completion, the heal bails with the honest note, no round mints under a category the review flow no longer owns; pins at service + submit-route + heal-boundary levels ([ca79fb9](https://github.com/namhtpyn/tandem/commit/ca79fb9ef4c7462f7cd88667d4f9b85ae087bf99))
+* [#454](https://github.com/namhtpyn/tandem/issues/454) r2 — blind-review r1 lens-A P1 ACCEPTED: a row-level FOR KEY SHARE cannot serialize a category re-key (non-key UPDATE = FOR NO KEY UPDATE, no conflict with FOR KEY SHARE) — the round-open tx's FIRST statement now takes the status-mutation advisory mutex (the same pg_advisory_xact_lock statuses.save/removal serialize on) and re-verifies the landing row's category under it; P2/P3s: mutex-first ordering pinned, decline teardown ledger names the real reason, post-flip manual-move-out ride pinned at the resume live arm ([c938064](https://github.com/namhtpyn/tandem/commit/c93806422beceee77714ab34d8a4627680b4ff58))
+* [#454](https://github.com/namhtpyn/tandem/issues/454) r3 — blind-review r2 P3s: the decline-routed submit completion notes WHY in the thread (parity with the heal's decline arm) and the submit test header no longer describes the r1 key-share mechanism (stale prose was a restore-the-r1 trap); vacuity: the mutex/ordering pin already proven red-with-guard-out ([16f3f4e](https://github.com/namhtpyn/tandem/commit/16f3f4e26d56f7505e9dd8df07ee84f7788b5a80))
+* [#454](https://github.com/namhtpyn/tandem/issues/454) r4 — blind-review r3 P3s: the decline note moves INSIDE the zero-review completion arm (after its CAS — a lost completion never strands a note on an outcome the submit does not own) and the last three r1 key-share prose spots are corrected ([403fc19](https://github.com/namhtpyn/tandem/commit/403fc19eca488f152d85124bfcaf2bf055382e03))
+* [#454](https://github.com/namhtpyn/tandem/issues/454) r5 — blind-review r4: the last stale r1 docstring corrected (OpenedRound.declined names the mutex, not the key share) ([7d4636f](https://github.com/namhtpyn/tandem/commit/7d4636f4ae482991a6b55c15db082fd3b3a10f43))
+
 ## [2.78.30](https://github.com/namhtpyn/tandem/compare/v2.78.29...v2.78.30) (2026-11-13)
 
 
