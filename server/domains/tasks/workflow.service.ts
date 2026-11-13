@@ -508,14 +508,23 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // submit never tears down a round the winner still owns; closes EVERY pending round.
   // The same arm completes a submit whose reviewers ALL vanished inside the round-open
   // transaction (#364): nothing was minted, so there is no round to settle.
-  const completeWithoutReviewers = async () => {
+  const completeWithoutReviewers = async (teardownReason = 'no live reviewers', declineNote?: string) => {
     const done = await db
       .update(tasks)
       .set({ status: DONE_STATUS, updatedAt: new Date() })
       .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
       .returning({ id: tasks.id });
     if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
-    await teardownAllPendingRounds(taskId, 'no live reviewers');
+    await teardownAllPendingRounds(taskId, teardownReason);
+    if (declineNote) {
+      // AFTER the won CAS (the arm's own discipline): a lost completion must not
+      // strand a note on an outcome this submit does not own
+      try {
+        await logActivity(taskId, ACTIVITY_KIND.NOTE, authorId, declineNote, {});
+      } catch (e) {
+        log.warn(`submit: decline note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+      }
+    }
     await noteSkipped();
     await refreshParentGating(taskId);
     return { status: DONE_STATUS };
@@ -536,7 +545,16 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     droppedInRound = opened.dropped.length;
     // every reviewer vanished inside the round-open transaction (#364): nothing was
     // minted and no flip landed — complete exactly like zero survivors.
-    if (opened.opened === 0) return await completeWithoutReviewers();
+    if (opened.opened === 0) {
+      const declined = opened.declined === 'category';
+      // the honest thread note (parity with the heal's decline arm): the roster was
+      // live, so no skip note would otherwise explain why review never started —
+      // written by the arm AFTER its CAS so a lost completion never strands it
+      return await completeWithoutReviewers(
+        declined ? 'review status left the in_review category' : undefined,
+        declined ? 'review cannot start — this status is no longer in the review category' : undefined,
+      );
+    }
     // TERMINAL ARBITRATION mirror (#287, #292 r1): a won abandon/settle between the gate
     // read and the flip owns the outcome; this call refuses with the error surfaced and
     // wrote nothing at all.
@@ -544,7 +562,9 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // working-category task (the r1 rethrow owns that window), so a disarm would only
     // ever strip a CONCURRENT round's legitimate park recovery state — the re-arm scan
     // and the park-origin restore both depend on those columns.
-    if (!opened.flipped) throw new Error('task state changed during submit — a settle owns the outcome');
+    if (!opened.flipped) {
+      throw new Error('task state changed during submit — a settle owns the outcome');
+    }
     // best-effort BETWEEN the commit and the dispatch (#394 r6): a throw here must not
     // skip the reviewer turn — the round is already the outcome, and a live round with a
     // PENDING row and no run in flight has no automatic recovery. Each step is isolated
