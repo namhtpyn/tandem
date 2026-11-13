@@ -8,8 +8,9 @@
 // dispatchTask is captured — every other runner export stays REAL.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REVIEW_CORRECTION_MARKER } from '../../server/domains/tasks/brief.service';
 import { RUN_STATUS } from '#shared/enums';
+
+import { REVIEW_CORRECTION_MARKER } from '../../server/domains/tasks/brief.service';
 
 const h = vi.hoisted(() => ({
   startAt: new Date('2026-11-13T00:00:00Z'),
@@ -171,7 +172,14 @@ const correctionRun = () => ({
 
 const failedCorrectionFinish = async () => {
   const writer = createRunWriter('run-1', '', 'msg-1');
-  await writer.finish('task-1', RUN_STATUS.FAILED, 1, { review: { resultBody: '' }, ai: { userId: 'rev-1' } }, [], h.startAt);
+  await writer.finish(
+    'task-1',
+    RUN_STATUS.FAILED,
+    1,
+    { review: { resultBody: '' }, ai: { userId: 'rev-1' } },
+    [],
+    h.startAt,
+  );
 };
 
 const lastDispatch = () => h.dispatchCalls[h.dispatchCalls.length - 1];

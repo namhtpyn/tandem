@@ -1302,10 +1302,7 @@ export async function rearmUndeliveredCorrection(taskId: string, runId: string):
     if (!binding) return;
     rearmReviewMintIntent(taskId, run.employeeId, binding.round);
   } catch (e) {
-    consola.warn(
-      `correction re-arm read failed for task ${taskId} run ${runId}:`,
-      e instanceof Error ? e.message : e,
-    );
+    consola.warn(`correction re-arm read failed for task ${taskId} run ${runId}:`, e instanceof Error ? e.message : e);
   }
 }
 
