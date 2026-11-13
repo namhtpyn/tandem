@@ -870,9 +870,12 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/orphanhome.alerted"
     fi
     printf '%s\n' "${ORPHANHOME:-none}" > "$PROBE_STATE/orphanhome.prev"
-    # (g) ready-category task owning a PENDING row of its CURRENT round (#443): the parked
-    # round a legal egress left behind — no sweep reaches a ready task (stalled-review and
-    # lost-settle require review-flow ownership), so the reviewer never decides. Below the
+    # (g) ready-category task owning a live PENDING row of ANY round (#443, task-wide per
+    # #445): the parked/stranded round a legal egress or a teardown regression left behind
+    # — no sweep reaches a ready task (stalled-review and lost-settle require review-flow
+    # ownership), so the reviewer never decides, and an older round's rows are never
+    # superseded (a resubmit opens the next round insert-only), so the clause is pinned to
+    # NO round — `round = max(round)` left an older-round strand invisible (#445). Below the
     # floor the note-dispatch bounce produces the shape legally, so the arm is gated OUT
     # here (no state, no alert): the floor is the release whose dispatch flip resolves the
     # round in the same transaction. Previous-pass presence confirm + id-set dedupe.
@@ -880,7 +883,7 @@ elif [ "$STRCOL" = "1" ]; then
       READYROUND=$(echo "$STROUT" | awk -F'|' '/^readyround/{print $2}')
       if [ -n "${READYROUND:-}" ] && [ "$READYROUND" != "none" ] && [ "$(cat "$PROBE_STATE/readyround.prev" 2>/dev/null || echo none)" != "none" ]; then
         if [ "$(cat "$PROBE_STATE/readyround.alerted" 2>/dev/null || echo none)" != "$READYROUND" ]; then
-          anom+=("ready_round: ready/working task owning a PENDING AI reviewer row of its current round with no live run [$READYROUND] — round left behind by an egress, #443 class")
+          anom+=("ready_round: ready/working task owning a live PENDING AI reviewer row of ANY round with no running run [$READYROUND] — round left behind by an egress or a teardown regression, #443 class (task-wide per #445)")
           echo "$READYROUND" > "$PROBE_STATE/readyround.alerted"
         fi
       else
