@@ -1184,7 +1184,11 @@ non-positive deltas render no duration.
   COMPOSER LAW, NOTE-EGRESS ROUND TEARDOWN), so a surviving count is a guard regression or
   a direct-SQL write. Not reader-scoped: the parked reviewer WAS dispatched this round (its
   turn failed), so the stalled-review sweep's never-dispatched clause must NOT ride this
-  arm — it would exclude the exact shape.
+  arm — it would exclude the exact shape. The floor bounds WHEN the arm can speak; the
+  residual producers it names are then exhaustive BY DECLARATION: a guard regression, a
+  direct-SQL write, or `statuses.save` recategorizing a status a ready task sits in (the
+  admin surface can legally move a task's category under it — an alert there is correct
+  and the recategorization is the evidence, not a false positive).
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names

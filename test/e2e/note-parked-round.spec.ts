@@ -127,7 +127,7 @@ test('a note on a parked task tears the parked round down and returns the task t
       [taskId],
     )) as Array<{ body: string; reason: string | null }>;
     expect(closes).toHaveLength(1);
-    expect(closes[0]!.body).toContain('the note sent the task back to work');
+    expect(closes[0]!.body).toContain('the send returned the task to work');
     expect(closes[0]!.reason).toBe('egress');
   } finally {
     await sql.close();
