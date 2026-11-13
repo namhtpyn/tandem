@@ -1,3 +1,12 @@
+## [2.78.26](https://github.com/namhtpyn/tandem/compare/v2.78.25...v2.78.26) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#443](https://github.com/namhtpyn/tandem/issues/443) r1 — task-row-first lock order (abandon's order) + the declared hold-landing exception ([5c45cf9](https://github.com/namhtpyn/tandem/commit/5c45cf9cdaaf56101e384cedf7a1c9dc122901f2))
+* [#443](https://github.com/namhtpyn/tandem/issues/443) r2 — park-neutral egress copy + declare the recategorization residual producer ([027a6be](https://github.com/namhtpyn/tandem/commit/027a6beeefec28ffd006339313551470d1e9b539)), closes [#445](https://github.com/namhtpyn/tandem/issues/445)
+* **tasks:** a note-dispatch egress tears down the parked round ([#443](https://github.com/namhtpyn/tandem/issues/443)) ([ffcd685](https://github.com/namhtpyn/tandem/commit/ffcd6851c4fd3a0b4942779176996362424a027c)), closes [#427](https://github.com/namhtpyn/tandem/issues/427)
+
 ## [2.78.25](https://github.com/namhtpyn/tandem/compare/v2.78.24...v2.78.25) (2026-11-13)
 
 
