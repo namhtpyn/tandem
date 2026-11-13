@@ -135,9 +135,12 @@ legacy_rule() {
 # legal flip either supersedes the rows it strands (the egress teardown, terminal settles,
 # 'no live reviewers') or writes a newer STATUS-kind record; the escalation replacement
 # mint (review.service) targets a live round on an in_review task, never this scope; a
-# verdict bounce flips the task to todo (raw write, no note) and its surviving CURRENT-round
-# sibling rows are already the shipped current-round scope — they can only reach
-# ready/working through a dispatch or submit whose flip logs its own newer STATUS body.
+# verdict bounce cannot strand its own round's siblings — the round matrix returns
+# `waiting` and never flips while any PENDING row of the deciding round remains, so the
+# flip proceeds only on the round's LAST verdict; what a bounce CAN strand is a NEWER
+# round's live rows when a stale AI verdict binds to the older round it was dispatched
+# for — the flip is a raw write (no note), so those rows land unrecorded and the arm's
+# firing on them is the law, not a false positive.
 # NOT reader-scoped on purpose: the parked reviewer WAS dispatched (its turn failed), so the
 # stalled-review arm's never-dispatched clause would exclude the exact shape.
 READY_FLOOR=2.78.26
