@@ -238,6 +238,11 @@ export async function openReviewRound(
   reviewers: string[],
   resultBody: string,
   flip: { status: string; updatedAt: Date },
+  /** #440: the status the WON flip lands. Submit lands the seeded review id; the
+   * requeue heal passes the OWNER'S chosen in-review id — the flip arbitrates on
+   * the status + stamp it read and re-lands the SAME status, never rewriting the
+   * owner's move. */
+  targetStatus: string = IN_REVIEW_STATUS,
 ): Promise<OpenedRound> {
   const uniqueReviewers = dedupeReviewers(reviewers);
   const now = new Date();
@@ -275,7 +280,7 @@ export async function openReviewRound(
     // the outcome; this call returns flipped:false having written nothing.
     const flipped = await d
       .update(tasks)
-      .set({ status: IN_REVIEW_STATUS, updatedAt: now })
+      .set({ status: targetStatus, updatedAt: now })
       .where(and(eq(tasks.id, taskId), eq(tasks.status, flip.status), eq(tasks.updatedAt, flip.updatedAt)))
       .returning({ id: tasks.id });
     if (flipped.length === 0) return { flipped: false, round, opened: opened.length, dropped };
@@ -1630,7 +1635,11 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
 
 /** the submitted result the current round is judging — the round rows carry it
  * (set at openReviewRound; task_activity retired 2026-10-30) */
-async function roundResultBody(taskId: string) {
+/**
+ * Round-result brief lookup for heal callers: the CURRENT round's stored
+ * resultBody (the brief the reviewers judged), empty for round 0 / bare rounds.
+ */
+export async function roundResultBody(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return '';
   const rows = await db
