@@ -58,10 +58,13 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
     expect(sqlText).toContain("select 'readyround'");
     // the parked reviewer WAS dispatched — the stalled arm's never-dispatched clause must
     // never ride this arm, or the exact #443 shape is excluded from the only arm that sees
-    // it (pinned on the arm's own slice: the lostsettle arm legitimately carries 'DONE')
+    // it. Pinned on the clause's OWN bytes (its run-age compare, verbatim from the
+    // stallrv arm): the DONE-carrying lost-settle clause alone would not catch a verbatim
+    // never-dispatched import (pinned on the arm's own slice)
     const arm = sqlText.slice(sqlText.indexOf("select 'readyround'"), sqlText.indexOf("select 'orphanhome'"));
     expect(arm).toContain("tr.status = 'RUNNING'");
     expect(arm).not.toContain("tr.status = 'DONE'");
+    expect(arm).not.toContain('tr.started_at >= r.created_at');
     // #445: the round clause is task-wide — the max-round subselect must be GONE (it hid an
     // older-round strand behind a decided newer round)
     expect(arm).not.toContain('r.round = (select max');
@@ -163,10 +166,11 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
         [AI_USER],
       );
       // the verdict twin: same strand, and the round-2 decision ALSO wrote its record —
-      // a real human VERDICT message (kind='VERDICT' payload, newer than the round-1 row)
-      // does NOT silence the arm: only the two declared machine-egress records exclude,
-      // so a hypothetical VERDICT-keyed-exclusion mutant goes red here
-      await pending('e2e-ready-old-verdict', 1);
+      // a real human VERDICT message (kind='VERDICT' payload, NEWER than the round-1 row,
+      // which is minted 20 minutes back) does NOT silence the arm: only the two declared
+      // machine-egress records exclude, so a per-row VERDICT-keyed-exclusion mutant goes
+      // red here (the record is newer than THAT row and the task still fires)
+      await pending('e2e-ready-old-verdict', 1, AI_USER, 20);
       await db.unsafe(
         `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at, decided_at)
          values ('rev-old-verdict-2', 'e2e-ready-old-verdict', $1, 2, 'APPROVED', 'human', now() - interval '20 minutes', now() - interval '19 minutes')`,
