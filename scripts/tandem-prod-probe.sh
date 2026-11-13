@@ -111,18 +111,33 @@ owner_floor_met() {
 legacy_rule() {
   printf "%s" "(select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
 }
-# READY-ROUND arm (#443): a ready/working-category task owning a PENDING row of its
-# CURRENT round for a LIVE AI reviewer, with NO running run on the task — the parked round
-# a legal egress left behind. The note-dispatch bounce produced it every time an owner sent
-# a note to a parked task (the flip returned the task to work and left the round; no sweep
-# reaches a ready-category task, so the reviewer never decided and its verdict was
-# discarded). Below 2.78.26 that shape is LEGAL — the arm stays silent there rather than
-# misattribute cause; from the floor the flip tears every open round down in the same
-# transaction, so a surviving count is a guard regression or a direct-SQL write. The
-# manual-freedom exception rides the owner status WRITE (the `status: …` body with the 1:1
-# kind='STATUS' payload, tasks.setStatus's unforgeable signature): a manual move out of
-# review legally leaves the round's PENDING rows behind and its own move row is always
-# newer than the rows it stranded, while every machine flip logs its own body.
+# READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
+# PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
+# parked/stranded round a legal egress or a teardown regression left behind. The note-dispatch
+# bounce produced the CURRENT-round shape every time an owner sent a note to a parked task
+# (the flip returned the task to work and left the round; no sweep reaches a ready-category
+# task, so the reviewer never decided and its verdict was discarded). The LAW is task-wide:
+# a ready task must own no live round AT ALL — pinning the clause to `round = max(round)`
+# left an older-round strand invisible (a resubmit opens the next round insert-only, older
+# rows are never superseded, and review.service documents that a superseded max round can
+# hide an older round that is still live), so a teardown regression leaving ONLY
+# non-current-round rows alerted never (#445). Below 2.78.26 the bounce shape is LEGAL —
+# the arm stays silent there rather than misattribute cause; from the floor the flip tears
+# every open round down in the same transaction, so a surviving count is a guard regression
+# or a direct-SQL write. Both machine-egress exclusions are PER-ROW (keyed on each row's
+# own created_at, evaluated per round, never per task): the manual-freedom exception rides
+# the owner status WRITE (the `status: …` body with the 1:1 kind='STATUS' payload,
+# tasks.setStatus's unforgeable signature) — a manual move out of review legally leaves the
+# round's PENDING rows behind and its own move row is always newer than the rows it
+# stranded — and the declared HOLD-LANDING exception rides the `review round resumed …`
+# STATUS-payload note newer than the re-opened row; a row of ANY round with no newer
+# exclusion record is the alert. Residual producers, exhaustive by declaration: every
+# legal flip either supersedes the rows it strands (the egress teardown, terminal settles,
+# 'no live reviewers') or writes a newer STATUS-kind record; the escalation replacement
+# mint (review.service) targets a live round on an in_review task, never this scope; a
+# verdict bounce flips the task to todo (raw write, no note) and its surviving CURRENT-round
+# sibling rows are already the shipped current-round scope — they can only reach
+# ready/working through a dispatch or submit whose flip logs its own newer STATUS body.
 # NOT reader-scoped on purpose: the parked reviewer WAS dispatched (its turn failed), so the
 # stalled-review arm's never-dispatched clause would exclude the exact shape.
 READY_FLOOR=2.78.26
@@ -143,7 +158,7 @@ ready_hold_gap() {
   printf "%s" "not exists (select 1 from task_messages m3 join task_message_activities a3 on a3.message_id = m3.id where m3.task_id = t.id and m3.body like 'review round resumed%' and a3.payload->>'kind' = 'STATUS' and m3.created_at > r.created_at)"
 }
 ready_round_arm() {
-  printf "%s" " union all select 'readyround', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category in ('ready', 'working') and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and $(ready_owner_gap) and $(ready_hold_gap)) x), 'none')"
+  printf "%s" " union all select 'readyround', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category in ('ready', 'working') and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and $(ready_owner_gap) and $(ready_hold_gap)) x), 'none')"
 }
 strand_sql() {
   local own blkarm orphan decided gap rule ready
@@ -320,7 +335,10 @@ if [ "${1:-}" = "--selfcheck" ]; then
   READY_ON=$(strand_ready_arm 2.78.26 2)
   printf '%s' "$READY_ON" | grep -qF "s.category in ('ready', 'working')" || { echo "selfcheck fail: ready arm scope"; exit 1; }
   printf '%s' "$READY_ON" | grep -qF "join ai_employees a on a.user_id = r.reviewer_id" || { echo "selfcheck fail: ready arm live-reviewer clause"; exit 1; }
-  printf '%s' "$READY_ON" | grep -qF "r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id)" || { echo "selfcheck fail: ready arm current-round clause"; exit 1; }
+  # #445: the round clause is TASK-WIDE — pinning `round = max(round)` hid an older-round
+  # strand (resubmit opens the next round insert-only, older rows are never superseded), so
+  # the subselect must be GONE from the arm's bytes; its absence is the pin
+  printf '%s' "$READY_ON" | grep -qF "r.round = (select max" && { echo "selfcheck fail: ready arm still pins the current round (#445 made it task-wide)"; exit 1; }
   printf '%s' "$READY_ON" | grep -qF "tr.status = 'RUNNING'" || { echo "selfcheck fail: ready arm live-run clause"; exit 1; }
   READY_GAP="m.body like 'status: %' and exists (select 1 from task_message_activities a2 where a2.message_id = m.id and a2.payload->>'kind' = 'STATUS') and m.created_at > r.created_at)"
   [ "$(printf '%s' "$READY_ON" | grep -oF "$READY_GAP" | wc -l)" = "1" ] || { echo "selfcheck fail: ready arm owner-status gap clause"; exit 1; }
