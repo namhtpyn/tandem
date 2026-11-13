@@ -1,3 +1,10 @@
+## [2.78.27](https://github.com/namhtpyn/tandem/compare/v2.78.26...v2.78.27) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#445](https://github.com/namhtpyn/tandem/issues/445) — ready-round arm drops the max-round clause (older-round strand on a ready task alerted never); exclusions proven per round, verdict record pinned non-excluding, selfcheck pins the clause ABSENT ([feda7ff](https://github.com/namhtpyn/tandem/commit/feda7ffc10c813ad583614d019b2176b86e354ff))
+
 ## [2.78.26](https://github.com/namhtpyn/tandem/compare/v2.78.25...v2.78.26) (2026-11-13)
 
 
