@@ -159,11 +159,11 @@ export type OpenedRound = {
   round: number;
   opened: number;
   dropped: string[];
-  /** CATEGORY-OWNERSHIP AT FLIP (#454): the landing status row left the in_review
-   * category under the tx's key share — nothing flipped, nothing minted. Submit routes
-   * the decline through its zero-review completion; the requeue heal bails leaving the
-   * owner's landed status untouched. A re-categorization landing AFTER the flip is a
-   * legal admin write riding the manual-move-out semantics (SPEC). */
+  /** CATEGORY-OWNERSHIP AT FLIP (#454 r2): the landing status row's category left
+   * in_review under the tx's status-mutation mutex — nothing flipped, nothing minted.
+   * Submit routes the decline through its zero-review completion; the requeue heal
+   * bails leaving the owner's landed status untouched. A re-categorization landing
+   * AFTER the flip is a legal admin write riding the manual-move-out semantics (SPEC). */
   declined?: 'category';
 };
 
