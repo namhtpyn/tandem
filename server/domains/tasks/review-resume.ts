@@ -38,6 +38,9 @@ import {
 
 const log = consola.withTag('tandem');
 
+/** private sentinel: a guard's CAS lost its stamp — never surfaced to callers */
+const CAS_LOST = 'requeue-heal: arbitration stamp lost under the heal';
+
 /** submit's skip-note arithmetic (UUID-CASE LAW): distinct stored entries that no
  * longer name a company user are skips — case variants of ONE id are the same
  * reviewer, never a skip. */
@@ -60,7 +63,7 @@ async function completeWithoutReviewers(taskId: string, task: { status: string; 
     .set({ status: STATUS.done, updatedAt: new Date() })
     .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
-  if (done.length === 0) return false; // a concurrent writer owns the outcome
+  if (done.length === 0) throw new Error(CAS_LOST); // the flip's stamp was taken under us
   try {
     await teardownAllPendingRounds(taskId, 'no live reviewers');
   } catch (e) {
@@ -155,7 +158,7 @@ async function finishWonFlip(taskId: string, round: number, skipped: number) {
  * 2026-10-26). FAULT ISOLATED: the owner's move already landed, so a failed heal
  * logs and leaves the shape to the owner — the probe stays silent on it, the
  * owner's status row is the evidence. */
-async function healRequeue(taskId: string): Promise<boolean> {
+async function healRequeueOnce(taskId: string): Promise<boolean> {
   try {
     const task = await db.query.tasks.findFirst({
       columns: { status: true, updatedAt: true, reviewers: true },
@@ -196,15 +199,42 @@ async function healRequeue(taskId: string): Promise<boolean> {
       // nothing was minted and nothing flipped — complete as if none were set
       return completeWithoutReviewers(taskId, task, skippedCount(roster, reviewers.length, opened.dropped.length));
     }
-    if (!opened.flipped) return false; // a concurrent settle/submit owns the outcome
+    if (!opened.flipped) throw new Error(CAS_LOST); // the flip's stamp was taken under us
     // submit's skip note rides the WON flip too — absent ids drop on the fresh
     // round exactly as they do on submit's own round-open (#361 r4)
     await finishWonFlip(taskId, opened.round, skippedCount(roster, reviewers.length, opened.dropped.length));
     return true;
   } catch (e) {
+    if ((e as Error)?.message === CAS_LOST) throw e; // the retry wrapper arbitrates
     log.warn(`resume: requeue heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     return false;
   }
+}
+
+/** CAS-loss retry (SPEC #440 r6): any concurrent STAMP-BUMPING write (a title edit,
+ * a parent re-gate) takes no outcome but defeats the flip's arbitration — the heal
+ * re-verifies every guard and retries ONCE. A real outcome-taker (a settle, a
+ * submit, another move) shows up to the retry's guards as a changed status, a live
+ * round or a pending row and bails quietly; only a TWICE-lost arbitration logs and
+ * leaves the shape with the owner's status row as the evidence. */
+async function healRequeue(taskId: string): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await healRequeueOnce(taskId);
+    } catch (e) {
+      if ((e as Error)?.message !== CAS_LOST) {
+        log.warn(`resume: requeue heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+        return false;
+      }
+      if (attempt === 2) {
+        log.warn(
+          `resume: requeue heal lost the arbitration twice for task ${taskId} — leaving the shape, the owner's status row is the evidence`,
+        );
+        return false;
+      }
+    }
+  }
+  return false; // unreachable — the loop always returns or throws
 }
 
 export async function resumeRoundAfterManualMove(

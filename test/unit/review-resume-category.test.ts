@@ -76,6 +76,7 @@ const h = vi.hoisted(() => ({
     targetStatus?: string;
   }>,
   openResult: { flipped: false, round: 0, opened: 0, dropped: [] as string[] },
+  openResultQueue: [] as Array<{ flipped: boolean; round: number; opened: number; dropped: string[] }>,
   openThrows: false,
   torndown: [] as Array<[string, string]>,
   gated: [] as string[],
@@ -172,7 +173,7 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
   ) => {
     h.opened.push({ taskId, reviewers, body, flip, targetStatus });
     if (h.openThrows) throw new Error('round-open boom');
-    return h.openResult;
+    return h.openResultQueue.length > 0 ? (h.openResultQueue.shift() as typeof h.openResult) : h.openResult;
   },
   teardownAllPendingRounds: async (taskId: string, reason: string) => {
     if (h.torndownThrows) throw new Error('teardown boom');
@@ -231,6 +232,7 @@ beforeEach(() => {
   h.pendingWhere = [];
   h.opened = [];
   h.openResult = { flipped: false, round: 0, opened: 0, dropped: [] };
+  h.openResultQueue = [];
   h.openThrows = false;
   h.torndown = [];
   h.gated = [];
@@ -507,16 +509,44 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.doneFlip).toHaveLength(0);
   });
 
-  it('a lost flip arbitration is a quiet no-op — a concurrent writer owns the outcome', async () => {
+  it('a TWICE-lost arbitration logs and bails — the owner status row is the evidence', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;
     h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
     h.liveIds = [U1];
-    h.openResult = { flipped: false, round: 2, opened: 1, dropped: [] }; // CAS missed
+    const lost = { flipped: false, round: 2, opened: 1, dropped: [] }; // CAS missed, twice
+    h.openResultQueue = [lost, lost];
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
     expect(h.dispatched).toHaveLength(0);
     expect(h.doneFlip).toHaveLength(0);
     expect(h.torndown).toHaveLength(0);
+    expect(h.warns.join(' ')).toContain('arbitration twice'); // evidence, not silence
+  });
+
+  it('a lost arbitration RETRIES once — a stamp-bumping writer took no outcome', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.openResultQueue = [
+      { flipped: false, round: 2, opened: 1, dropped: [] }, // first attempt: CAS missed
+      { flipped: true, round: 2, opened: 1, dropped: [] }, // retry: guards re-verified, mint wins
+    ];
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
+    expect(h.opened).toHaveLength(2); // two attempts, one round minted
+    expect(h.dispatched).toEqual(['task-1']);
+  });
+
+  it('a retry against an OUTCOME-TAKER bails quietly — a live round showed up mid-heal', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.liveQueue = [false, false, true]; // resume entry, attempt-1 entry, retry entry finds the winner's live round
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.openResultQueue = [{ flipped: false, round: 2, opened: 1, dropped: [] }]; // first CAS lost
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toHaveLength(1); // only the lost attempt reached the round-open
+    expect(h.dispatched).toHaveLength(0); // quiet — the winner owns the outcome
+    expect(h.warns.join(' ')).not.toContain('arbitration twice');
   });
 
   it('the #364 window — every reviewer vanished inside the round-open tx completes the task', async () => {
