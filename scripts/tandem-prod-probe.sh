@@ -169,6 +169,10 @@ at_least() {
   local v="${2:-}" maj
   printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo 0; return; }
   maj="${v%%.*}"
+  # LENGTH before arithmetic: a 20+ digit major overflows `$(( ))` (2^63..2^64-1 wraps
+  # NEGATIVE and slips under the `-lt 100` bound it was supposed to fail), so the digit
+  # count is the real guard. 2 digits covers this product (major 2) with room to spare.
+  [ "${#maj}" -le 2 ] || { echo 0; return; }
   maj=$((10#$maj)) # base-10 explicitly: `08` is not a valid octal literal
   [ "$maj" -lt 100 ] || { echo 0; return; }
   [ "$(printf '%s\n%s\n' "$1" "$v" | sort -V | tail -1)" = "$v" ] && echo 1 || echo 0
@@ -264,6 +268,8 @@ if [ "${1:-}" = "--selfcheck" ]; then
   egress_arm_on 3.0.0 || { echo "selfcheck fail: egress arm off above the floor"; exit 1; }
   egress_arm_on '' && { echo "selfcheck fail: egress arm on with no version"; exit 1; }
   egress_arm_on 2026.11.13 && { echo "selfcheck fail: egress arm opened on a date"; exit 1; }
+  egress_arm_on 9223372036854775808.1.1 && { echo "selfcheck fail: egress arm opened on an overflowing major"; exit 1; }
+  egress_arm_on 999999999999999999999999999999.1.1 && { echo "selfcheck fail: egress arm opened on a huge major"; exit 1; }
   egress_arm_on 100.64.0 && { echo "selfcheck fail: egress arm opened on an IP"; exit 1; }
   egress_arm_on 2.78.25-rc1 && { echo "selfcheck fail: egress arm opened on a pre-release"; exit 1; }
   # a leading-zero major must NOT crash the arithmetic (`08` is not a valid octal literal);
@@ -427,7 +433,9 @@ fi
 
 # 5b-ii. EGRESS EXHAUSTION (#427, floor-gated): every legal egress from a paused block
 # (the two settle flips, the owner's manual move, abandon's cancel, the note-dispatch
-# bounce) clears both gating origins in the SAME statement that lands the status. An
+# bounce, and the idle-liveness bounce — which CASes on the status its scan read precisely
+# so a block landing in the scan window is never yanked out) clears both gating origins in
+# the SAME statement that lands the status. An
 # ORIGIN on a row that is NOT in the paused category is therefore an illegal shape after
 # that release: it is a restore home for a block that does not exist, every discriminator
 # resolves those columns on a paused row only, and nothing heals it — the next auto-block

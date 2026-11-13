@@ -220,6 +220,14 @@ export function idleSweepScan(ex: DbExecutor, cutoff: Date, limit: number) {
     .limit(limit);
 }
 
+/** the bounce write's predicate (#427): id AND the status this scan READ. The status
+ *  term is load-bearing — without it a gating auto-block landing inside the scan window is
+ *  yanked out of its block (the row would leave carrying pre_block_status and its next park
+ *  would inherit the home). Exported so the CAS terms are pinned by shape, like the scans. */
+export function livenessBounceWhere(id: string, status: string) {
+  return and(eq(tasks.id, id), eq(tasks.status, status));
+}
+
 /** the bounce write's field set (#427): the status landing AND the machine-memory
  * exhaustion it must carry in the same statement. Pure so the pin can assert every field
  * — a field silently dropped from an inline literal is the exact regression class. */
@@ -281,10 +289,14 @@ async function sweepIdleWorkingInner(): Promise<number> {
     // then leave the block carrying pre_block_status and the parent's next park would
     // inherit it. CAS on the status this scan READ and exhaust both origins + the ledger
     // in the same statement (the reaper's #162 pattern).
-    await db
+    const bouncedRows = await db
       .update(tasks)
       .set(livenessBouncePatch())
-      .where(and(eq(tasks.id, row.id), eq(tasks.status, row.status)));
+      .where(livenessBounceWhere(row.id, row.status))
+      .returning({ id: tasks.id });
+    // a LOST CAS writes nothing (a block/settle landed in the scan window) — the thread
+    // note and the counter must not claim a bounce that never happened
+    if (bouncedRows.length === 0) continue;
     const { logActivity } = await import('./review.service');
     await logActivity(
       row.id,
