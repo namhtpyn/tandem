@@ -1,3 +1,10 @@
+## [2.78.28](https://github.com/namhtpyn/tandem/compare/v2.78.27...v2.78.28) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#449](https://github.com/namhtpyn/tandem/issues/449) — ready-round alert copy says the task-wide law, not the retired current-round story ([256118b](https://github.com/namhtpyn/tandem/commit/256118b65db2caa2076ace86894c2787e379ffd6)), closes [#445](https://github.com/namhtpyn/tandem/issues/445) [#445](https://github.com/namhtpyn/tandem/issues/445) [#445](https://github.com/namhtpyn/tandem/issues/445)
+
 ## [2.78.27](https://github.com/namhtpyn/tandem/compare/v2.78.26...v2.78.27) (2026-11-13)
 
 
