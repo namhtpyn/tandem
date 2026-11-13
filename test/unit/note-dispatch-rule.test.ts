@@ -20,37 +20,53 @@ const h = vi.hoisted(() => ({
   dispatchOk: true,
   notes: [] as unknown[],
   published: 0,
+  // #443: the marker executor the mock transaction hands its callback, and the teardown
+  // calls the review module received
+  tx: { marker: 'tx' } as Record<string, unknown>,
+  teardowns: [] as Array<{
+    taskId: string;
+    settledTo: string;
+    ex: unknown;
+    opts?: { publish?: boolean; reason?: 'egress' };
+  }>,
+  teardownThrows: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
+  const api = {
+    select: () => {
+      throw new Error('addNote must not use the select builder');
+    },
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (_cond: unknown) => {
+          const applied = () => {
+            h.updates.push({ table: table === tasks ? 'tasks' : 'other', set });
+            return [{ id: 'task-1' }];
+          };
+          return {
+            returning: async () => applied(),
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+          };
+        },
+      }),
+    }),
+    query: {
+      tasks: { findMany: async () => h.taskRows },
+      taskStatuses: { findMany: async () => h.statuses },
+      aiEmployees: { findFirst: async () => h.aiEmployees[0] ?? null },
+    },
+  };
+  // NOTE-EGRESS ROUND TEARDOWN (#443): the dispatch flip runs in a transaction and the
+  // round teardown joins it. The tx executor carries the same builders plus a marker, so
+  // the specs can assert the teardown received the flip's OWN executor — not the pool db.
+  const tx = { ...api, __tx: true };
+  h.tx = tx;
   return {
     asDb: (x: unknown) => x,
-    db: {
-      select: () => {
-        throw new Error('addNote must not use the select builder');
-      },
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (_cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set });
-              return [{ id: 'task-1' }];
-            };
-            return {
-              returning: async () => applied(),
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-            };
-          },
-        }),
-      }),
-      query: {
-        tasks: { findMany: async () => h.taskRows },
-        taskStatuses: { findMany: async () => h.statuses },
-        aiEmployees: { findFirst: async () => h.aiEmployees[0] ?? null },
-      },
-    },
+    db: { ...api, transaction: async (fn: (ex: unknown) => unknown) => fn(tx) },
   };
 });
 
@@ -71,7 +87,22 @@ vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
-  return { ...mod };
+  return {
+    ...mod,
+    // #443: the note-dispatch flip must resolve every open round inside its own
+    // transaction; recorded here so the specs assert the call, its executor and its
+    // publish/body contract. A THROW simulates the teardown failing: the flip's
+    // transaction rolls back and no dispatch may fire (the note stays thread-only).
+    teardownAllPendingRounds: async (
+      taskId: string,
+      settledTo: string,
+      ex?: unknown,
+      opts?: { publish?: boolean; reason?: 'egress' },
+    ) => {
+      h.teardowns.push({ taskId, settledTo, ex, opts });
+      if (h.teardownThrows) throw new Error('round teardown exploded');
+    },
+  };
 });
 
 // workflow.service's logActivity routes through thread.service (the thread IS the
@@ -114,6 +145,8 @@ beforeEach(() => {
   h.notes = [];
   h.published = 0;
   h.steerState = 'stopped';
+  h.teardowns = [];
+  h.teardownThrows = false;
   h.aiEmployees = [{ userId: 'worker-1' }];
 });
 
@@ -179,6 +212,36 @@ describe('tasks.note dispatch rule keys off the category (#265)', () => {
       parkRearmAttempts: 0,
       parkRearmAfter: null,
     });
+  });
+
+  // NOTE-EGRESS ROUND TEARDOWN (#443): a send on a PARKED task is an egress from a review
+  // park — its PENDING reviewer row sat on a paused task no sweep can reach (the
+  // stalled-review and lost-settle scans require review-flow ownership), so the flip must
+  // resolve the round in the SAME transaction: the task returns to work and the parked
+  // round's verdict would judge superseded work. Pinned: the teardown rides the flip's
+  // executor, targets the ready status the flip lands, defers its change events to the
+  // post-commit note, and a teardown failure blocks the dispatch.
+  it('the dispatch flip from a parked task tears its open rounds down in the same transaction (#443)', async () => {
+    seedTask('st-custom-blocked', 'worker-1');
+    h.statuses = [{ id: 'st-custom-blocked', category: CATEGORY.PAUSED }];
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false, dispatched: true });
+    expect(h.teardowns).toHaveLength(1);
+    expect(h.teardowns[0]).toMatchObject({ taskId: 'task-1', settledTo: STATUS.todo });
+    // the SAME executor the flip wrote through — one transaction, not a follow-up write
+    expect((h.teardowns[0]?.ex as { __tx?: boolean } | undefined)?.__tx).toBe(true);
+    // a redis publish must never gate the held task row lock: the row is written in the
+    // tx and the event rides the post-commit note
+    expect(h.teardowns[0]?.opts?.publish).toBe(false);
+    expect(h.teardowns[0]?.opts?.reason).toBe('egress');
+  });
+
+  it('a teardown failure aborts the flip and the dispatch — nothing lands (#443)', async () => {
+    seedTask('st-custom-blocked', 'worker-1');
+    h.statuses = [{ id: 'st-custom-blocked', category: CATEGORY.PAUSED }];
+    h.teardownThrows = true;
+    await expect(addNote('task-1', 'human-1', 'go')).rejects.toThrow('round teardown exploded');
+    expect(h.dispatches).toHaveLength(0);
   });
 
   it('a CUSTOM done-category status refuses — category vocabulary, never seeded ids', async () => {
