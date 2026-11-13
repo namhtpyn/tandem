@@ -39,6 +39,10 @@ const h = vi.hoisted(() => ({
   deletedUsers: [] as string[],
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
+  // #454: the landing status row's category — the round-open tx key-shares it and
+  // re-verifies in_review before the flip (hoisted literal: vi.hoisted precedes imports)
+  statusCategory: 'in_review' as string,
+  statusLockStrengths: [] as string[],
   lockTxIds: [] as number[],
   obligationConds: [] as unknown[],
   insertTxIds: [] as number[],
@@ -54,7 +58,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { taskObligations, taskReviews, taskRuns, user } = await import('../../server/db/schema');
+  const { taskObligations, taskReviews, taskRuns, taskStatuses, user } = await import('../../server/db/schema');
   const dialect = new PgDialect();
   const thenable = (rows: () => unknown[]) => ({
     then: (onF?: (v: unknown) => unknown) => Promise.resolve(rows()).then(onF),
@@ -70,6 +74,18 @@ vi.mock('../../server/db/index', async () => {
       const txId = this.__tx ?? 0;
       return {
         from: (table: unknown) => {
+          if (table === taskStatuses) {
+            return {
+              where: () => ({
+                for: async (strength: string) => {
+                  h.statusLockStrengths.push(strength);
+                  // #454: predicate-faithful enough for this file — the landing status
+                  // row exists and carries h.statusCategory
+                  return [{ category: h.statusCategory }];
+                },
+              }),
+            };
+          }
           if (table === user) {
             return {
               where: (cond: unknown) => ({
@@ -227,6 +243,8 @@ beforeEach(() => {
   h.deletedUsers = [];
   h.lockStrengths = [];
   h.lockConds = [];
+  h.statusCategory = 'in_review';
+  h.statusLockStrengths = [];
   h.lockTxIds = [];
   h.obligationConds = [];
   h.insertTxIds = [];
