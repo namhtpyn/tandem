@@ -1635,7 +1635,11 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
 
 /** the submitted result the current round is judging — the round rows carry it
  * (set at openReviewRound; task_activity retired 2026-10-30) */
-async function roundResultBody(taskId: string) {
+/**
+ * Round-result brief lookup for heal callers: the CURRENT round's stored
+ * resultBody (the brief the reviewers judged), empty for round 0 / bare rounds.
+ */
+export async function roundResultBody(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return '';
   const rows = await db

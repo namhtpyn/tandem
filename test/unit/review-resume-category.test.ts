@@ -11,7 +11,7 @@
 // heal is fault-isolated.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ACTIVITY_KIND, CATEGORY, REVIEW_STATUS } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 // helpers the hoisted mock factories need — vi.hoisted runs before the mocks
@@ -61,9 +61,8 @@ const h = vi.hoisted(() => ({
   liveIds: [] as string[],
   childrenOpen: false,
   warns: [] as string[],
-  currentRound: 0,
-  roundRows: [] as Array<{ status: string; reviewerId?: string | null }>,
   liveQueue: [] as boolean[],
+  priorBrief: '',
   opened: [] as Array<{
     taskId: string;
     reviewers: string[];
@@ -109,11 +108,6 @@ vi.mock('../../server/db/index', () => ({
         },
       },
     },
-    select: (_cols: Record<string, unknown>) => ({
-      from: (_t: unknown) => ({
-        where: async () => h.roundRows,
-      }),
-    }),
     update: (_table: unknown) => ({
       set: (payload: Record<string, unknown>) => ({
         where: (w: unknown) => ({
@@ -130,7 +124,7 @@ vi.mock('../../server/db/index', () => ({
 
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => (h.liveQueue.length > 0 ? (h.liveQueue.shift() as boolean) : h.live),
-  currentRound: async () => h.currentRound,
+  roundResultBody: async () => h.priorBrief,
   dispatchAiReviewTurns: async (taskId: string) => {
     if (h.dispatchThrows) throw new Error('dispatch boom');
     void h.dispatched.push(taskId);
@@ -205,9 +199,8 @@ beforeEach(() => {
   h.liveIds = [];
   h.childrenOpen = false;
   h.warns = [];
-  h.currentRound = 0;
-  h.roundRows = [];
   h.liveQueue = [];
+  h.priorBrief = '';
   h.opened = [];
   h.openResult = { flipped: false, round: 0, opened: 0, dropped: [] };
   h.openThrows = false;
@@ -312,6 +305,7 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     h.openResult = { flipped: true, round: 1, opened: 1, dropped: [] };
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
     expect(h.opened).toHaveLength(1);
+    expect(h.opened[0]?.body).toBe(''); // round 0: no prior brief to carry
     expect(h.dispatched).toEqual(['task-1']);
   });
 
@@ -505,18 +499,26 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.parked).toHaveLength(0); // nothing committed, nothing to park over
   });
 
-  it('an ESCALATED current round is a live human decision — the heal never mints over it', async () => {
+  it('a SPENT ESCALATION TOMBSTONE never blocks the heal — decided rows and tombstones heal (#440 r4)', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
-    h.live = false;
-    h.settleResult = false; // the settle no-ops (no void row) — the heal would fire…
-    h.currentRound = 3;
-    h.roundRows = [{ status: REVIEW_STATUS.ESCALATED, reviewerId: U1 }]; // …but must not
+    h.live = false; // no PENDING row: the escalated row is a terminal non-vote tombstone
+    h.settleResult = false; // the settle no-ops — no void signature to settle
     h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
     h.liveIds = [U1];
-    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
-    expect(h.opened).toHaveLength(0);
-    expect(h.dispatched).toHaveLength(0);
-    expect(h.doneFlip).toHaveLength(0);
+    h.priorBrief = 'the original submission';
+    h.openResult = { flipped: true, round: 2, opened: 1, dropped: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
+    // the fresh round judges the SAME brief the decided round judged — never an empty one
+    expect(h.opened).toEqual([
+      {
+        taskId: 'task-1',
+        reviewers: [U1],
+        body: 'the original submission',
+        flip: { status: 'st-custom-review', updatedAt: T0 },
+        targetStatus: 'st-custom-review',
+      },
+    ]);
+    expect(h.dispatched).toEqual(['task-1']);
   });
 
   it('a live round minted mid-heal (a racing move) is never stacked — the heal re-checks first', async () => {

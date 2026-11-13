@@ -15,15 +15,14 @@
 import { consola } from 'consola';
 import { and, eq } from 'drizzle-orm';
 
-import { ACTIVITY_KIND, CATEGORY, REVIEW_STATUS } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db/index';
-import { taskReviews, tasks } from '../../db/schema';
+import { tasks } from '../../db/schema';
 import { hasOpenChildren, refreshParentGating } from './gating.service';
 import {
   canonicalStoredUuid,
-  currentRound,
   discardVoidRows,
   dispatchAiReviewTurns,
   liveReviewers,
@@ -31,6 +30,7 @@ import {
   openReviewRound,
   openRoundLive,
   parkRound,
+  roundResultBody,
   settleExtinguishedRound,
   teardownAllPendingRounds,
 } from './review.service';
@@ -43,20 +43,6 @@ const log = consola.withTag('tandem');
 function skippedCount(roster: string[], liveCount: number, droppedInRound = 0): number {
   const distinct = new Set(roster.map((id) => canonicalStoredUuid(id) ?? id.trim().toLowerCase())).size;
   return Math.max(0, distinct - liveCount + droppedInRound);
-}
-
-/** the heal's precondition beyond openRoundLive (SPEC #440): the current round must
- * be DECIDED — an ESCALATED row is a live human verdict the heal must never mint
- * over (round 0 has no rows and heals; a live/void PENDING row is openRoundLive's
- * call, not this one's). */
-async function roundEscalated(taskId: string): Promise<boolean> {
-  const round = await currentRound(taskId);
-  if (round === 0) return false;
-  const rows = await db
-    .select({ status: taskReviews.status })
-    .from(taskReviews)
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  return rows.some((r) => r.status === REVIEW_STATUS.ESCALATED);
 }
 
 /** the zero-survivor completion, submit-faithful (#361 r4/r6, #364): no round may
@@ -151,16 +137,17 @@ async function healRequeue(taskId: string): Promise<boolean> {
     // a concurrent writer may have opened a live round (a racing move's own heal):
     // never mint a stacked round over one
     if (await openRoundLive(taskId)) return false;
-    // an ESCALATED row is a live human decision — the heal never mints over it
-    if (await roundEscalated(taskId)) return false;
     if (await holdForOpenSubtasks(taskId)) return false;
     const roster = task.reviewers ?? [];
     const reviewers = await liveReviewers(roster);
     if (reviewers.length === 0) return completeWithoutReviewers(taskId, task, skippedCount(roster, 0));
+    // the fresh round judges the SAME brief the decided round judged — the prior
+    // round's result body (empty for a never-reviewed task)
+    const brief = await roundResultBody(taskId);
     const opened = await openReviewRound(
       taskId,
       reviewers,
-      '',
+      brief,
       { status: task.status, updatedAt: task.updatedAt },
       // the owner's chosen in-review id — the flip re-lands the SAME status,
       // never the seeded review id (submit's landing, not the heal's)
