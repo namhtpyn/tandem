@@ -108,7 +108,7 @@ vi.mock('../../server/db/index', async () => {
           findMany: async () => h.statuses,
         },
         taskRuns: {
-          findMany: async () => h.reviewRuns.length ? h.reviewRuns : [h.runFull],
+          findMany: async () => (h.reviewRuns.length ? h.reviewRuns : [h.runFull]),
           findFirst: async () => h.latestRun,
         },
         tasks: {
