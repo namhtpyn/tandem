@@ -67,11 +67,47 @@ describe('prod probe selfcheck', () => {
     expect(noColumns).not.toContain('park_from_status');
   });
 
+  // #427: the egress-origin arm. Same discipline as the wedge arm — the detector is
+  // pinned by the bytes that ship (`--egress-sql`), never a test-side copy. The arm's
+  // regression beyond the byte pins (a seeded DB) lives in the probe's live validation;
+  // here every clause a mutation could silently drop is asserted, so flipping the scope,
+  // dropping an origin term or reintroducing a mutable-stamp/ledger term goes red.
+  it('emits the egress-origin arm: non-paused scope, both origin terms, no stamp/ledger term', async () => {
+    const proc = await $`bash ${script} --egress-sql`.nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const sql = proc.stdout.toString();
+    expect(sql).toContain("select 'egressorigin'");
+    // the scope: a row OUTSIDE the paused category — inverting this to `=` alerts on every
+    // healthy BLOCKED task, dropping the negations ships a dead arm
+    expect(sql).toContain("s.category <> 'paused'");
+    // BOTH origins, not one: either column alone is a valid block home
+    expect(sql).toContain('t.park_from_status is not null');
+    expect(sql).toContain('t.pre_block_status is not null');
+    // (a) never a mutable stamp (the r1 P1: `updated_at` is bumped by any benign edit, so a
+    // pre-fix leftover would alert as a live egress failure), (b) never the ledger (a
+    // restored ladder park legally carries it off the block, #211)
+    expect(sql).not.toContain('updated_at');
+    expect(sql).not.toContain('park_rearm');
+    // one row per id, newest-agnostic, and the empty-set contract the shell parses
+    expect(sql).toContain("coalesce(string_agg(t.id::text, ',' order by t.id), 'none')");
+  });
+
+  // the arm's clause names BOTH origin columns: a one-column image must refuse to emit
+  // (exit 2) rather than print bytes that throw at run time (column-absent law)
+  it('refuses to emit when the column gate reports a degraded schema', async () => {
+    const oneCol = await $`bash ${script} --egress-sql 1`.nothrow().quiet();
+    expect(oneCol.exitCode).toBe(2);
+    expect(oneCol.stdout.toString().trim()).toBe('');
+    const twoCol = await $`bash ${script} --egress-sql 2`.nothrow().quiet();
+    expect(twoCol.exitCode).toBe(0);
+    expect(twoCol.stdout.toString()).toContain("select 'egressorigin'");
+  });
+
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
     // The DEFAULT state path derives from TANDEM_PROFILE_DIR — override THAT, so a broken
     // derivation cannot pass by writing the real prod trail (an overridden PROBE_STATE
     // alone would only prove the override works).
-    for (const mode of [['--strand-sql', '2.78.20', '2'], ['--selfcheck']]) {
+    for (const mode of [['--strand-sql', '2.78.20', '2'], ['--egress-sql'], ['--selfcheck']]) {
       const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
       // TANDEM_PROBE_STATE='' as well: an inherited override would redirect any real
       // write away from the asserted path and green-light a broken derivation
