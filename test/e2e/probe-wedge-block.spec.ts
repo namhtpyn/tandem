@@ -4,12 +4,17 @@ import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 
 // Contract: SPEC.md "Probe versioning" — the dead-round wedge arm covers BOTH
-// review-flow-owned shapes (#424): an in_review task with a closed round whose newest
-// verdict outruns the task's last write, AND a PAUSED gating auto-block whose recorded
-// origin resolves to in_review and whose CURRENT round is closed (no PENDING row in
-// max(round), at least one verdict row). The detector is pinned by the SQL that ships:
-// the probe emits it (--strand-sql) and this spec executes exactly those bytes against
-// the e2e database — no test-side copy of the query.
+// review-flow-owned shapes (#424): an in_review task with a closed decided round, AND a
+// PAUSED gating auto-block whose recorded origin resolves to in_review and whose CURRENT
+// round is closed (no PENDING row in max(round), at least one verdict row). The
+// manual-freedom discriminator is the ABSENCE of an OWNER status write newer than the
+// round's newest verdict (#430): tasks.setStatus is the only writer of a `status: …`
+// activity body, so a legal re-queue over an already-decided round always carries its
+// move newer than the verdict while a machine restore (the child landing) or a
+// title/assignee edit after the verdict cannot mask a lost settle flip.
+// The detector is pinned by the SQL that ships: the probe emits it (--strand-sql) and
+// this spec executes exactly those bytes against the e2e database — no test-side copy of
+// the query.
 
 const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pathname;
 
@@ -21,7 +26,7 @@ const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 
 test.describe('prod probe wedge arm (#424)', () => {
   test('fires on a decided round inside a gating block, silent on every legal shape', async () => {
-    const emitted = await $`bash ${script} --strand-sql 2.78.20 2`.nothrow().quiet();
+    const emitted = await $`bash ${script} --strand-sql 2.78.24 2`.nothrow().quiet();
     expect(emitted.exitCode, emitted.stderr.toString()).toBe(0);
     const strandSql = emitted.stdout.toString().trim();
     expect(strandSql).toContain("select 'wedge'");
@@ -52,6 +57,12 @@ test.describe('prod probe wedge arm (#424)', () => {
       const inReviewLive = `probe-wedge-irl-${crypto.randomUUID()}`; // legal: the in_review round is live
       const inReviewVoid = `probe-wedge-irv-${crypto.randomUUID()}`; // legal: a void row suspends the in_review round
       const inReviewOldVerdict = `probe-wedge-iro-${crypto.randomUUID()}`; // defensive: a stale verdict in an old round
+      const maskedRestore = `probe-wedge-restored-${crypto.randomUUID()}`; // fires: block → verdict → child-restore, no owner move
+      const maskedBlock = `probe-wedge-maskedblk-${crypto.randomUUID()}`; // fires: block → verdict → title edit, no owner move
+      const restoredRequeue = `probe-wedge-restoredreq-${crypto.randomUUID()}`; // legal: the owner re-queue predates the block/restore
+      const noteDecoy = `probe-wedge-notedecoy-${crypto.randomUUID()}`; // fires: a NOTE body starting `status: ` must not mask
+      const deletedMoverRequeue = `probe-wedge-deletedmover-${crypto.randomUUID()}`; // legal: the mover's user row is gone (author NULL)
+      const staleVerdictRequeue = `probe-wedge-staleverdict-${crypto.randomUUID()}`; // legal: owner move after the CURRENT round's verdict
 
       // task write age (minutes ago) per seed; the wedge needs the verdict NEWER than it
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
@@ -80,6 +91,20 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: inReviewLive, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewVoid, status: IN_REVIEW, pre: null, park: null, written: 5 },
           { id: inReviewOldVerdict, status: IN_REVIEW, pre: null, park: null, written: 5 },
+          // #430 masks, on purpose: the task row was written AFTER the killing verdict (a
+          // child-restore landing back in review / a title edit), which is exactly what the
+          // retired updated_at ordering could not see — no owner move follows the verdict
+          { id: maskedRestore, status: IN_REVIEW, pre: null, park: null, written: 1 },
+          { id: maskedBlock, status: BLOCKED, pre: IN_REVIEW, park: null, written: 1 },
+          // the legal twin of maskedRestore: the owner's re-queue explicitly PREDATES the
+          // block, so the machine block/restore that follows is a legal state, not a wedge
+          { id: restoredRequeue, status: IN_REVIEW, pre: null, park: null, written: 10 },
+          // a NOTE whose body starts `status: ` must not silence the wedge, a deleted
+          // mover's authored move still counts, and an older round's late verdict must not
+          // stand in for the current round's when deciding whether the owner moved last
+          { id: noteDecoy, status: IN_REVIEW, pre: null, park: null, written: 1 },
+          { id: deletedMoverRequeue, status: IN_REVIEW, pre: null, park: null, written: 20 },
+          { id: staleVerdictRequeue, status: IN_REVIEW, pre: null, park: null, written: 20 },
         ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -142,6 +167,61 @@ test.describe('prod probe wedge arm (#424)', () => {
       // no verdict, so an older round's late verdict must not stand in for it
       await seedReview(inReviewOldVerdict, 'APPROVED', 1, 15, 1);
       await seedReview(inReviewOldVerdict, 'SUPERSEDED', null, 1, 2);
+      await seedReview(maskedRestore, 'APPROVED', 6);
+      await seedReview(maskedBlock, 'APPROVED', 6);
+      await seedReview(restoredRequeue, 'APPROVED', 30);
+      await seedReview(noteDecoy, 'APPROVED', 6);
+      await seedReview(deletedMoverRequeue, 'APPROVED', 30);
+      // the CURRENT round (2) was decided 30 min ago; round 1's verdict is LATER (10 min
+      // ago) — the owner move at 20 min outranks the round it actually answered, and must
+      // outrank round 1's debris too (the round binding in the gap clause)
+      await seedReview(staleVerdictRequeue, 'APPROVED', 10, 10, 1);
+      await seedReview(staleVerdictRequeue, 'APPROVED', 30, 40, 2);
+      // Status activity rows: the discriminator is the activity ROW (body + its 1:1
+      // payload kind), never the author — `author_id` is ON DELETE SET NULL, so a
+      // deleted mover's row must still read as an owner move. tasks.setStatus is the
+      // only writer of a `status: …` body; a NOTE/VERDICT row whose text merely starts
+      // with `status: ` must NOT count (the free-text forgery the arm is pinned against).
+      const seedStatusActivity = async (
+        taskId: string,
+        minutesAgo: number,
+        body: string,
+        author: string | null,
+        kind: 'STATUS' | 'NOTE' = 'STATUS',
+      ) => {
+        const msgId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, author_id, body, created_at)
+           values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))`,
+          [msgId, taskId, author, body, minutesAgo],
+        );
+        await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+          msgId,
+          { kind },
+        ]);
+      };
+      // the legal manual re-queue over an already-decided round: the owner's move is NEWER
+      // than the verdict (the whole point of the discriminator)
+      await seedStatusActivity(legalRequeue, 3, 'status: doing → in-review', adminId);
+      await seedStatusActivity(inReviewManual, 2, 'status: doing → in-review', adminId);
+      // maskedRestore: block (-12) → killing verdict (-6) → child-restore (-2), task write -1
+      await seedStatusActivity(maskedRestore, 12, 'auto-blocked: 1 subtask(s) open', null);
+      await seedStatusActivity(maskedRestore, 2, `unblocked: all subtasks terminal → ${IN_REVIEW}`, null);
+      // maskedBlock: block (-10) → killing verdict (-6) → a title edit wrote the task row (-1)
+      await seedStatusActivity(maskedBlock, 10, 'auto-blocked: 1 subtask(s) open', null);
+      // restoredRequeue LEGAL: verdict (-30) → owner re-queue (-25) → block (-20) → restore (-12)
+      await seedStatusActivity(restoredRequeue, 25, 'status: todo → in-review', adminId);
+      await seedStatusActivity(restoredRequeue, 20, 'auto-blocked: 1 subtask(s) open', null);
+      await seedStatusActivity(restoredRequeue, 12, `unblocked: all subtasks terminal → ${IN_REVIEW}`, null);
+      // the FREE-TEXT forgery control: a NOTE whose body starts with `status: ` is not a
+      // status write — the wedge must still fire (the arm keys on the payload kind too)
+      await seedStatusActivity(noteDecoy, 2, 'status: blocked on the vendor cert', adminId, 'NOTE');
+      // the DELETED-MOVER control: the author was deleted (FK sets NULL) but the move is
+      // still an owner move — body + kind decide, never the author
+      await seedStatusActivity(deletedMoverRequeue, 20, 'status: doing → in-review', null);
+      // the STALE-VERDICT control: an owner move after the CURRENT round's verdict, an
+      // older round holding a later verdict — the round binding must keep this silent
+      await seedStatusActivity(staleVerdictRequeue, 20, 'status: doing → in-review', adminId);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -153,10 +233,50 @@ test.describe('prod probe wedge arm (#424)', () => {
         illegal,
       );
       expect(fired, 'the in_review branch keeps detecting its own shape').toContain(inReviewWedge);
+      expect(
+        fired,
+        'a child-restore after the killing verdict (block → verdict → restore) is the MASKED wedge (#430)',
+      ).toContain(maskedRestore);
+      expect(fired, 'a title/assignee edit after the killing verdict cannot mask the block branch (#430)').toContain(
+        maskedBlock,
+      );
+      expect(
+        fired,
+        'an owner re-queue that PRECEDES the block/restore is a legal state — the authored move outranks the verdict',
+      ).not.toContain(restoredRequeue);
+      expect(
+        fired,
+        'a NOTE whose body merely starts with `status: ` is not a status write — it must not mask the wedge',
+      ).toContain(noteDecoy);
+      expect(
+        fired,
+        'a deleted mover row (author_id NULL via ON DELETE SET NULL) is still an owner move — body + kind decide',
+      ).not.toContain(deletedMoverRequeue);
+      expect(
+        fired,
+        'an owner move newer than the CURRENT round verdict keeps the task legal even when an older round holds a later verdict',
+      ).not.toContain(staleVerdictRequeue);
+      // VERSION-GATE CONTROL (#430): below the atomic-writer release (2.78.24) the arm
+      // must keep the retired verdict-vs-write rule — the plain wedge fires, while the
+      // shapes only the owner record can unmask (a child-restore or title edit after the
+      // verdict) stay silent there, because an old image can lose a move's record.
+      const preEmitted = await $`bash ${script} --strand-sql 2.78.23 2`.nothrow().quiet();
+      expect(preEmitted.exitCode, preEmitted.stderr.toString()).toBe(0);
+      const preRows = await sql.unsafe(preEmitted.stdout.toString().trim());
+      const preFired = new Set(
+        String(preRows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'wedge')?.[1] ?? 'none').split(
+          ',',
+        ),
+      );
+      expect(preFired, 'the pre-floor rule still catches the plain wedge').toContain(illegal);
+      expect(preFired, 'the pre-floor rule is masked by a write after the verdict — by design').not.toContain(
+        maskedRestore,
+      );
+      expect(preFired, 'the pre-floor rule has no owner record to consult').not.toContain(noteDecoy);
       expect(fired, 'a live block still holds a PENDING row — not a wedge').not.toContain(liveBlock);
       expect(
         fired,
-        'a block over an already-decided round (verdict older than the block write) is legal',
+        'a block over an already-decided round (verdict older than the owner move and the block write) is legal',
       ).not.toContain(legalRequeue);
       expect(fired, 'a park writes no gate origin — it matches neither branch (#431 declares the gap)').not.toContain(
         parked,
@@ -178,7 +298,10 @@ test.describe('prod probe wedge arm (#424)', () => {
         todoOrigin,
       );
       expect(fired, 'a torn-down round holds no verdict row — not a decided round').not.toContain(tornDown);
-      expect(fired, 'a verdict older than the task write is a legal manual move').not.toContain(inReviewManual);
+      expect(
+        fired,
+        'a verdict older than the task write with an owner move after it is a legal manual move',
+      ).not.toContain(inReviewManual);
       expect(fired, 'the in_review half holds a live round while a reviewer row is PENDING').not.toContain(
         inReviewLive,
       );

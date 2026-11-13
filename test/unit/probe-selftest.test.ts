@@ -30,18 +30,37 @@ describe('prod probe selfcheck', () => {
       return proc.stdout.toString().split(" union all select 'strand'")[0] ?? '';
     };
 
-    const wedge = await wedgeOf('2.78.20', '2');
+    const wedge = await wedgeOf('2.78.24', '2');
     expect(wedge).toContain("select 'wedge'");
     expect(wedge).toContain("s.category = 'in_review'");
     expect(wedge).toContain('park_from_status is null');
     expect(wedge).toContain("r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')");
-    // both branches carry the write-vs-verdict discriminator
-    expect(wedge.match(/\) > t\.updated_at/g) ?? []).toHaveLength(2);
+    // both branches carry the #430 owner-status discriminator (a `status: …` activity
+    // row whose payload kind is STATUS, newer than the round's newest verdict), and the
+    // retired updated_at ordering is GONE: a reintroduced term would silently restore the mask
+    expect(wedge.match(/m\.body like 'status: %'/g) ?? []).toHaveLength(2);
+    expect(wedge.match(/a\.payload->>'kind' = 'STATUS'/g) ?? []).toHaveLength(2);
+    // the FULL clause, including the round binding the old pin used to cover (dropping
+    // just the binding reintroduces a legal-state false positive)
+    expect(
+      wedge.match(
+        /and r\.status in \('APPROVED', 'CHANGE_REQUESTED', 'REJECTED'\) and r\.round = \(select max\(r3\.round\) from task_reviews r3 where r3\.task_id = t\.id\)\)\)/g,
+      ) ?? [],
+    ).toHaveLength(2);
+    expect(wedge).not.toContain('t.updated_at');
+
+    // #430 floor: BELOW the atomic-writer release the owner clause must not appear — an
+    // old image can lose a manual move's record, so it keeps the verdict-vs-write rule
+    const pre = await wedgeOf('2.78.23', '2');
+    expect(pre).toContain("select 'wedge'");
+    expect(pre.match(/m\.body like 'status: %'/g) ?? []).toHaveLength(0);
+    expect(pre.match(/\) > t\.updated_at/g) ?? []).toHaveLength(2);
 
     // a pre-block image cannot heal the shape: the branch must not exist in its SQL
     const below = await wedgeOf('2.78.19', '2');
     expect(below).toContain("select 'wedge'");
     expect(below).not.toContain('park_from_status');
+    expect(below.match(/m\.body like 'status: %'/g) ?? []).toHaveLength(0);
     expect(below.match(/\) > t\.updated_at/g) ?? []).toHaveLength(1);
 
     const noColumns = await wedgeOf('2.78.20', '1');
