@@ -159,8 +159,35 @@ strand_orphan_arm() {
 }
 # VERSION FLOOR helper: 1 when the live version is at/above $1 (empty version = 0, the
 # arms that use it stay silent on an unreadable version rather than misattribute cause).
+# SEMVER SHAPE FIRST, stricter than the sibling floor helpers on purpose: $V is scraped
+# from an HTTP body, and `sort -V` ranks a calendar date (`2026.11.13`) or an IP
+# (`100.64.0`) above every real version — a shape-unguarded floor opens on garbage, and an
+# arm gated on it then runs against the wrong image. Exactly three numeric components, no
+# padding, and a major below 100 (this product's :: 2; a year and a three-digit octet are
+# the realistic garbage shapes, and both are >= 100).
 at_least() {
-  [ -n "${2:-}" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ] && echo 1 || echo 0
+  local v="${2:-}" maj
+  case "$v" in ''|*[!0-9.]*|*..*|.*|*.) echo 0; return ;; esac
+  [ -n "${v##*.*.*.}" ] || { echo 0; return; }
+  printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo 0; return; }
+  maj="${v%%.*}"
+  [ "$maj" -lt 100 ] 2>/dev/null || { echo 0; return; }
+  [ "$(printf '%s\n%s\n' "$1" "$v" | sort -V | tail -1)" = "$v" ] && echo 1 || echo 0
+}
+# EGRESS-ORIGIN arm (#427): a task OUTSIDE the paused category still carrying a gating
+# origin. Post-2.78.25 no legal write path produces it — every egress clears both origins
+# in the SAME statement that lands the status — and every discriminator resolves those
+# columns on a paused row only, so no gating arm heals it (statuses.remove's re-home is the
+# one repair, and it fires only on a DELETE). Keyed on the ORIGINS alone, never the
+# ledger: the block's own resume legally leaves the attempt ledger on a live row (#211
+# bounded cycles), so a ledger term would alert on a healthy row.
+egress_sql() {
+  printf "%s" "select 'egressorigin', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category <> 'paused' and (t.park_from_status is not null or t.pre_block_status is not null)"
+}
+# gate: the image carries BOTH origin columns (a one-column image would kill the query —
+# column-absent law) AND is at/above the release whose egresses clear them
+egress_floor_met() {
+  [ "${2:-}" = "2" ] && [ "$(at_least 2.78.25 "${1:-}")" = "1" ] && echo 1 || echo 0
 }
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
@@ -229,15 +256,51 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "orphanhome" || { echo "selfcheck fail: orphan arm missing at the current gate pair"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
+  # EGRESS-ORIGIN arm (#427): the floor matrix, the column gate, and the SQL's clauses —
+  # the detector is pinned by the bytes that ship (a test-side copy is not a pin). A
+  # shape-unguarded floor (a date/IP that sorts above every version) must stay CLOSED.
+  [ "$(egress_floor_met 2.78.24 2)" = "0" ] || { echo "selfcheck fail: egress floor below"; exit 1; }
+  [ "$(egress_floor_met 2.78.25 2)" = "1" ] || { echo "selfcheck fail: egress floor at"; exit 1; }
+  [ "$(egress_floor_met 3.0.0 2)" = "1" ] || { echo "selfcheck fail: egress floor above"; exit 1; }
+  [ "$(egress_floor_met 2.78.25 1)" = "0" ] || { echo "selfcheck fail: egress column gate"; exit 1; }
+  [ "$(egress_floor_met '' 2)" = "0" ] || { echo "selfcheck fail: egress empty version"; exit 1; }
+  [ "$(egress_floor_met 2026.11.13 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on a date"; exit 1; }
+  [ "$(egress_floor_met 100.64.0 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on an IP"; exit 1; }
+  [ "$(egress_floor_met 2.78.25-rc1 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on a pre-release"; exit 1; }
   [ "$(at_least 2.78.25 2.78.25)" = "1" ] || { echo "selfcheck fail: floor equal"; exit 1; }
   [ "$(at_least 2.78.25 2.78.26)" = "1" ] || { echo "selfcheck fail: floor above"; exit 1; }
   [ "$(at_least 2.78.25 2.78.24)" = "0" ] || { echo "selfcheck fail: floor below"; exit 1; }
   [ "$(at_least 2.78.25 '')" = "0" ] || { echo "selfcheck fail: floor empty"; exit 1; }
+  [ "$(at_least 2.78.25 2026.11.13)" = "0" ] || { echo "selfcheck fail: floor non-semver date"; exit 1; }
+  [ "$(at_least 2.78.25 2.78.25-rc1)" = "0" ] || { echo "selfcheck fail: floor non-semver pre-release"; exit 1; }
+  EGSQL_PIN=$(egress_sql)
+  printf '%s' "$EGSQL_PIN" | grep -qF "s.category <> 'paused'" || { echo "selfcheck fail: egress scope"; exit 1; }
+  printf '%s' "$EGSQL_PIN" | grep -qF "t.park_from_status is not null or t.pre_block_status is not null" || { echo "selfcheck fail: egress origin clause"; exit 1; }
+  printf '%s' "$EGSQL_PIN" | grep -qF 't.updated_at' && { echo "selfcheck fail: egress arm reads a mutable stamp"; exit 1; }
+  printf '%s' "$EGSQL_PIN" | grep -qF 'park_rearm' && { echo "selfcheck fail: egress arm keys on the ledger"; exit 1; }
+  printf '%s' "$EGSQL_PIN" | grep -qF "select 'egressorigin'" || { echo "selfcheck fail: egress arm tag"; exit 1; }
+  # WIRING pin (r1 review, mutation-proved): the emit mode and the pass are two places;
+  # without this, deleting the pass's whole arm block keeps every other assertion green and
+  # ships a detector that never runs. Assert the gate + the alert are in the SHIPPED file,
+  # exactly once each.
+  EGPASS=$(grep -cE '^EGATE=\$\(egress_floor_met' "$0" 2>/dev/null || true)
+  [ "$EGPASS" = "1" ] || { echo "selfcheck fail: egress pass gate missing ($EGPASS)"; exit 1; }
+  EGALERT=$(grep -cE '^[[:space:]]*anom\+=\("egress_origin:' "$0" 2>/dev/null || true)
+  [ "$EGALERT" = "1" ] || { echo "selfcheck fail: egress alert line missing ($EGALERT)"; exit 1; }
+  EGPSQL=$(grep -cE '^[[:space:]]*EGSQL=\$\(egress_sql\)' "$0" 2>/dev/null || true)
+  [ "$EGPSQL" = "1" ] || { echo "selfcheck fail: egress pass does not run the shipped SQL ($EGPSQL)"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
   printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
   echo "ok probe selfcheck"
+  exit 0
+fi
+if [ "${1:-}" = "--egress-sql" ]; then
+  # emit the exact egress-origin SQL a pass would run (no network, no state writes): the
+  # arm's regression test seeds a test DB and runs these bytes, never a test-side copy
+  egress_sql
+  printf '\n'
   exit 0
 fi
 if [ "${1:-}" = "--strand-sql" ]; then
@@ -354,37 +417,40 @@ fi
 
 # 5b-ii. EGRESS EXHAUSTION (#427, floor-gated): every legal egress from a paused block
 # (the two settle flips, the owner's manual move, abandon's cancel, the note-dispatch
-# bounce) clears both gating origins and resets the park re-arm ledger in the SAME
-# statement that lands the status. An ORIGIN on a row that is NOT in the paused category
-# is therefore an illegal shape after that release: it is a restore home for a block that
-# does not exist, and every discriminator resolves those columns on a paused row only, so
-# nothing heals it — the next auto-block overwrites it, or a later park inherits a home it
-# never recorded.
-# Keyed on the ORIGINS only, never the ledger: a restored ladder park LEGALLY carries its
-# attempt ledger off BLOCKED (bounded cycles are the point of #211), so a ledger term
-# would alert on a healthy row (mechanism-keyed law).
-# TIMESTAMP-SCOPED: the shape is only illegal for writes made by a post-fix image, so the
-# arm reads rows updated after the first sighting of the floored version (the
-# retention-since-version pattern). A row an older image left behind stays silent — it is
-# a pre-fix leftover, not a live egress failure — and the bound costs at most the first
-# probe interval after the deploy.
-# Own psql pass (probe law #4) + column guard (column-absent law) + version floor (a
-# pre-fix image legitimately leaves origins behind; alerting there misattributes cause).
-EGFLOOR=2.78.25
-if [ "$(at_least "$EGFLOOR" "$V")" = "1" ]; then
-  if [ ! -f "$PROBE_STATE/egress-since-version" ]; then printf '%s\n' "$V" > "$PROBE_STATE/egress-since-version"; fi
-  EGSINCE=$(stat -c %Y "$PROBE_STATE/egress-since-version" 2>/dev/null || echo 0)
+# bounce) clears both gating origins in the SAME statement that lands the status. An
+# ORIGIN on a row that is NOT in the paused category is therefore an illegal shape after
+# that release: it is a restore home for a block that does not exist, every discriminator
+# resolves those columns on a paused row only, and nothing heals it — the next auto-block
+# overwrites the home, a later park inherits a home it never recorded.
+# NOT timestamp-scoped on purpose (r1 review, P1): `updated_at` is the row's last write,
+# not the egress wire, so ANY benign edit (a title save, a reassignment, a dispatch claim)
+# bumps it — a pre-fix leftover touched once would alert as a live egress failure and
+# drown a real regression. The shape is strictly illegal on a floored image and the floor
+# is the discriminator: no pre-fix row can be told apart from a live failure, so the arm
+# reports both and the operator reads the row's own history.
+# Keyed on the ORIGINS alone, never the ledger: the block's own resume legally leaves the
+# attempt ledger on a live row (#211 bounded cycles), so a ledger term would alert on a
+# healthy row. Own psql pass (probe law #4) + column gate (column-absent law).
+EGATE=$(egress_floor_met "$V" "2")
+if [ "$EGATE" = "1" ]; then
+  # the arm's OWN column probe: the verge flow below runs later in the file, and this arm
+  # must never assume a column count it did not read (column-absent law)
   EGCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name in ('park_from_status','pre_block_status')\"" 2>/dev/null) || EGCOL="guard-error"
   if [ "$EGCOL" = "guard-error" ]; then
     anom+=("egress_guard: column probe failed — #427 origin-exhaustion detection blind")
-  elif [ "$EGCOL" = "2" ] && [ "$EGSINCE" -gt 0 ] 2>/dev/null; then
-    EGSQL="select coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category <> 'paused' and (t.park_from_status is not null or t.pre_block_status is not null) and t.updated_at > to_timestamp($EGSINCE)"
+  elif [ "$EGCOL" = "2" ]; then
+    # a one-column image is skipped silently: its clause cannot exist, and the strand
+    # arm's own column guard is what alerts on a degraded probe
+    EGSQL=$(egress_sql)
     EGERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$EGSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
     EGOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$EGSQL\"" 2>/dev/null) || EGOUT="db-unreachable"
     if [ "$EGOUT" = "db-unreachable" ]; then
       anom+=("egress: unreachable ${EGERR:-psql failed}")
-    elif [ -n "$EGOUT" ] && [ "$EGOUT" != "none" ]; then
-      anom+=("egress_origin: non-blocked row(s) still carrying a gating origin [$EGOUT] — an egress did not exhaust its block memory, #427 class")
+    else
+      EGRIDS=$(echo "$EGOUT" | awk -F'|' '/^egressorigin/{print $2}')
+      if [ -n "${EGRIDS:-}" ] && [ "$EGRIDS" != "none" ]; then
+        anom+=("egress_origin: non-blocked row(s) still carrying a gating origin [$EGRIDS] — an egress did not exhaust its block memory, #427 class")
+      fi
     fi
   fi
 fi
