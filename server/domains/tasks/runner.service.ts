@@ -267,6 +267,10 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
       where: { taskId: { eq: taskId }, reviewerId: { eq: employeeId }, status: { eq: REVIEW_STATUS.PENDING } },
     });
     if (pendingReview) {
+      // UNDELIVERED RETRY (#420): a STOPPED correction run delivered nothing — re-arm
+      // the parked intent so the owner's unblock re-fire carries the block (the stop
+      // itself is not a verdict and spends nothing).
+      await rearmUndeliveredCorrection(taskId, runId);
       const { parkRound } = await import('./review.service');
       await parkRound(taskId, 'review turn stopped — needs a human', { rearmable: false });
     }
@@ -1277,6 +1281,34 @@ async function parkReviewTurnFailure(
   await parkRound(taskId, why, opts);
 }
 
+/** UNDELIVERED CORRECTION RE-ARM (#420): detect whether a just-settled (FAILED/STOPPED/
+ *  reaped) run was the correction retry itself — its own frozen brief carries the CORRECTION
+ *  marker line — and re-arm the parked intent for its dispatched (task, reviewer, round) so
+ *  the park restore's plain re-fire dispatches WITH the block. A run without the marker
+ *  (plain turn) or without a binding round row (removal-owned, round closed) arms nothing.
+ *  Best-effort by contract: the failure park must proceed even if this read dies. */
+export async function rearmUndeliveredCorrection(taskId: string, runId: string): Promise<void> {
+  try {
+    const runRows = await db
+      .select({ employeeId: taskRuns.employeeId, startedAt: taskRuns.startedAt, prompt: taskRuns.prompt })
+      .from(taskRuns)
+      .where(eq(taskRuns.id, runId))
+      .limit(1);
+    const run = runRows[0];
+    if (!run?.employeeId) return;
+    if (!run.prompt?.split('\n').some((line) => line.startsWith(REVIEW_CORRECTION_MARKER))) return;
+    const { dispatchedReviewRoundRow, rearmReviewMintIntent } = await import('./review.service');
+    const binding = await dispatchedReviewRoundRow(taskId, run.employeeId, run.startedAt);
+    if (!binding) return;
+    rearmReviewMintIntent(taskId, run.employeeId, binding.round);
+  } catch (e) {
+    consola.warn(
+      `correction re-arm read failed for task ${taskId} run ${runId}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+}
+
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
  * silently approves — it re-dispatches once per round with the CORRECTION block,
@@ -1701,6 +1733,11 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
       // flips in-review -> BLOCKED; owner unblock re-dispatches the parked reviewer.
       // REARMABLE (#211): a failed review turn is infra-class — the ladder re-fires it.
       // DELETED REVIEWER (#370): a failed turn of a removed reviewer never parks.
+      // UNDELIVERED RETRY (#420): a FAILED correction run never delivered its block —
+      // re-arm the parked intent so the restore's re-fire dispatches WITH it (a plain
+      // retry would spend the bounded retry on an uncorrected turn and park
+      // decision-class with the block never sent).
+      await rearmUndeliveredCorrection(taskId, runId);
       await parkReviewTurnFailure(taskId, plan.ai.userId, `review turn failed — run settled ${status}`);
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);

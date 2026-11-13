@@ -26,6 +26,7 @@ import {
   dispatchTask,
   executeRun,
   latestRunIdForTask,
+  rearmUndeliveredCorrection,
   type DispatchJob,
 } from './runner.service';
 
@@ -126,6 +127,9 @@ async function reapStaleRunsInner() {
         // child-derived block from an in-review origin (the failed turn's only recovery).
         const { parkRound } = await import('./review.service');
         // REARMABLE (#211): a timed-out review turn is infra-class (env/runner outage).
+        // UNDELIVERED RETRY (#420): a reaped CORRECTION run delivered nothing — re-arm
+        // the parked intent so the ladder's restore re-fire carries the block.
+        await rearmUndeliveredCorrection(taskId, run.id);
         await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`, { rearmable: true });
       } else if (category === CATEGORY.WORKING) {
         const streak = current.failStreak + 1;
