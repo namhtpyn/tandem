@@ -7,51 +7,87 @@
 // decided round, or no round at all — used to strand the task: the review box
 // renders, nothing can ever mint, and a second same-status move is a refused
 // self-edge. The heal opens a FRESH round on the task's stored roster,
-// submit-faithful (existence re-checked; zero survivors completes exactly as if
-// no reviewer were set), keeping the OWNER'S chosen status id.
+// submit-faithful (existence re-checked; zero survivors completes exactly as
+// submit's own zero-reviewer arm does — open-subtasks gate included), keeping
+// the OWNER'S chosen status id, and the post-flip window is submit-isolated
+// (#394 r6): a re-gate failure never skips the reviewer turn, a dispatch
+// failure parks rearmable.
 import { consola } from 'consola';
 import { and, eq } from 'drizzle-orm';
 
-import { CATEGORY } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db/index';
 import { tasks } from '../../db/schema';
-import { refreshParentGating } from './gating.service';
+import { hasOpenChildren, refreshParentGating } from './gating.service';
 import {
+  canonicalStoredUuid,
   discardVoidRows,
   dispatchAiReviewTurns,
   liveReviewers,
+  logActivity,
   openReviewRound,
   openRoundLive,
+  parkRound,
   settleExtinguishedRound,
   teardownAllPendingRounds,
 } from './review.service';
 
 const log = consola.withTag('tandem');
 
+/** submit's skip-note arithmetic (UUID-CASE LAW): distinct stored entries that no
+ * longer name a company user are skips — case variants of ONE id are the same
+ * reviewer, never a skip. */
+function skippedCount(roster: string[], liveCount: number, droppedInRound = 0): number {
+  const distinct = new Set(roster.map((id) => canonicalStoredUuid(id) ?? id.trim().toLowerCase())).size;
+  return Math.max(0, distinct - liveCount + droppedInRound);
+}
+
 /** the zero-survivor completion, submit-faithful (#361 r4/r6, #364): no round may
  * outlive the completion — close every pending round the task still carries and
- * land done, CAS-arbitrated on the stamp the heal read. Returns false (no round)
+ * land done, CAS-arbitrated on the stamp the heal read. SUBMIT-PARITY GATE:
+ * submit refuses completion with open subtasks, so the heal's completion holds
+ * the same way — the task stays where the owner moved it and a note says why
+ * (never a silent dead end: the note is the evidence). Returns false (no round)
  * so the caller's return stays "a live round exists". */
-async function completeWithoutReviewers(taskId: string, stamp: { status: string; updatedAt: Date }): Promise<boolean> {
+async function completeWithoutReviewers(taskId: string, task: { status: string; updatedAt: Date }, skipped: number) {
+  if (await hasOpenChildren(taskId)) {
+    await logActivity(
+      taskId,
+      ACTIVITY_KIND.NOTE,
+      null,
+      'no live reviewers — resolve open subtasks (or set reviewers), then move into review again',
+      { skippedReviewers: skipped },
+    );
+    return false;
+  }
   const done = await db
     .update(tasks)
     .set({ status: STATUS.done, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, stamp.status), eq(tasks.updatedAt, stamp.updatedAt)))
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
   if (done.length === 0) return false; // a concurrent writer owns the outcome
   await teardownAllPendingRounds(taskId, 'no live reviewers');
-  await refreshParentGating(taskId);
+  if (skipped > 0) {
+    await logActivity(taskId, ACTIVITY_KIND.NOTE, null, `${skipped} reviewer(s) skipped — not in the company`, {
+      skippedReviewers: skipped,
+    });
+  }
+  try {
+    await refreshParentGating(taskId);
+  } catch (e) {
+    log.warn(`requeue heal: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
   return false;
 }
 
 /** REQUEUE HEAL (#440): open a fresh round on the task's stored roster over a
  * decided / never-opened round, keeping the owner's chosen status id. Zero live
- * reviewers completes exactly as if no reviewer were set (owner ruling
- * 2026-10-26 — submit's own semantic). FAULT ISOLATED: the owner's move already
- * landed, so a failed heal logs and leaves the shape to the owner — the probe
- * stays silent on it, the owner's status row is the evidence. */
+ * reviewers completes exactly as submit's zero-reviewer arm does (owner ruling
+ * 2026-10-26). FAULT ISOLATED: the owner's move already landed, so a failed heal
+ * logs and leaves the shape to the owner — the probe stays silent on it, the
+ * owner's status row is the evidence. */
 async function healRequeue(taskId: string): Promise<boolean> {
   try {
     const task = await db.query.tasks.findFirst({
@@ -59,8 +95,16 @@ async function healRequeue(taskId: string): Promise<boolean> {
       where: { id: { eq: taskId } },
     });
     if (!task) return false;
-    const reviewers = await liveReviewers(task.reviewers ?? []);
-    if (reviewers.length === 0) return completeWithoutReviewers(taskId, task);
+    // a concurrent writer may have moved the task between the router's commit and
+    // this read: the heal only ever acts on an in-review-category landing
+    const catRows = await db.query.taskStatuses.findMany({
+      columns: { category: true },
+      where: { id: { eq: task.status } },
+    });
+    if (catRows[0]?.category !== CATEGORY.IN_REVIEW) return false;
+    const roster = task.reviewers ?? [];
+    const reviewers = await liveReviewers(roster);
+    if (reviewers.length === 0) return completeWithoutReviewers(taskId, task, skippedCount(roster, 0));
     const opened = await openReviewRound(
       taskId,
       reviewers,
@@ -73,13 +117,25 @@ async function healRequeue(taskId: string): Promise<boolean> {
     if (opened.opened === 0 && !opened.flipped) {
       // every reviewer vanished inside the round-open transaction (#364):
       // nothing was minted and nothing flipped — complete as if none were set
-      return completeWithoutReviewers(taskId, task);
+      return completeWithoutReviewers(taskId, task, skippedCount(roster, reviewers.length, opened.dropped.length));
     }
     if (!opened.flipped) return false; // a concurrent settle/submit owns the outcome
-    // a WON flip: parent gating first, then the reviewer turn — the round-open's
-    // caller order (a fresh rearmable park must not read as a blocked round)
-    await refreshParentGating(taskId);
-    await dispatchAiReviewTurns(taskId);
+    // best-effort BETWEEN the commit and the dispatch (submit's #394 r6 window):
+    // the round is already the outcome, so each step is isolated and logged — a
+    // re-gate failure must never skip the reviewer turn, and a dispatch failure
+    // parks rearmable so the round is never left live with no run and no marker.
+    try {
+      await refreshParentGating(taskId);
+    } catch (e) {
+      log.warn(`requeue heal: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    try {
+      await dispatchAiReviewTurns(taskId);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      log.warn(`requeue heal: round ${opened.round} dispatch failed for task ${taskId}:`, reason);
+      await parkRound(taskId, `review turn dispatch failed — ${reason}`, { rearmable: true }).catch(() => {});
+    }
     return true;
   } catch (e) {
     log.warn(`resume: requeue heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
