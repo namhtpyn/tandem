@@ -26,6 +26,7 @@ import {
   dispatchTask,
   executeRun,
   latestRunIdForTask,
+  rearmUndeliveredCorrection,
   type DispatchJob,
 } from './runner.service';
 
@@ -94,6 +95,12 @@ async function reapStaleRunsInner() {
       .where(and(eq(taskRuns.id, run.id), eq(taskRuns.status, RUN_STATUS.RUNNING)))
       .returning({ id: taskRuns.id });
     if (!reapedRows.length) continue; // settled concurrently — nothing to reap
+    // UNDELIVERED RETRY (#420 r2): the re-arm is a memory-only write whose carry gate
+    // refuses a wrong round — it does NOT need the latest-run ownership below, and a
+    // correction run reaped while a newer run exists must still re-arm (stacked reaped
+    // correction runs would otherwise reach the verdict-less settle with priorDone >= 1
+    // and park decision-class with the block never delivered).
+    await rearmUndeliveredCorrection(nonNull(run.message).taskId, run.id);
     // only bounce the task if this was its latest run (shared findFirst, #163 —
     // was fetch-ALL runs of the task + JS sort: an unbounded scan)
     if ((await latestRunIdForTask(nonNull(run.message).taskId)) === run.id) {
@@ -126,6 +133,7 @@ async function reapStaleRunsInner() {
         // child-derived block from an in-review origin (the failed turn's only recovery).
         const { parkRound } = await import('./review.service');
         // REARMABLE (#211): a timed-out review turn is infra-class (env/runner outage).
+        // (The #420 re-arm fired above the latest-run gate — see reapStaleRunsInner.)
         await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`, { rearmable: true });
       } else if (category === CATEGORY.WORKING) {
         const streak = current.failStreak + 1;

@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "436f80e9-1784-4083-b2ef-486222f733ba",
+  "prevIds": [
+    "736fac49-7f62-41a3-bee2-3fa7a00a5909"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "task_runs",
+        "verdict_correction"
+      ],
+      "writes": [
+        "s|col|public.task_runs.verdict_correction",
+        "n|col|public.task_runs.verdict_correction",
+        "e|col|public.task_runs.verdict_correction"
+      ],
+      "reads": [
+        "n|tbl|public.task_runs",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_runs",
+        "name": "verdict_correction",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

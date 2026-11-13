@@ -267,6 +267,10 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
       where: { taskId: { eq: taskId }, reviewerId: { eq: employeeId }, status: { eq: REVIEW_STATUS.PENDING } },
     });
     if (pendingReview) {
+      // UNDELIVERED RETRY (#420): a STOPPED correction run delivered nothing — re-arm
+      // the parked intent so the owner's unblock re-fire carries the block (the stop
+      // itself is not a verdict and spends nothing).
+      await rearmUndeliveredCorrection(taskId, runId);
       const { parkRound } = await import('./review.service');
       await parkRound(taskId, 'review turn stopped — needs a human', { rearmable: false });
     }
@@ -558,7 +562,7 @@ import {
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
-import { buildBrief, loadBriefData, REVIEW_CORRECTION_MARKER } from './brief.service';
+import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
@@ -1125,6 +1129,10 @@ export async function createRun(
       output: '',
       attempts: 1,
       prompt: brief,
+      // VERDICT-LESS CORRECTION identity (#276/#420): the run row's write record —
+      // the delivered-check and the undelivered-retry re-arm read THIS, never the
+      // brief text (an echoed marker line in agent-controlled text is forgeable)
+      verdictCorrection: opts?.verdictCorrection === true,
     });
     return true;
   });
@@ -1277,6 +1285,37 @@ async function parkReviewTurnFailure(
   await parkRound(taskId, why, opts);
 }
 
+/** UNDELIVERED CORRECTION RE-ARM (#420): detect whether a just-settled (FAILED/STOPPED/
+ *  reaped) run was the correction retry itself — its row carries the verdict_correction
+ *  WRITE RECORD set at its dispatch (never brief-text forensics: an echoed marker line
+ *  in agent-controlled brief text is forgeable) — and re-arm the parked intent for its
+ *  dispatched (task, reviewer, round) so the park restore's plain re-fire dispatches
+ *  WITH the block. A plain run, or one without a binding round row (removal-owned,
+ *  round closed), arms nothing. Best-effort by contract: the failure park must proceed
+ *  even if this read dies. */
+export async function rearmUndeliveredCorrection(taskId: string, runId: string): Promise<void> {
+  try {
+    const runRows = await db
+      .select({
+        employeeId: taskRuns.employeeId,
+        startedAt: taskRuns.startedAt,
+        verdictCorrection: taskRuns.verdictCorrection,
+      })
+      .from(taskRuns)
+      .where(eq(taskRuns.id, runId))
+      .limit(1);
+    const run = runRows[0];
+    if (!run?.employeeId) return;
+    if (run.verdictCorrection !== true) return;
+    const { dispatchedReviewRoundRow, rearmReviewMintIntent } = await import('./review.service');
+    const binding = await dispatchedReviewRoundRow(taskId, run.employeeId, run.startedAt);
+    if (!binding) return;
+    rearmReviewMintIntent(taskId, run.employeeId, binding.round);
+  } catch (e) {
+    consola.warn(`correction re-arm read failed for task ${taskId} run ${runId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
  * silently approves — it re-dispatches once per round with the CORRECTION block,
@@ -1364,9 +1403,9 @@ export async function settleReviewVerdict(
     // reviewer's COMPLETED turns in that round — a reaped/failed turn is not a
     // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true, startedAt: true, status: true, prompt: true },
-      // BOUNDED to the round (#380): the marker check below only needs this round's turns —
-      // an unbounded read would load every brief the reviewer ever had on the task
+      columns: { id: true, startedAt: true, status: true, verdictCorrection: true },
+      // BOUNDED to the round (#380): the delivery check below only needs this round's turns —
+      // an unbounded read would load every record the reviewer ever had on the task
       where: {
         employeeId: { eq: reviewerId },
         message: { taskId: { eq: taskId } },
@@ -1402,16 +1441,13 @@ export async function settleReviewVerdict(
     const { dropReviewMintIntent } = await import('./review.service');
     // SPENT only if the block was DELIVERED (#380): the SETTLING turn IS the correction turn
     // in the #276 shape (one plain turn, then the retry), so the check covers every DONE turn
-    // of the round INCLUDING this one — and matches the marker as a LINE, never a substring
-    // (the brief embeds the result body and other verdicts verbatim, so an echoed mention
-    // must not read as a delivery). A plain turn's blockless settle leaves the intent parked:
-    // its restore is the only remaining chance to send the CORRECTION block at all.
-    const delivered = reviewRuns.some(
-      (r) =>
-        r.status === RUN_STATUS.DONE &&
-        r.startedAt !== null &&
-        r.prompt?.split('\n').some((line) => line.startsWith(REVIEW_CORRECTION_MARKER)) === true,
-    );
+    // of the round INCLUDING this one — identified by the run row's verdict_correction WRITE
+    // RECORD set at its dispatch (#420 r2), never by brief TEXT (the brief embeds the result
+    // body and other verdicts verbatim, so an echoed marker line in agent-controlled text
+    // must not forge a delivery — nor suppress a real one). A plain turn's blockless settle
+    // leaves the intent parked: its restore is the only remaining chance to send the
+    // CORRECTION block at all.
+    const delivered = reviewRuns.some((r) => r.status === RUN_STATUS.DONE && r.verdictCorrection === true);
     if (delivered) dropReviewMintIntent(taskId, reviewerId);
     await parkReviewTurnFailure(
       taskId,
@@ -1701,6 +1737,11 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
       // flips in-review -> BLOCKED; owner unblock re-dispatches the parked reviewer.
       // REARMABLE (#211): a failed review turn is infra-class — the ladder re-fires it.
       // DELETED REVIEWER (#370): a failed turn of a removed reviewer never parks.
+      // UNDELIVERED RETRY (#420): a FAILED correction run never delivered its block —
+      // re-arm the parked intent so the restore's re-fire dispatches WITH it (a plain
+      // retry would spend the bounded retry on an uncorrected turn and park
+      // decision-class with the block never sent).
+      await rearmUndeliveredCorrection(taskId, runId);
       await parkReviewTurnFailure(taskId, plan.ai.userId, `review turn failed — run settled ${status}`);
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);

@@ -1683,6 +1683,17 @@ function parkReviewMintIntent(taskId: string, opts?: DispatchOpts) {
   reviewMintIntents.set(reviewMintIntentKey(taskId, opts.verdictlessReviewerId), opts.round);
 }
 
+/** re-arm an UNDELIVERED correction (#420): the retry's dispatch LANDED (the intent was
+ *  consumed) but its run FAILED/reaped/STOPPED before any verdict — the reviewer never saw
+ *  the block, so the park restore's plain re-fire must carry it again. Bound to the same
+ *  (task, reviewer, round) the failed run was minted for; the carry gate
+ *  (reviewMintIntentFor) still refuses a round that moved on, so a closed round can never
+ *  ride a new round's first-turn brief. */
+export function rearmReviewMintIntent(taskId: string, reviewerId: string, round: number) {
+  if (round <= 0) return;
+  reviewMintIntents.set(reviewMintIntentKey(taskId, reviewerId), round);
+}
+
 /** the bounded retry is SPENT: the reviewer's turn settled verdict-less again and the round
  *  parks on the owner (#276), so a later restore turn must not carry a CORRECTION block for
  *  a retry that already ran (#380) */
