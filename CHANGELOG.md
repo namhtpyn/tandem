@@ -1,3 +1,15 @@
+## [2.78.25](https://github.com/namhtpyn/tandem/compare/v2.78.24...v2.78.25) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#427](https://github.com/namhtpyn/tandem/issues/427) an egress from a block exhausts its origins and park ladder ([aa45842](https://github.com/namhtpyn/tandem/commit/aa458423230a6abb797e6156eb16c94b3be6c5b9))
+* [#427](https://github.com/namhtpyn/tandem/issues/427) r1 — drop the maskable timestamp scope, pin the arm's shipped bytes and its wiring, state the restore exemption ([e3336da](https://github.com/namhtpyn/tandem/commit/e3336da470507b09fe5532d5f8c895a63a0c0570))
+* [#427](https://github.com/namhtpyn/tandem/issues/427) r2 — the liveness bounce is the third egress (CAS + exhaustion), gate the probe arm as a predicate, execute the shipped bytes in an e2e spec ([cfe85d7](https://github.com/namhtpyn/tandem/commit/cfe85d77fb3cf1e6b06cccda28d975969f3d996c))
+* [#427](https://github.com/namhtpyn/tandem/issues/427) r3 — inspect the bounce CAS, pin its predicate, close the arithmetic overflow, correct the SPEC's egress list ([0e1a595](https://github.com/namhtpyn/tandem/commit/0e1a595244ae614a0fbc2397e126f70761f06ced))
+* [#427](https://github.com/namhtpyn/tandem/issues/427) r4 — name the liveness bounce in the probe bullet, pin the patch's remaining fields, state the floor's real job ([8f54038](https://github.com/namhtpyn/tandem/commit/8f540389b8cb6e8db77bad338da66ff89ae364f8))
+* [#427](https://github.com/namhtpyn/tandem/issues/427) r5 — state the real leftover path (re-home keeps the origin; the liveness grace clears working rows) and the CAS's actual failure mode ([f1b5bc8](https://github.com/namhtpyn/tandem/commit/f1b5bc816a1f331a2c53c620ec1b57d72f61349b))
+
 ## [2.78.24](https://github.com/namhtpyn/tandem/compare/v2.78.23...v2.78.24) (2026-11-13)
 
 
