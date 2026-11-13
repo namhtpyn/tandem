@@ -280,6 +280,9 @@ describe('canonicalStoredUuid (#361)', () => {
 describe('round open + in-review flip are one transaction (#394)', () => {
   it('commits the flip, the round rows and their obligations with ONE transaction id', async () => {
     const opened = await openReviewRound(T, [A, B], 'the result', FLIP);
+    // #454 r2: the tx's first statement is the status-mutation mutex (captured and
+    // asserted here so the capture can never silently rot into dead instrumentation)
+    expect(h.advisorySqls).toEqual(["select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))"]);
     expect(opened).toEqual({ flipped: true, round: 2, opened: 2, dropped: [] });
     // the flip arbitrates on the status AND the updatedAt stamp this submit read
     const flipSql = new PgDialect().sqlToQuery(h.flipConds[0] as never);
