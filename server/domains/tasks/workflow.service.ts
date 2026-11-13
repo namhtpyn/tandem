@@ -544,7 +544,9 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // working-category task (the r1 rethrow owns that window), so a disarm would only
     // ever strip a CONCURRENT round's legitimate park recovery state — the re-arm scan
     // and the park-origin restore both depend on those columns.
-    if (!opened.flipped) throw new Error('task state changed during submit — a settle owns the outcome');
+    if (!opened.flipped) {
+      throw new Error('task state changed during submit — a settle owns the outcome');
+    }
     // best-effort BETWEEN the commit and the dispatch (#394 r6): a throw here must not
     // skip the reviewer turn — the round is already the outcome, and a live round with a
     // PENDING row and no run in flight has no automatic recovery. Each step is isolated
