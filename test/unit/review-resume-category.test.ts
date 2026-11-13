@@ -11,7 +11,7 @@
 // heal is fault-isolated.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 // helpers the hoisted mock factories need — vi.hoisted runs before the mocks
@@ -60,6 +60,10 @@ const h = vi.hoisted(() => ({
   discarded: [] as string[],
   liveIds: [] as string[],
   childrenOpen: false,
+  warns: [] as string[],
+  currentRound: 0,
+  roundRows: [] as Array<{ status: string; reviewerId?: string | null }>,
+  liveQueue: [] as boolean[],
   opened: [] as Array<{
     taskId: string;
     reviewers: string[];
@@ -81,6 +85,10 @@ const h = vi.hoisted(() => ({
 // (canonicalStoredUuid + whereVals live in the vi.hoisted block above — the mock
 // factories reference them before the module body runs)
 
+vi.mock('consola', () => ({
+  consola: { withTag: () => ({ warn: (...a: unknown[]) => void h.warns.push(a.map(String).join(' ')) }) },
+}));
+
 vi.mock('../../server/db/index', () => ({
   asDb: (x: unknown) => x,
   db: {
@@ -101,6 +109,11 @@ vi.mock('../../server/db/index', () => ({
         },
       },
     },
+    select: (_cols: Record<string, unknown>) => ({
+      from: (_t: unknown) => ({
+        where: async () => h.roundRows,
+      }),
+    }),
     update: (_table: unknown) => ({
       set: (payload: Record<string, unknown>) => ({
         where: (w: unknown) => ({
@@ -116,7 +129,8 @@ vi.mock('../../server/db/index', () => ({
 }));
 
 vi.mock('../../server/domains/tasks/review.service', () => ({
-  openRoundLive: async () => h.live,
+  openRoundLive: async () => (h.liveQueue.length > 0 ? (h.liveQueue.shift() as boolean) : h.live),
+  currentRound: async () => h.currentRound,
   dispatchAiReviewTurns: async (taskId: string) => {
     if (h.dispatchThrows) throw new Error('dispatch boom');
     void h.dispatched.push(taskId);
@@ -190,6 +204,10 @@ beforeEach(() => {
   h.discarded = [];
   h.liveIds = [];
   h.childrenOpen = false;
+  h.warns = [];
+  h.currentRound = 0;
+  h.roundRows = [];
+  h.liveQueue = [];
   h.opened = [];
   h.openResult = { flipped: false, round: 0, opened: 0, dropped: [] };
   h.openThrows = false;
@@ -372,17 +390,32 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.noted).toHaveLength(0);
   });
 
-  it('OPEN SUBTASKS hold the zero-survivor completion — a note says why, the owner status stands', async () => {
+  it('OPEN SUBTASKS hold the WHOLE heal — no completion, no fresh round, a note says why', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;
-    h.childrenOpen = true; // submit refuses completion with open subtasks — so does the heal
+    h.childrenOpen = true; // submit refuses open-subtask parents — the heal holds identically
     h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [] };
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
     expect(h.doneFlip).toHaveLength(0); // no completion write
     expect(h.torndown).toHaveLength(0);
     expect(h.noted).toHaveLength(1);
-    expect(h.noted[0]?.[3]).toContain('no live reviewers');
+    expect(h.noted[0]?.[3]).toContain('review cannot start');
     expect(h.noted[0]?.[3]).toContain('open subtasks');
+  });
+
+  it('open subtasks hold the ROUND-OPEN arm too — live reviewers never mint over them', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.settleResult = false; // decided round — the heal fires, but the hold preempts it
+    h.childrenOpen = true;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.openResult = { flipped: true, round: 2, opened: 1, dropped: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.doneFlip).toHaveLength(0);
+    expect(h.noted).toHaveLength(1);
   });
 
   it('a VOID round still settles by the matrix — the heal never preempts it (#365)', async () => {
@@ -472,6 +505,54 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.parked).toHaveLength(0); // nothing committed, nothing to park over
   });
 
+  it('an ESCALATED current round is a live human decision — the heal never mints over it', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.settleResult = false; // the settle no-ops (no void row) — the heal would fire…
+    h.currentRound = 3;
+    h.roundRows = [{ status: REVIEW_STATUS.ESCALATED, reviewerId: U1 }]; // …but must not
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.doneFlip).toHaveLength(0);
+  });
+
+  it('a live round minted mid-heal (a racing move) is never stacked — the heal re-checks first', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.liveQueue = [false, true]; // first read: not live (enters the heal); re-check: live
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it('the fresh round notes absent roster ids exactly as submit does (#361 r4)', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.settleResult = false;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1, UGONE] };
+    h.liveIds = [U1];
+    h.openResult = { flipped: true, round: 2, opened: 1, dropped: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
+    expect(h.noted).toEqual([
+      ['task-1', ACTIVITY_KIND.NOTE, null, '1 reviewer(s) skipped — not in the company', { skippedReviewers: 1 }],
+    ]);
+    expect(h.dispatched).toEqual(['task-1']); // the note never delays the turn
+  });
+
+  it('a failed heal logs through the fault-isolation catch (the quiet guard stays quiet)', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.openThrows = true;
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.warns.length).toBeGreaterThanOrEqual(1); // the catch IS the logging path
+  });
+
   it('a task that vanished mid-heal is a quiet no-op', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;
@@ -480,5 +561,6 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.opened).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);
     expect(h.doneFlip).toHaveLength(0);
+    expect(h.warns).toEqual([]); // the vanished-task GUARD answers before any throw/catch
   });
 });
