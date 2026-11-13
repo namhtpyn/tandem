@@ -113,10 +113,19 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
         { id: 'e2e-ready-old-move', status: TODO },
         // per-round exclusion, hold-landing twin: the resume note is newer than THAT row
         { id: 'e2e-ready-old-hold', status: TODO },
-        // BOTH rounds live, each excluded by its OWN newer record (r1 by the owner move,
-        // r2 by the resume note): silent — and the patch-out mutation target proving the
-        // exclusions are per-row, not per-task (dropping either gap flips this seed to fire)
+        // BOTH rounds live, each row covered by a newer record (r1 by the owner move
+        // minted after it, r2 by the resume note minted after it): silent. r2's ONLY
+        // cover is the resume note, so this is the hold-gap patch-out target at task
+        // grain; the owner-gap patch-out target is `e2e-ready-old-move` (+ `legal-move`).
         { id: 'e2e-ready-old-both', status: TODO },
+        // the GRANULARITY pin (#445 r1 review): r1 covered by its own newer record, r2
+        // live and uncovered — the arm must fire via r2. This is the only seed that
+        // distinguishes per-row exclusion from a per-task keying on the OLDEST pending
+        // row (a min-keyed mutant silences the whole task via r1's cover and goes red
+        // here). Keying on the NEWEST row is not a distinct corruption: any record newer
+        // than the youngest row necessarily covers every older row, so max-keying is
+        // semantically equivalent to per-row for these exclusion records.
+        { id: 'e2e-ready-old-mix', status: TODO },
         { id: 'e2e-ready-human', status: TODO },
         { id: 'e2e-ready-void', status: TODO },
         { id: 'e2e-ready-paused', status: BLOCKED },
@@ -174,9 +183,13 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
          values ('rev-old-hold-2', 'e2e-ready-old-hold', $1, 2, 'APPROVED', 'ai', now() - interval '20 minutes', now() - interval '19 minutes')`,
         [AI_USER],
       );
-      // both rounds live, each row silenced by its own newer record
-      await pending('e2e-ready-old-both', 1, AI_USER, 10);
+      // both rounds live, each row covered: r1@-12 by the owner move @-11, r2@-8 by the
+      // resume note @-7 (the note also happens to cover r1 — r2's cover is hold-only)
+      await pending('e2e-ready-old-both', 1, AI_USER, 12);
       await pending('e2e-ready-old-both', 2, AI_USER, 8);
+      // the granularity pin: r1@-12 covered by the move @-11; r2@-8 uncovered → FIRES via r2
+      await pending('e2e-ready-old-mix', 1, AI_USER, 12);
+      await pending('e2e-ready-old-mix', 2, AI_USER, 8);
       await pending('e2e-ready-human', 1, HUMAN_USER);
       await pending('e2e-ready-void', 1, null);
       await pending('e2e-ready-paused');
@@ -219,11 +232,11 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
       await db.unsafe(
         `insert into task_message_activities (message_id, payload) values ('msg-old-move', '{"kind":"STATUS"}'::jsonb)`,
       );
-      // the per-round pair: r1 silenced by the owner move minted AFTER it, r2 silenced by a
-      // resume note minted after r2 — each row's own newer record, never the task's latest
+      // the per-round pair: r1@-12 covered by the owner move @-11; r2@-8 covered by the
+      // resume note @-7 — each row's own newer record, never the task's latest
       await db.unsafe(
         `insert into task_messages (id, task_id, body, created_at) values
-           ('msg-both-move', 'e2e-ready-old-both', $1, now() - interval '9 minutes'),
+           ('msg-both-move', 'e2e-ready-old-both', $1, now() - interval '11 minutes'),
            ('msg-both-hold', 'e2e-ready-old-both', $2, now() - interval '7 minutes')`,
         [`status: ${IN_REVIEW} → ${TODO}`, `review round resumed — owner unblock re-fires the held reviewer`],
       );
@@ -231,6 +244,15 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
         `insert into task_message_activities (message_id, payload) values
            ('msg-both-move', '{"kind":"STATUS"}'::jsonb),
            ('msg-both-hold', '{"kind":"STATUS","reviewResumed":true}'::jsonb)`,
+      );
+      // the granularity seed's cover: the move @-11 covers r1@-12; r2@-8 stays uncovered
+      await db.unsafe(
+        `insert into task_messages (id, task_id, body, created_at)
+         values ('msg-mix-move', 'e2e-ready-old-mix', $1, now() - interval '11 minutes')`,
+        [`status: ${IN_REVIEW} → ${TODO}`],
+      );
+      await db.unsafe(
+        `insert into task_message_activities (message_id, payload) values ('msg-mix-move', '{"kind":"STATUS"}'::jsonb)`,
       );
 
       // HOLD-LANDING: the declared legal shape carries the machine resume note (STATUS kind,
@@ -267,12 +289,15 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
       // ready + working tasks whose round a machine egress left open — now ANY round:
       // 'e2e-ready-old-round' FIRES (#445: the strand the max-round clause hid);
       // 'e2e-ready-old-verdict' FIRES (a verdict record is not an exclusion record);
-      // 'e2e-ready-hold-fake' FIRES: same body, NOTE payload — free text cannot forge the
+      // 'e2e-ready-old-mix' FIRES via its uncovered round-2 row (the per-row-vs-per-task
+      // granularity pin); 'e2e-ready-hold-fake' FIRES: same body, NOTE payload — free text
+      // cannot forge the
       // hold-landing exclusion. The per-round twins ('e2e-ready-old-move', 'e2e-ready-old-
       // hold', 'e2e-ready-old-both') stay silent: each row excluded by its OWN newer record.
       expect(ids).toEqual([
         'e2e-ready-fire',
         'e2e-ready-hold-fake',
+        'e2e-ready-old-mix',
         'e2e-ready-old-round',
         'e2e-ready-old-verdict',
         'e2e-ready-working-fire',
