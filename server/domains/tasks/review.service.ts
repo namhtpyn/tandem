@@ -329,7 +329,7 @@ export async function teardownAllPendingRounds(
   taskId: string,
   settledTo: string,
   ex: DbExecutor = db,
-  opts: { publish?: boolean } = {},
+  opts: { publish?: boolean; reason?: 'egress' } = {},
 ) {
   const d = asDb(ex);
   const pending = await d
@@ -352,10 +352,19 @@ export async function teardownAllPendingRounds(
     taskId,
     ACTIVITY_KIND.STATUS,
     null,
-    'review rounds closed — task settled',
+    // a non-terminal EGRESS states its own reason: the default copy is the settle's, and
+    // 'task settled' on a to-do flip would be a lie in the thread the owner reads (#443).
+    // The copy is PARK-NEUTRAL on purpose: the same egress also closes a round stranded by
+    // a manual move out of review, where nothing was ever parked.
+    opts.reason === 'egress'
+      ? 'review rounds closed — the send returned the task to work (an open round cannot outlive the egress)'
+      : 'review rounds closed — task settled',
     {
       roundClosed: true,
       settledTo,
+      // machine-readable cause for the audit trail: absent on every settle (payload stays
+      // byte-identical for the existing callers)
+      ...(opts.reason ? { reason: opts.reason } : {}),
     },
     ex,
     { publish: opts.publish },

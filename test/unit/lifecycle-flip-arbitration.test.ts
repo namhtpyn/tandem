@@ -54,6 +54,10 @@ const h = vi.hoisted(() => ({
   cancelled: [] as string[],
   spawned: [] as string[],
   notes: [] as unknown[],
+  // NOTE-EGRESS ROUND TEARDOWN (#443): the dispatch flip resolves every open round in its
+  // OWN transaction — recorded so the arbitration pins can also assert it rides the flip's
+  // tx and never fires after a lost flip (a loser owns no round).
+  teardowns: [] as Array<{ taskId: string; settledTo: string; txId: number | null }>,
   readAt: new Date('2026-11-10T09:00:00.000Z'),
 }));
 
@@ -195,6 +199,14 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
   parkRound: async () => true,
   teardownOnManualMove: async () => {},
   teardownOpenRound: async () => {},
+  // #443: the dispatch flip resolves every open round inside its OWN transaction. The pin
+  // is the TX IDENTITY (the teardown rode the flip's tx — in the real code a lost flip
+  // throws and rolls that teardown back; a pool-level follow-up would leave a loser's
+  // teardown committed), so the record carries the executor's tx id.
+  teardownAllPendingRounds: async (taskId: string, settledTo: string, ex?: { __tx?: number }) => {
+    h.teardowns.push({ taskId, settledTo, txId: ex?.__tx ?? null });
+    h.seq.push('teardown');
+  },
   verdictsSoFarFor: async () => [],
 }));
 
@@ -278,6 +290,7 @@ beforeEach(() => {
   h.cancelled = [];
   h.spawned = [];
   h.notes = [];
+  h.teardowns = [];
 });
 
 describe('askQuestion parks before touching obligations (#400)', () => {
@@ -415,8 +428,13 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     seedWorkingAiTask();
     const res = await addNote('task-1', 'human-1', 'go');
     expect(res).toEqual({ steered: false, dispatched: true });
-    expect(h.seq).toEqual(['note', 'flip', 'dispatch']);
+    // #443: the open-round teardown runs INSIDE the flip's transaction, after the CAS —
+    // the task row is the transaction's first write (abandonTask's order), so no writer
+    // can cycle on a review row this tx holds. A lost CAS writes nothing at all.
+    expect(h.seq).toEqual(['note', 'flip', 'teardown', 'dispatch']);
     expect(h.flips[0]?.set.status).toBe(STATUS.todo);
+    expect(h.teardowns).toHaveLength(1);
+    expect(h.teardowns[0]?.txId).toBe(h.flips[0]?.txId);
   });
 
   it('a lost note flip caused by a DISPATCH CLAIM never re-flips the claimed row', async () => {
@@ -498,8 +516,10 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     const res = await addNote('task-1', 'human-1', 'a note racing a settle');
     expect(res).toEqual({ steered: false });
     expect(h.dispatches).toHaveLength(0);
-    // retry-once: two attempts, both lost
+    // retry-once: two attempts, both lost — and NO teardown: a lost CAS wrote nothing, so
+    // the winner's round is never touched (#443)
     expect(h.seq).toEqual(['note', 'flip', 'flip']);
+    expect(h.teardowns).toHaveLength(0);
     expect(h.notes).toHaveLength(1);
   });
 
