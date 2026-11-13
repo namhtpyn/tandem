@@ -1189,11 +1189,14 @@ non-positive deltas render no duration.
   exhaustively: every legal flip either supersedes the rows it strands (the egress
   teardown, terminal settles, `no live reviewers`) or writes a newer STATUS-kind record;
   the escalation replacement mint targets a live round on an in_review task, never this
-  scope; a verdict bounce flips the task to todo (a raw write, no note) and its surviving
-  CURRENT-round sibling rows are already the shipped current-round scope — they can only
-  reach a ready/working category through a dispatch or submit whose flip logs its own
-  newer STATUS body. Below the floor the note-dispatch bounce
-  itself produces the shape (a parked round left behind by a legal send), so the arm stays
+  scope; a verdict bounce cannot strand its own round's siblings — the round matrix
+  returns `waiting` and never flips while any PENDING row of the deciding round remains,
+  so the flip proceeds only on the round's LAST verdict and strands nothing it decided;
+  what a bounce CAN strand is a NEWER round's live rows when a stale AI verdict binds to
+  the older round it was dispatched for — the flip is a raw write (no note), so those
+  rows land unrecorded and the arm's firing on them is the law, not a false positive.
+  Below the floor the note-dispatch bounce itself produces the shape (a parked round
+  left behind by a legal send), so the arm stays
   silent there — a pre-fix image cannot heal it and an alert would misattribute cause. From
   the floor every dispatch flip tears its open rounds down in the same transaction (SPEC
   COMPOSER LAW, NOTE-EGRESS ROUND TEARDOWN), so a surviving count is a guard regression or
