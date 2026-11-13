@@ -194,6 +194,25 @@ async function healRequeueOnce(taskId: string): Promise<boolean> {
       // never the seeded review id (submit's landing, not the heal's)
       task.status,
     );
+    if (opened.declined === 'category') {
+      // CATEGORY-OWNERSHIP AT FLIP (#454): the owner's chosen status left in_review
+      // between the heal's verify and this flip (an admin re-categorization serialized
+      // before the tx) — nothing minted, nothing flipped. The shape now rides the
+      // manual-move-out semantics: no round, no teardown, the owner's next in_review
+      // entry resumes — and the note says why the move's review never started.
+      try {
+        await logActivity(
+          taskId,
+          ACTIVITY_KIND.NOTE,
+          null,
+          'review cannot start — this status is no longer in the review category',
+          {},
+        );
+      } catch (e) {
+        log.warn(`requeue heal: decline note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+      }
+      return false;
+    }
     if (opened.opened === 0 && !opened.flipped) {
       // every reviewer vanished inside the round-open transaction (#364):
       // nothing was minted and nothing flipped — complete as if none were set

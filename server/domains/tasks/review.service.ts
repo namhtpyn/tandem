@@ -154,7 +154,18 @@ export function canonicalStoredUuid(value: string): string | null {
 
 /** what an open round reports back: whether its in-review flip committed (a lost flip
  *  mints NOTHING), the round it minted, and the survivors/dropped reviewers */
-export type OpenedRound = { flipped: boolean; round: number; opened: number; dropped: string[] };
+export type OpenedRound = {
+  flipped: boolean;
+  round: number;
+  opened: number;
+  dropped: string[];
+  /** CATEGORY-OWNERSHIP AT FLIP (#454 r2): the landing status row's category left
+   * in_review under the tx's status-mutation mutex — nothing flipped, nothing minted.
+   * Submit routes the decline through its zero-review completion; the requeue heal
+   * bails leaving the owner's landed status untouched. A re-categorization landing
+   * AFTER the flip is a legal admin write riding the manual-move-out semantics (SPEC). */
+  declined?: 'category';
+};
 
 /** the reviewers that still name an existing user — tasks.reviewers is a text[]
  * with NO FK, so a deleted employee's id can sit on the task and would hit
@@ -258,6 +269,30 @@ export async function openReviewRound(
   // must never be turned into a caller-visible error.
   const result = await db.transaction(async (tx) => {
     const d = asDb(tx);
+    // CATEGORY-OWNERSHIP AT FLIP (#454 r2): the tx's FIRST statement takes the STATUS
+    // MUTATION MUTEX — the same advisory lock every task_statuses writer (statuses.save,
+    // statuses removal) serializes on — then the landing status row's category is read
+    // and re-verified in this same transaction. A row-level FOR KEY SHARE cannot do
+    // this job: a category re-key is a NON-KEY update (FOR NO KEY UPDATE), which does
+    // not conflict with FOR KEY SHARE, so the verify→flip window would stay open. The
+    // advisory mutex excludes every status-mutating writer for the whole transaction:
+    // a re-categorization either commits BEFORE the read — the re-verify declines the
+    // mint: nothing flipped, nothing minted, the caller routes the decline — or waits
+    // behind this transaction and lands AFTER it, riding the manual-move-out semantics
+    // (resume on the next in_review entry, settle teardown). Deadlock-free: the mutex
+    // is taken before any row lock this tx acquires, and save/removal take it before
+    // their own task-row writes. The review flow owns a task only while its landing
+    // status row's category is in_review — at flip time and at dispatch time alike
+    // (the mint gate reads the CURRENT category, so minting under a foreign category
+    // strands live rows the gate would never dispatch).
+    await d.execute(sql`select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))`);
+    const statusRow = await d
+      .select({ category: taskStatuses.category })
+      .from(taskStatuses)
+      .where(eq(taskStatuses.id, targetStatus));
+    if (statusRow[0]?.category !== CATEGORY.IN_REVIEW) {
+      return { flipped: false, round: 0, opened: 0, dropped: [] as string[], declined: 'category' as const };
+    }
     const locked =
       uniqueReviewers.length > 0
         ? await d.select({ id: user.id }).from(user).where(inArray(user.id, uniqueReviewers)).for('key share')

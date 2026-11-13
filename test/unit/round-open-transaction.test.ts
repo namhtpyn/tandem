@@ -39,6 +39,10 @@ const h = vi.hoisted(() => ({
   deletedUsers: [] as string[],
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
+  // #454 r2: the landing status row's category — the round-open tx re-verifies it
+  // in_review under the status-mutation mutex (hoisted literal: vi.hoisted precedes imports)
+  statusCategory: 'in_review' as string,
+  advisorySqls: [] as string[],
   lockTxIds: [] as number[],
   obligationConds: [] as unknown[],
   insertTxIds: [] as number[],
@@ -54,7 +58,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { taskObligations, taskReviews, taskRuns, user } = await import('../../server/db/schema');
+  const { taskObligations, taskReviews, taskRuns, taskStatuses, user } = await import('../../server/db/schema');
   const dialect = new PgDialect();
   const thenable = (rows: () => unknown[]) => ({
     then: (onF?: (v: unknown) => unknown) => Promise.resolve(rows()).then(onF),
@@ -70,6 +74,14 @@ vi.mock('../../server/db/index', async () => {
       const txId = this.__tx ?? 0;
       return {
         from: (table: unknown) => {
+          if (table === taskStatuses) {
+            return {
+              // #454 r2: a PLAIN read (the mutex, not a row lock, serializes it) —
+              // predicate-faithful enough for this file: the landing status row exists
+              // and carries h.statusCategory
+              where: async () => [{ category: h.statusCategory }],
+            };
+          }
           if (table === user) {
             return {
               where: (cond: unknown) => ({
@@ -151,6 +163,13 @@ vi.mock('../../server/db/index', async () => {
         }),
       };
     },
+    execute: function (this: { __tx?: number }, query: unknown) {
+      const txId = this.__tx ?? 0;
+      // #454 r2: the round-open tx's first statement — the status-mutation mutex
+      h.advisorySqls.push(dialect.sqlToQuery(query).sql);
+      void txId;
+      return Promise.resolve({ rows: [] });
+    },
     insert: function (this: { __tx?: number }, table: unknown) {
       const txId = this.__tx ?? 0;
       return {
@@ -227,6 +246,8 @@ beforeEach(() => {
   h.deletedUsers = [];
   h.lockStrengths = [];
   h.lockConds = [];
+  h.statusCategory = 'in_review';
+  h.advisorySqls = [];
   h.lockTxIds = [];
   h.obligationConds = [];
   h.insertTxIds = [];
@@ -259,6 +280,9 @@ describe('canonicalStoredUuid (#361)', () => {
 describe('round open + in-review flip are one transaction (#394)', () => {
   it('commits the flip, the round rows and their obligations with ONE transaction id', async () => {
     const opened = await openReviewRound(T, [A, B], 'the result', FLIP);
+    // #454 r2: the tx's first statement is the status-mutation mutex (captured and
+    // asserted here so the capture can never silently rot into dead instrumentation)
+    expect(h.advisorySqls).toEqual(["select pg_advisory_xact_lock(hashtext('tandem:task_statuses'))"]);
     expect(opened).toEqual({ flipped: true, round: 2, opened: 2, dropped: [] });
     // the flip arbitrates on the status AND the updatedAt stamp this submit read
     const flipSql = new PgDialect().sqlToQuery(h.flipConds[0] as never);
