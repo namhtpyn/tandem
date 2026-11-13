@@ -412,7 +412,19 @@ export async function addNote(
     // already landed as a thread item above (thread-only, never a state write).
     const flipped = await db
       .update(tasks)
-      .set({ status: STATUS.todo, updatedAt: new Date() })
+      // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a
+      // block — the same write exhausts the round's machine memory (both origins clear,
+      // the park re-arm ledger resets) exactly like the settle flips (#423) and the
+      // abandon cancel above. parkRound INCREMENTS a surviving ledger, so a spent ladder
+      // handed to the task's next park would start it mid-ladder or FINAL (no recovery).
+      .set({
+        status: STATUS.todo,
+        preBlockStatus: null,
+        parkFromStatus: null,
+        parkRearmAttempts: 0,
+        parkRearmAfter: null,
+        updatedAt: new Date(),
+      })
       .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
       .returning({ id: tasks.id });
     if (flipped.length === 0) continue;
@@ -625,7 +637,21 @@ export async function abandonTask(taskId: string, authorId: string, body: string
     const d = asDb(tx);
     const cancelled = await d
       .update(tasks)
-      .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
+      // EGRESS EXHAUSTION (#427): an abandon is a legal egress from a block, so the same
+      // conditional write that lands the cancel exhausts the round's machine memory —
+      // both gating origins clear and the park re-arm ledger resets (SETTLE-CLEARS-GATING
+      // #423 states the law: an origin is the restore home of a block that EXISTS, and
+      // parkRound INCREMENTS a surviving ledger, so a spent ladder would start the task's
+      // next infra park mid-ladder or past it — a FINAL park with no auto-recovery).
+      // Unconditional on purpose: a non-blocked row must never carry an origin (#423).
+      .set({
+        status: CANCELLED_STATUS,
+        preBlockStatus: null,
+        parkFromStatus: null,
+        parkRearmAttempts: 0,
+        parkRearmAfter: null,
+        updatedAt: new Date(),
+      })
       .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
       .returning({ id: tasks.id });
     if (cancelled.length === 0) return { won: false as const };

@@ -9,12 +9,39 @@ import { describe, expect, it } from 'vitest';
 import {
   eligibleTaskScan,
   idleSweepScan,
+  livenessBounceWhere,
   liveRunsByAgent,
   reapOutputMarker,
   reapSweepScan,
 } from '#server/domains/tasks/dispatcher.service';
 
 import { mockDb } from './helpers/mock-db';
+
+// EGRESS EXHAUSTION (#427): the idle-liveness bounce is a legal egress, and the scan's
+// window admits a gating auto-block landing between the read and the write (a child spawn
+// re-blocks its parent while the sweep holds the row). The CAS on the status this scan
+// READ is what keeps it out of the block; a dropped status term re-opens the race with no
+// other symptom, so the predicate's terms are pinned by shape.
+describe('idle-liveness bounce predicate (#427)', () => {
+  const flatten = (id: string, status: string) => {
+    const { sql, params } = new PgDialect().sqlToQuery(livenessBounceWhere(id, status));
+    return { flat: sql.replace(/\s+/g, ' ').toLowerCase(), params };
+  };
+
+  it('CASes on BOTH the id and the status the scan read', () => {
+    const { flat, params } = flatten('task-1', 'doing-1');
+    expect(flat).toContain('"id" =');
+    expect(flat).toContain('"status" =');
+    expect(params).toContain('task-1');
+    expect(params).toContain('doing-1');
+  });
+
+  it('is an AND, never an OR — an OR would match every row on either term', () => {
+    const { flat } = flatten('task-1', 'doing-1');
+    expect(flat).toContain(' and ');
+    expect(flat).not.toContain(' or ');
+  });
+});
 
 describe('eligible-task scan shape (#130, #176)', () => {
   const CUTOFF = new Date('2026-11-01T00:00:00Z');
