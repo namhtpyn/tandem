@@ -1140,9 +1140,9 @@ non-positive deltas render no duration.
 - The EGRESS-ORIGIN arm (#427, floor 2.78.25) reads the shape every legal egress must
   leave behind: a task whose status category is NOT `paused` while it still carries a
   gating origin (`park_from_status` or `pre_block_status`). After that release no egress
-  can produce it — the settle's two flips, the owner's manual move, `abandonTask` and the
-  note-dispatch bounce all clear both origins (and reset the park re-arm ledger) in the
-  SAME statement that lands the status — and no GATING arm heals such a row: every
+  can produce it — the settle's two flips, the owner's manual move, `abandonTask`, the
+  note-dispatch bounce and the idle-liveness bounce all clear both origins (and reset the
+  park re-arm ledger) in the SAME statement that lands the status — and no GATING arm heals such a row: every
   discriminator resolves those columns on a paused row only, so the next auto-block
   overwrites the home and a later park inherits a home it never recorded (the one repair
   is `statuses.remove`'s origin fixup, and it fires only on a DELETE — it re-homes a
@@ -1151,10 +1151,13 @@ non-positive deltas render no duration.
   ORIGINS alone, never the ledger: the block's OWN resume legally leaves the attempt
   ledger on a live row (#211 bounded cycles), so a ledger term would alert on a healthy
   row. NOT timestamp-scoped on purpose: `updated_at` is the row's last write, not the
-  egress wire — any benign edit bumps it, so a pre-fix leftover would alert as a live
-  egress failure and drown a real regression. The version floor is the discriminator: a
-  pre-fix row cannot be told apart from a live failure, so the arm reports both and the
-  row's own history says which.
+  egress wire — any benign edit bumps it, so a scope keyed on it would alert on a pre-fix
+  leftover touched once and drown a real regression. The floor bounds WHEN the arm can
+  speak; it does not classify a row, and no in-product heal exists for one (the
+  `statuses.remove` fixup fires only on a DELETE), so a pre-fix leftover that survives into
+  a floored image alerts on every pass until a human clears it — an accepted, one-time
+  cost: the same arm cannot tell that leftover from a live egress failure, and a missed
+  regression is the worse error.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names

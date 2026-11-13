@@ -43,6 +43,21 @@ describe('livenessBouncePatch (the bounce write, #427)', () => {
     );
     expect(patch.parkRearmAttempts).toBe(0);
     expect(patch.parkRearmAfter).toBeNull();
+    // the pre-existing terms stay in the write: the bounce clears any pending backoff
+    // (a liveness repair is not a failure retry) and always stamps the write
+    expect(patch.dispatchAfter).toBeNull();
+    expect(patch.updatedAt).toBeInstanceOf(Date);
+    expect(Object.keys(patch).sort()).toEqual(
+      [
+        'dispatchAfter',
+        'parkFromStatus',
+        'parkRearmAfter',
+        'parkRearmAttempts',
+        'preBlockStatus',
+        'status',
+        'updatedAt',
+      ].sort(),
+    );
   });
 });
 
