@@ -1,3 +1,11 @@
+## [2.78.30](https://github.com/namhtpyn/tandem/compare/v2.78.29...v2.78.30) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#420](https://github.com/namhtpyn/tandem/issues/420) — undelivered correction retry re-arms the parked intent when its run settles FAILED/reaped/STOPPED before any verdict (finish + reaper + stop arms detect the CORRECTION marker on the failed run's own frozen brief, re-bind its dispatched round); regression pins cover all three arms + carry/consume/round-gate ([46d1d1f](https://github.com/namhtpyn/tandem/commit/46d1d1fad6c01fc21c870904acbcf1c8ce109818))
+* [#420](https://github.com/namhtpyn/tandem/issues/420) r2 — review findings: (1) correction identity is the run row's verdict_correction WRITE RECORD (schema migration + createRun write); re-arm and the delivered-check read the record, never brief text — a planted marker line can neither forge a re-arm nor suppress/fake a delivery; (2) the reaper's re-arm hoisted above the latest-run ownership gate (memory-only write, own round gate) so stacked reaped correction runs still re-arm; pins: planted-marker negatives on both checks, reaped-not-latest re-arm, forged-delivery intent survival; vacuity proven per guard ([24efcc8](https://github.com/namhtpyn/tandem/commit/24efcc89117af840713d37d8fcec7339388b2c6e))
+
 ## [2.78.29](https://github.com/namhtpyn/tandem/compare/v2.78.28...v2.78.29) (2026-11-13)
 
 
