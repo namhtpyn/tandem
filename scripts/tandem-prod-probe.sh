@@ -343,6 +343,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # the subselect must be GONE from the arm's bytes; its absence is the pin
   printf '%s' "$READY_ON" | grep -qF "r.round = (select max" && { echo "selfcheck fail: ready arm still pins the current round (#445 made it task-wide)"; exit 1; }
   printf '%s' "$READY_ON" | grep -qF "tr.status = 'RUNNING'" || { echo "selfcheck fail: ready arm live-run clause"; exit 1; }
+  # the never-dispatched clause (stallrv's own run-age compare) must NOT ride this arm —
+  # a parked reviewer WAS dispatched; pin its distinctive bytes absent
+  printf '%s' "$READY_ON" | grep -qF "tr.started_at >= r.created_at" && { echo "selfcheck fail: ready arm imported the never-dispatched clause"; exit 1; }
   READY_GAP="m.body like 'status: %' and exists (select 1 from task_message_activities a2 where a2.message_id = m.id and a2.payload->>'kind' = 'STATUS') and m.created_at > r.created_at)"
   [ "$(printf '%s' "$READY_ON" | grep -oF "$READY_GAP" | wc -l)" = "1" ] || { echo "selfcheck fail: ready arm owner-status gap clause"; exit 1; }
   # the HOLD-LANDING exclusion (the one declared legal shape): the resume note must be
