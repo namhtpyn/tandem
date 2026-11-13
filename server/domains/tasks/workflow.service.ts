@@ -422,44 +422,36 @@ export async function addNote(
     // the post-commit note below — a redis publish must never gate a held row lock, and a
     // rollback must never announce erased rows.
     //
-    // LOCK ORDER (#443): the round rows lock BEFORE the task row — reviews → obligations →
-    // task, the order recordVerdict takes — because a late verdict settling the same round
-    // while the send dispatches is the ONE concurrent writer this path can meet (a parked
-    // round's stale AI run). The reverse order (task first) deadlocks: the verdict holds
-    // its review row and waits for the task, this tx holds the task and waits for the row.
-    // A lost flip therefore THROWS — rolling the teardown back, because the winning writer
-    // owns the round — and the retry loop treats that sentinel exactly like a lost CAS.
-    const LOST_FLIP = Symbol('note-egress-lost-flip');
-    const flipped = await db
-      .transaction(async (ex) => {
-        await teardownAllPendingRounds(taskId, STATUS.todo, ex, {
-          publish: false,
-          reason: 'egress',
-        });
-        const rows = await asDb(ex)
-          .update(tasks)
-          // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a
-          // block — the same write exhausts the round's machine memory (both origins clear,
-          // the park re-arm ledger resets) exactly like the settle flips (#423) and the
-          // abandon cancel above. parkRound INCREMENTS a surviving ledger, so a spent ladder
-          // handed to the task's next park would start it mid-ladder or FINAL (no recovery).
-          .set({
-            status: STATUS.todo,
-            preBlockStatus: null,
-            parkFromStatus: null,
-            parkRearmAttempts: 0,
-            parkRearmAfter: null,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
-          .returning({ id: tasks.id });
-        if (rows.length === 0) throw LOST_FLIP;
-        return rows;
-      })
-      .catch((e: unknown) => {
-        if (e === LOST_FLIP) return [];
-        throw e;
-      });
+    // LOCK ORDER (#443 r1): the TASK row is the transaction's FIRST write — the same order
+    // abandonTask (task → obligations → reviews) and the round-open tx (the in-review flip
+    // is its first write) take. Every writer that touches this task therefore serializes on
+    // that row before it touches a review row, so the teardown that follows cannot cycle
+    // with them: a concurrent abandon/round-open waits on the task row this tx holds
+    // instead of each holding one lock the other wants. (Round 1 ordered the teardown
+    // first and deadlocked against abandon — 40P01, reproduced on the scratch DB.)
+    const flipped = await db.transaction(async (ex) => {
+      const rows = await asDb(ex)
+        .update(tasks)
+        // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a
+        // block — the same write exhausts the round's machine memory (both origins clear,
+        // the park re-arm ledger resets) exactly like the settle flips (#423) and the
+        // abandon cancel above. parkRound INCREMENTS a surviving ledger, so a spent ladder
+        // handed to the task's next park would start it mid-ladder or FINAL (no recovery).
+        .set({
+          status: STATUS.todo,
+          preBlockStatus: null,
+          parkFromStatus: null,
+          parkRearmAttempts: 0,
+          parkRearmAfter: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
+        .returning({ id: tasks.id });
+      // a lost CAS wrote nothing — no teardown ran, so there is nothing to roll back
+      if (rows.length === 0) return rows;
+      await teardownAllPendingRounds(taskId, STATUS.todo, ex, { publish: false, reason: 'egress' });
+      return rows;
+    });
     if (flipped.length === 0) continue;
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

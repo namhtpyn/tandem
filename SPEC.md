@@ -1163,21 +1163,28 @@ non-positive deltas render no duration.
 - The READY-ROUND arm (#443, floor 2.78.26) reads a `ready`- or `working`-category task
   that owns a PENDING row in its CURRENT round (`max(round)`) for a LIVE AI reviewer
   (`ai_employees.user_id`; a NULL-reviewer void row is a non-vote, #365), with NO
-  `RUNNING` run on the task and the row older than the 5-minute grace (the same window
-  the stalled-review sweep uses, so no legal in-flight commit→dispatch window can match)
-  — AND WITHOUT an owner status write (the `status: …` body with the `kind = 'STATUS'`
-  payload, the `tasks.setStatus` signature) newer than that row. The owner clause is the
-  manual-freedom exception: the manual surface never tears a round down, so a move out of
-  review legally leaves the round's PENDING rows behind, and its own move row is always
-  newer than the rows it stranded; every machine flip that returns a task to a ready
-  category logs its own body and can never borrow that signature. Below the floor the
-  note-dispatch bounce itself produces the shape (a parked round left behind by a legal
-  send), so the arm stays silent there — a pre-fix image cannot heal it and an alert would
-  misattribute cause. From the floor every dispatch flip tears its open rounds down in the
-  same transaction (SPEC COMPOSER LAW, NOTE-EGRESS ROUND TEARDOWN), so a surviving count
-  is a guard regression or a direct-SQL write. Not reader-scoped: the parked reviewer WAS
-  dispatched this round (its turn failed), so the stalled-review sweep's
-  never-dispatched clause must NOT ride this arm — it would exclude the exact shape.
+  `RUNNING` run on the task and the row past the arm's own 5-minute grace (stricter than
+  the stalled-review sweep's 60s in-flight window, so no legal commit→dispatch window can
+  match) — AND WITHOUT an owner status write (the `status: …` body with the
+  `kind = 'STATUS'` payload, the `tasks.setStatus` signature) newer than that row. The
+  owner clause is the manual-freedom exception: the manual surface never tears a round
+  down, so a move out of review legally leaves the round's PENDING rows behind, and its
+  own move row is always newer than the rows it stranded; every machine flip that returns
+  a task to a ready category logs its own body and can never borrow that signature. The
+  HOLD-LANDING exception is the one other legal shape the review section declares: an
+  answer that lands while a verdict is held, and whose repair flip loses the dispatcher's
+  claim, leaves the re-opened round on a ready/working status with only a
+  `review round resumed …` thread note (a machine body with the 1:1 `kind = 'STATUS'`
+  payload, written after the row it re-opened — the re-open keeps `created_at`), so the
+  arm excludes any row a resume note is newer than; free text cannot forge either
+  exclusion (a NOTE's payload kind is `NOTE`). Below the floor the note-dispatch bounce
+  itself produces the shape (a parked round left behind by a legal send), so the arm stays
+  silent there — a pre-fix image cannot heal it and an alert would misattribute cause. From
+  the floor every dispatch flip tears its open rounds down in the same transaction (SPEC
+  COMPOSER LAW, NOTE-EGRESS ROUND TEARDOWN), so a surviving count is a guard regression or
+  a direct-SQL write. Not reader-scoped: the parked reviewer WAS dispatched this round (its
+  turn failed), so the stalled-review sweep's never-dispatched clause must NOT ride this
+  arm — it would exclude the exact shape.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names

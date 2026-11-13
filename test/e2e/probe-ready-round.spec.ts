@@ -88,6 +88,12 @@ test.describe('prod probe ready-round arm (#443)', () => {
         { id: 'e2e-ready-human', status: TODO },
         { id: 'e2e-ready-void', status: TODO },
         { id: 'e2e-ready-paused', status: BLOCKED },
+        // the declared legal shape: an answer that landed while a verdict was held and lost
+        // the repair flip to the dispatcher's claim — the round stays open on a ready task
+        // with only a thread note. Its free-text twin (a NOTE carrying the same words) must
+        // NOT silence the arm: the exclusion keys on the machine payload kind.
+        { id: 'e2e-ready-hold', status: TODO },
+        { id: 'e2e-ready-hold-fake', status: TODO },
       ];
       for (const t of seed) {
         await db.unsafe(
@@ -119,6 +125,8 @@ test.describe('prod probe ready-round arm (#443)', () => {
       await pending('e2e-ready-human', 1, HUMAN_USER);
       await pending('e2e-ready-void', 1, null);
       await pending('e2e-ready-paused');
+      await pending('e2e-ready-hold');
+      await pending('e2e-ready-hold-fake');
 
       // a RUNNING run on the task: the round is not provably stranded while work is live
       await db.unsafe(
@@ -148,13 +156,32 @@ test.describe('prod probe ready-round arm (#443)', () => {
         [`status: ${IN_REVIEW} → ${TODO} (this is just a note)`],
       );
 
+      // HOLD-LANDING: the declared legal shape carries the machine resume note (STATUS kind,
+      // written after the row it re-opened) — excluded; the same words as a NOTE (payload
+      // kind NOTE) cannot borrow it.
+      const resumeBody =
+        'review round resumed — the answer landed while a verdict was being held; the task moved again, owner unblock to in-review re-fires the held reviewer';
+      await db.unsafe(
+        `insert into task_messages (id, task_id, body, created_at) values
+           ('msg-hold-note', 'e2e-ready-hold', $1, now() - interval '1 minute'),
+           ('msg-hold-fake', 'e2e-ready-hold-fake', $1, now() - interval '1 minute')`,
+        [resumeBody],
+      );
+      await db.unsafe(
+        `insert into task_message_activities (message_id, payload) values
+           ('msg-hold-note', '{"kind":"STATUS","reviewResumed":true}'::jsonb),
+           ('msg-hold-fake', '{"kind":"NOTE"}'::jsonb)`,
+      );
+
       const rows = (await db.unsafe(sqlText)) as Array<{ readyround?: string }>;
       // the emission is one row per arm label — find the ready-round row's id list
       const out = rows.map((r) => Object.values(r).join('|')).find((v) => v.startsWith('readyround|'));
       expect(out).toBeTruthy();
       const ids = (out as string).split('|')[1]!.split(',').filter(Boolean).sort();
-      // ready + working tasks whose round a machine egress left open; nothing else
-      expect(ids).toEqual(['e2e-ready-fire', 'e2e-ready-working-fire']);
+      // ready + working tasks whose round a machine egress left open; nothing else.
+      // 'e2e-ready-hold-fake' FIRES: same body, NOTE payload — free text cannot forge the
+      // hold-landing exclusion.
+      expect(ids).toEqual(['e2e-ready-fire', 'e2e-ready-hold-fake', 'e2e-ready-working-fire']);
     } finally {
       await db.close();
     }

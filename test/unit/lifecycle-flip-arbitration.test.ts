@@ -428,10 +428,10 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     seedWorkingAiTask();
     const res = await addNote('task-1', 'human-1', 'go');
     expect(res).toEqual({ steered: false, dispatched: true });
-    // #443: the open-round teardown runs INSIDE the flip's transaction and BEFORE the CAS
-    // (round rows lock first — recordVerdict's order — so a late verdict cannot deadlock
-    // against this write); a lost CAS throws and rolls it back.
-    expect(h.seq).toEqual(['note', 'teardown', 'flip', 'dispatch']);
+    // #443: the open-round teardown runs INSIDE the flip's transaction, after the CAS —
+    // the task row is the transaction's first write (abandonTask's order), so no writer
+    // can cycle on a review row this tx holds. A lost CAS writes nothing at all.
+    expect(h.seq).toEqual(['note', 'flip', 'teardown', 'dispatch']);
     expect(h.flips[0]?.set.status).toBe(STATUS.todo);
     expect(h.teardowns).toHaveLength(1);
     expect(h.teardowns[0]?.txId).toBe(h.flips[0]?.txId);
@@ -516,10 +516,10 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     const res = await addNote('task-1', 'human-1', 'a note racing a settle');
     expect(res).toEqual({ steered: false });
     expect(h.dispatches).toHaveLength(0);
-    // retry-once: two attempts, both lost. Each attempt's #443 round teardown rides the
-    // attempt's own transaction — a lost CAS THROWS in the real code, so that attempt's
-    // teardown rolls back with it (the mock has no rollback: it only records the call).
-    expect(h.seq).toEqual(['note', 'teardown', 'flip', 'teardown', 'flip']);
+    // retry-once: two attempts, both lost — and NO teardown: a lost CAS wrote nothing, so
+    // the winner's round is never touched (#443)
+    expect(h.seq).toEqual(['note', 'flip', 'flip']);
+    expect(h.teardowns).toHaveLength(0);
     expect(h.notes).toHaveLength(1);
   });
 

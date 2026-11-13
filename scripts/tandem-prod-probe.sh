@@ -132,8 +132,18 @@ ready_floor_met() {
 ready_owner_gap() {
   printf "%s" "not exists (select 1 from task_messages m where m.task_id = t.id and m.body like 'status: %' and exists (select 1 from task_message_activities a2 where a2.message_id = m.id and a2.payload->>'kind' = 'STATUS') and m.created_at > r.created_at)"
 }
+# HOLD-LANDING exception: SPEC's review section DECLARES one legal ready/working shape — an
+# answer that lands while a verdict is held, whose repair flip loses the dispatcher's claim,
+# leaves the re-opened round on a ready/working status with the reviewer owed a vote and only
+# a thread note ('review round resumed …'). That note is a machine body carrying the 1:1
+# kind='STATUS' payload and is written AFTER the row it re-opened (the re-open keeps
+# created_at), so the arm excludes any row a resume note is newer than. Free text cannot
+# forge the exclusion (a NOTE's payload kind is NOTE, never STATUS).
+ready_hold_gap() {
+  printf "%s" "not exists (select 1 from task_messages m3 join task_message_activities a3 on a3.message_id = m3.id where m3.task_id = t.id and m3.body like 'review round resumed%' and a3.payload->>'kind' = 'STATUS' and m3.created_at > r.created_at)"
+}
 ready_round_arm() {
-  printf "%s" " union all select 'readyround', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category in ('ready', 'working') and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and $(ready_owner_gap)) x), 'none')"
+  printf "%s" " union all select 'readyround', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category in ('ready', 'working') and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and $(ready_owner_gap) and $(ready_hold_gap)) x), 'none')"
 }
 strand_sql() {
   local own blkarm orphan decided gap rule ready
@@ -314,6 +324,10 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$READY_ON" | grep -qF "tr.status = 'RUNNING'" || { echo "selfcheck fail: ready arm live-run clause"; exit 1; }
   READY_GAP="m.body like 'status: %' and exists (select 1 from task_message_activities a2 where a2.message_id = m.id and a2.payload->>'kind' = 'STATUS') and m.created_at > r.created_at)"
   [ "$(printf '%s' "$READY_ON" | grep -oF "$READY_GAP" | wc -l)" = "1" ] || { echo "selfcheck fail: ready arm owner-status gap clause"; exit 1; }
+  # the HOLD-LANDING exclusion (the one declared legal shape): the resume note must be
+  # newer than the row it re-opened, carry the machine STATUS kind, and ride this arm only
+  READY_HOLD="m3.body like 'review round resumed%' and a3.payload->>'kind' = 'STATUS' and m3.created_at > r.created_at)"
+  [ "$(printf '%s' "$READY_ON" | grep -oF "$READY_HOLD" | wc -l)" = "1" ] || { echo "selfcheck fail: ready arm hold-landing gap clause"; exit 1; }
   # the stalled-review arm's never-dispatched clause must NOT ride this arm: a parked
   # reviewer WAS dispatched (its turn failed), so importing it would exclude the exact
   # #443 shape from the only arm that can see it
