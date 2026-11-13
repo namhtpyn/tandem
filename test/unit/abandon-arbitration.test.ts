@@ -228,6 +228,55 @@ describe('abandonTask terminal arbitration (#287)', () => {
     expect(h.teardownPublish).toEqual([]);
   });
 
+  // EGRESS EXHAUSTION (#427): abandon is a legal egress from a block, so the cancel
+  // write itself must exhaust the round's machine memory — otherwise the parked home
+  // survives on a cancelled row and the spent re-arm ladder is handed to the task's next
+  // park (parkRound INCREMENTS it: a mid-ladder start, or FINAL with no auto-recovery).
+  // The same statement as the status write, never a follow-up: a crash between them would
+  // leave exactly the shape this closes.
+  it('a won cancel exhausts both machine origins and resets the park ladder in the SAME write (#427)', async () => {
+    const res = await abandonTask('task-1', 'owner-1', 'cancel it');
+    expect(res).toEqual({ ok: true });
+    const writes = h.updates.filter((u: { table: string }) => u.table === 'tasks');
+    expect(writes).toHaveLength(1); // one statement, not a status write + a cleanup
+    expect(writes[0]?.set).toMatchObject({
+      status: STATUS.cancelled,
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    });
+  });
+
+  // the abandon LANDS FROM a block: the ledger/homes it clears are the ones it read there
+  it('a won cancel from a parked/blocked task clears the ledger it read (#427)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.blocked,
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: [],
+        parkFromStatus: STATUS.inReview,
+        preBlockStatus: null,
+        parkRearmAttempts: 3,
+        parkRearmAfter: new Date('2026-11-13T00:00:00Z'),
+      },
+    ];
+    h.statuses = [{ id: STATUS.blocked, category: CATEGORY.PAUSED }];
+    const res = await abandonTask('task-1', 'owner-1', 'cancel it');
+    expect(res).toEqual({ ok: true });
+    expect(h.updates.filter((u: { table: string }) => u.table === 'tasks')).toHaveLength(1);
+    expect(h.updates[0]?.set).toMatchObject({
+      status: STATUS.cancelled,
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    });
+  });
+
   // #397 r2: the work branch can cancel a task that still carries a live round (a manual
   // move out of review leaves the round open — the review branch is not the only one that
   // can hold pending rows). A cancelled task must never keep a pending row or obligation.

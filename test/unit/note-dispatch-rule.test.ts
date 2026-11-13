@@ -145,6 +145,42 @@ describe('tasks.note dispatch rule keys off the category (#265)', () => {
     expect(h.dispatches).toEqual(['task-1']);
   });
 
+  // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a block —
+  // the dispatch flip must exhaust the round's machine memory in the SAME write, or the
+  // parked home survives on a to-do row and the spent re-arm ladder is handed to the
+  // task's next park (parkRound INCREMENTS a surviving ledger → mid-ladder or FINAL).
+  it('the dispatch flip from a blocked task clears both origins and the ladder (#427)', async () => {
+    seedTask('st-custom-blocked', 'worker-1');
+    h.statuses = [{ id: 'st-custom-blocked', category: CATEGORY.PAUSED }];
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false, dispatched: true });
+    const writes = h.updates.filter((u: { table: string }) => u.table === 'tasks');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.set).toMatchObject({
+      status: STATUS.todo,
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    });
+  });
+
+  // the WORKING-category send rides the same write — the clearing is unconditional on
+  // egress (a non-blocked row must never carry an origin, #423), so no branch can skip it
+  it('the dispatch flip from a working task clears origins too — the clear is not block-gated (#427)', async () => {
+    seedTask('st-custom-working', 'worker-1');
+    h.statuses = [{ id: 'st-custom-working', category: CATEGORY.WORKING }];
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false, dispatched: true });
+    const writes = h.updates.filter((u: { table: string }) => u.table === 'tasks');
+    expect(writes[0]?.set).toMatchObject({
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    });
+  });
+
   it('a CUSTOM done-category status refuses — category vocabulary, never seeded ids', async () => {
     seedTask('st-custom-done', 'worker-1');
     h.statuses = [{ id: 'st-custom-done', category: CATEGORY.DONE }];
