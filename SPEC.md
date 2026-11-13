@@ -1144,22 +1144,22 @@ non-positive deltas render no duration.
   note-dispatch bounce and the idle-liveness bounce all clear both origins (and reset the
   park re-arm ledger) in the SAME statement that lands the status. Nothing heals such a
   row: every gating discriminator resolves those columns on a paused row only, so the next
-  auto-block overwrites the home and a later park inherits a home it never recorded, and
-  the one admin fixup — `statuses.remove` — fires only on a DELETE, refuses every built-in
-  status, and on the branch a real leftover always takes (a surviving same-category
-  sibling) RE-HOMES the origin rather than clearing it, so it neither clears the shape nor
-  ends the alert. The one exception is a working-category row, which the idle-liveness
-  bounce clears within its 15-minute grace, so such a leftover may never be observed at
-  all. Keyed on the ORIGINS alone, never the ledger: the block's OWN resume legally leaves the attempt
+  auto-block overwrites the home and a later park inherits a home it never recorded. The
+  admin fixup (`statuses.remove`) reaches it only on a DELETE and only on its no-faithful-
+  home branch: deleting a `paused`-category origin clears it on every non-blocked row,
+  while deleting an origin that HAS a same-category sibling re-homes it instead, leaving
+  the shape (and the alert) intact. The idle-liveness bounce clears it too — but only for
+  AI-assigned working rows, since the sweep's scan joins `ai_employees` — so a human-
+  assigned leftover is never reached. Keyed on the ORIGINS alone, never the ledger: the block's OWN resume legally leaves the attempt
   ledger on a live row (#211 bounded cycles), so a ledger term would alert on a healthy
   row. NOT timestamp-scoped on purpose: `updated_at` is the row's last write, not the
   egress wire — any benign edit bumps it, so a scope keyed on it would alert on a pre-fix
   leftover touched once and drown a real regression. The floor bounds WHEN the arm can
   speak; it does not classify a row. A pre-fix leftover that survives into a floored image
-  therefore alerts on every pass until a human clears it (a working-category one excepted:
-  the idle-liveness bounce clears it within its grace) — an accepted, one-time cost: the
-  arm cannot tell that leftover from a live egress failure, and a missed regression is the
-  worse error.
+  therefore alerts on every pass until a human clears it (an AI-assigned working-category
+  one excepted: the idle-liveness bounce clears it at the next tick past its grace) — an
+  accepted, one-time cost: the arm cannot tell that leftover from a live egress failure,
+  and a missed regression is the worse error.
 - The probe's CT SSH target and local profile/state paths are env-overridable
   with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
