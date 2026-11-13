@@ -1,6 +1,7 @@
-// SUBMIT ROUTES THE CATEGORY DECLINE (#454, CATEGORY-OWNERSHIP AT FLIP): the
-// round-open transaction key-shares the landing status row and re-verifies its
-// category — a status row re-categorized OUT of in_review inside the verify→flip
+// SUBMIT ROUTES THE CATEGORY DECLINE (#454 r2, CATEGORY-OWNERSHIP AT FLIP): the
+// round-open transaction takes the status-mutation advisory mutex as its FIRST
+// statement and re-verifies the landing row's category under it — a status row
+// re-categorized OUT of in_review inside the verify→flip
 // window declines the mint (flipped:false, declined:'category', nothing written).
 // Submit must route that decline through its ZERO-REVIEW completion — done,
 // teardown of stray rounds, skip note — NOT through the plain CAS-loss throw ('a
@@ -171,6 +172,9 @@ describe('submit routes the #454 category decline', () => {
     // the teardown ledger names the REAL reason — not 'no live reviewers' (the
     // roster was live; the review category dissolved)
     expect(h.allClosed).toEqual(['review status left the in_review category']);
+    // and the thread says WHY review never started (parity with the heal's note)
+    const bodies = h.inserts.map((i) => i.vals.body).filter((b): b is string => typeof b === 'string');
+    expect(bodies.join('\n')).toContain('review cannot start — this status is no longer in the review category');
   });
 
   it('the decline fires with a FULL roster — reviewers are not the reason', async () => {
@@ -180,9 +184,10 @@ describe('submit routes the #454 category decline', () => {
     expect(h.rounds[0]?.reviewers).toEqual([LIVE, LIVE2]);
     expect(res).toEqual({ status: STATUS.done });
     // the round's OWN completion note never fires for the decline (skipped = 0) —
-    // the honest signal is the done flip, not a fabricated skip note
-    const bodies = h.inserts.map((i) => i.vals.body).filter((b): b is string => typeof b === 'string');
-    expect(bodies.join('\n')).not.toContain('skipped');
+    // the honest signal is the decline note + the done flip, never a fabricated skip
+    const bodies2 = h.inserts.map((i) => i.vals.body).filter((b): b is string => typeof b === 'string');
+    expect(bodies2.join('\n')).not.toContain('skipped');
+    expect(bodies2.join('\n')).toContain('review cannot start');
   });
 
   it('a PLAIN flip loss (no declined marker) still throws — a settle owns that outcome', async () => {

@@ -536,10 +536,26 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     droppedInRound = opened.dropped.length;
     // every reviewer vanished inside the round-open transaction (#364): nothing was
     // minted and no flip landed — complete exactly like zero survivors.
-    if (opened.opened === 0)
+    if (opened.opened === 0) {
+      if (opened.declined === 'category') {
+        // the honest thread note (parity with the heal's decline arm): the roster was
+        // live, so no skip note would otherwise explain why review never started
+        try {
+          await logActivity(
+            taskId,
+            ACTIVITY_KIND.NOTE,
+            authorId,
+            'review cannot start — this status is no longer in the review category',
+            {},
+          );
+        } catch (e) {
+          log.warn(`submit: decline note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+        }
+      }
       return await completeWithoutReviewers(
         opened.declined === 'category' ? 'review status left the in_review category' : undefined,
       );
+    }
     // TERMINAL ARBITRATION mirror (#287, #292 r1): a won abandon/settle between the gate
     // read and the flip owns the outcome; this call refuses with the error surfaced and
     // wrote nothing at all.
