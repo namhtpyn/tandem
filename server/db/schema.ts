@@ -533,6 +533,11 @@ export const taskRuns = pgTable(
     output: text('output').notNull().default(''),
     /** the exact brief (prompt) sent to the agent for this turn; null on pre-2.26 rows */
     prompt: text('prompt'),
+    /** VERDICT-LESS CORRECTION identity (#276/#420): set at this run's dispatch — the
+     *  write record that both the delivered-check and the undelivered-retry re-arm read;
+     *  brief TEXT is never consulted (an echoed marker line in agent-controlled text
+     *  can neither forge nor suppress the identity). */
+    verdictCorrection: boolean('verdict_correction').notNull().default(false),
     startedAt: timestamp('started_at', { withTimezone: true })
       .notNull()
       .$default(() => new Date()),

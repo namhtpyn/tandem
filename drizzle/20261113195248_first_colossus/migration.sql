@@ -1,0 +1,1 @@
+ALTER TABLE "task_runs" ADD COLUMN "verdict_correction" boolean DEFAULT false NOT NULL;
