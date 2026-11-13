@@ -39,8 +39,8 @@ const h = vi.hoisted(() => ({
   deletedUsers: [] as string[],
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
-  // #454: the landing status row's category — the round-open tx key-shares it and
-  // re-verifies in_review before the flip (hoisted literal: vi.hoisted precedes imports)
+  // #454 r2: the landing status row's category — the round-open tx re-verifies it
+  // in_review under the status-mutation mutex (hoisted literal: vi.hoisted precedes imports)
   statusCategory: 'in_review' as string,
   advisorySqls: [] as string[],
   lockTxIds: [] as number[],

@@ -1,6 +1,6 @@
-// CATEGORY-OWNERSHIP AT FLIP (#454): the round-open transaction takes FOR KEY SHARE on
-// the LANDING status row as the tx's FIRST lock and re-verifies its category before the
-// flip. The verify-then-flip TOCTOU: the heal (and submit's caller-side gates) read the
+// CATEGORY-OWNERSHIP AT FLIP (#454 r2): the round-open transaction takes the STATUS
+// MUTATION MUTEX as its FIRST statement and re-verifies the landing row's category
+// under it. The verify-then-flip TOCTOU: the heal (and submit's caller-side gates) read the
 // category OUTSIDE the transaction, and the flip's CAS pinned only the task row — an
 // admin re-categorization landing between verify and flip let the flip win, minted live
 // PENDING rows, and the mint gate (which reads the CURRENT category) dispatched nothing:

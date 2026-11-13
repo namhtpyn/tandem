@@ -508,7 +508,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // submit never tears down a round the winner still owns; closes EVERY pending round.
   // The same arm completes a submit whose reviewers ALL vanished inside the round-open
   // transaction (#364): nothing was minted, so there is no round to settle.
-  const completeWithoutReviewers = async (teardownReason = 'no live reviewers') => {
+  const completeWithoutReviewers = async (teardownReason = 'no live reviewers', declineNote?: string) => {
     const done = await db
       .update(tasks)
       .set({ status: DONE_STATUS, updatedAt: new Date() })
@@ -516,6 +516,15 @@ export async function submitResult(taskId: string, authorId: string, body: strin
       .returning({ id: tasks.id });
     if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
     await teardownAllPendingRounds(taskId, teardownReason);
+    if (declineNote) {
+      // AFTER the won CAS (the arm's own discipline): a lost completion must not
+      // strand a note on an outcome this submit does not own
+      try {
+        await logActivity(taskId, ACTIVITY_KIND.NOTE, authorId, declineNote, {});
+      } catch (e) {
+        log.warn(`submit: decline note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+      }
+    }
     await noteSkipped();
     await refreshParentGating(taskId);
     return { status: DONE_STATUS };
@@ -537,23 +546,13 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // every reviewer vanished inside the round-open transaction (#364): nothing was
     // minted and no flip landed — complete exactly like zero survivors.
     if (opened.opened === 0) {
-      if (opened.declined === 'category') {
-        // the honest thread note (parity with the heal's decline arm): the roster was
-        // live, so no skip note would otherwise explain why review never started
-        try {
-          await logActivity(
-            taskId,
-            ACTIVITY_KIND.NOTE,
-            authorId,
-            'review cannot start — this status is no longer in the review category',
-            {},
-          );
-        } catch (e) {
-          log.warn(`submit: decline note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-        }
-      }
+      const declined = opened.declined === 'category';
+      // the honest thread note (parity with the heal's decline arm): the roster was
+      // live, so no skip note would otherwise explain why review never started —
+      // written by the arm AFTER its CAS so a lost completion never strands it
       return await completeWithoutReviewers(
-        opened.declined === 'category' ? 'review status left the in_review category' : undefined,
+        declined ? 'review status left the in_review category' : undefined,
+        declined ? 'review cannot start — this status is no longer in the review category' : undefined,
       );
     }
     // TERMINAL ARBITRATION mirror (#287, #292 r1): a won abandon/settle between the gate

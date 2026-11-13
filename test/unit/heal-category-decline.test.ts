@@ -1,6 +1,6 @@
-// HEAL BOUNDARY OF THE CATEGORY DECLINE (#454, CATEGORY-OWNERSHIP AT FLIP): the
-// round-open transaction key-shares the landing status row and re-verifies its
-// category - an admin re-categorization serializing BEFORE the flip declines the
+// HEAL BOUNDARY OF THE CATEGORY DECLINE (#454 r2, CATEGORY-OWNERSHIP AT FLIP): the
+// round-open transaction takes the status-mutation advisory mutex as its FIRST
+// statement and re-verifies the landing row's category — an admin re-categorization serializing BEFORE the flip declines the
 // mint (flipped:false, declined:'category'). The requeue heal must BAIL on that
 // marker: the owner's landed status stays untouched, NO zero-reviewer completion
 // fires (reviewers did not vanish - the category dissolved), no CAS_LOST retry
