@@ -167,11 +167,10 @@ strand_orphan_arm() {
 # the realistic garbage shapes, and both are >= 100).
 at_least() {
   local v="${2:-}" maj
-  case "$v" in ''|*[!0-9.]*|*..*|.*|*.) echo 0; return ;; esac
-  [ -n "${v##*.*.*.}" ] || { echo 0; return; }
   printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo 0; return; }
   maj="${v%%.*}"
-  [ "$maj" -lt 100 ] 2>/dev/null || { echo 0; return; }
+  maj=$((10#$maj)) # base-10 explicitly: `08` is not a valid octal literal
+  [ "$maj" -lt 100 ] || { echo 0; return; }
   [ "$(printf '%s\n%s\n' "$1" "$v" | sort -V | tail -1)" = "$v" ] && echo 1 || echo 0
 }
 # EGRESS-ORIGIN arm (#427): a task OUTSIDE the paused category still carrying a gating
@@ -184,10 +183,11 @@ at_least() {
 egress_sql() {
   printf "%s" "select 'egressorigin', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category <> 'paused' and (t.park_from_status is not null or t.pre_block_status is not null)"
 }
-# gate: the image carries BOTH origin columns (a one-column image would kill the query —
-# column-absent law) AND is at/above the release whose egresses clear them
-egress_floor_met() {
-  [ "${2:-}" = "2" ] && [ "$(at_least 2.78.25 "${1:-}")" = "1" ] && echo 1 || echo 0
+# gate: the image is at/above the release whose egresses clear the origins. Returns shell
+# TRUE/FALSE (no comparison literal anywhere), so the pass calls it directly and the
+# selfcheck owns its truth table — a flipped literal can no longer ship a dead arm.
+egress_arm_on() {
+  [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
 }
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
@@ -259,14 +259,16 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # EGRESS-ORIGIN arm (#427): the floor matrix, the column gate, and the SQL's clauses —
   # the detector is pinned by the bytes that ship (a test-side copy is not a pin). A
   # shape-unguarded floor (a date/IP that sorts above every version) must stay CLOSED.
-  [ "$(egress_floor_met 2.78.24 2)" = "0" ] || { echo "selfcheck fail: egress floor below"; exit 1; }
-  [ "$(egress_floor_met 2.78.25 2)" = "1" ] || { echo "selfcheck fail: egress floor at"; exit 1; }
-  [ "$(egress_floor_met 3.0.0 2)" = "1" ] || { echo "selfcheck fail: egress floor above"; exit 1; }
-  [ "$(egress_floor_met 2.78.25 1)" = "0" ] || { echo "selfcheck fail: egress column gate"; exit 1; }
-  [ "$(egress_floor_met '' 2)" = "0" ] || { echo "selfcheck fail: egress empty version"; exit 1; }
-  [ "$(egress_floor_met 2026.11.13 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on a date"; exit 1; }
-  [ "$(egress_floor_met 100.64.0 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on an IP"; exit 1; }
-  [ "$(egress_floor_met 2.78.25-rc1 2)" = "0" ] || { echo "selfcheck fail: egress floor opened on a pre-release"; exit 1; }
+  egress_arm_on 2.78.24 && { echo "selfcheck fail: egress arm on below the floor"; exit 1; }
+  egress_arm_on 2.78.25 || { echo "selfcheck fail: egress arm off at the floor"; exit 1; }
+  egress_arm_on 3.0.0 || { echo "selfcheck fail: egress arm off above the floor"; exit 1; }
+  egress_arm_on '' && { echo "selfcheck fail: egress arm on with no version"; exit 1; }
+  egress_arm_on 2026.11.13 && { echo "selfcheck fail: egress arm opened on a date"; exit 1; }
+  egress_arm_on 100.64.0 && { echo "selfcheck fail: egress arm opened on an IP"; exit 1; }
+  egress_arm_on 2.78.25-rc1 && { echo "selfcheck fail: egress arm opened on a pre-release"; exit 1; }
+  # a leading-zero major must NOT crash the arithmetic (`08` is not a valid octal literal);
+  # the verdict is irrelevant, the absence of a shell error is the assertion
+  egress_arm_on 08.1.2; [ $? -le 1 ] || { echo "selfcheck fail: leading-zero major crashed"; exit 1; }
   [ "$(at_least 2.78.25 2.78.25)" = "1" ] || { echo "selfcheck fail: floor equal"; exit 1; }
   [ "$(at_least 2.78.25 2.78.26)" = "1" ] || { echo "selfcheck fail: floor above"; exit 1; }
   [ "$(at_least 2.78.25 2.78.24)" = "0" ] || { echo "selfcheck fail: floor below"; exit 1; }
@@ -283,12 +285,16 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # without this, deleting the pass's whole arm block keeps every other assertion green and
   # ships a detector that never runs. Assert the gate + the alert are in the SHIPPED file,
   # exactly once each.
-  EGPASS=$(grep -cE '^EGATE=\$\(egress_floor_met' "$0" 2>/dev/null || true)
+  EGPASS=$(grep -cE '^[[:space:]]*if egress_arm_on "\$V"; then' "$0" 2>/dev/null || true)
   [ "$EGPASS" = "1" ] || { echo "selfcheck fail: egress pass gate missing ($EGPASS)"; exit 1; }
   EGALERT=$(grep -cE '^[[:space:]]*anom\+=\("egress_origin:' "$0" 2>/dev/null || true)
   [ "$EGALERT" = "1" ] || { echo "selfcheck fail: egress alert line missing ($EGALERT)"; exit 1; }
   EGPSQL=$(grep -cE '^[[:space:]]*EGSQL=\$\(egress_sql\)' "$0" 2>/dev/null || true)
   [ "$EGPSQL" = "1" ] || { echo "selfcheck fail: egress pass does not run the shipped SQL ($EGPSQL)"; exit 1; }
+  # a degraded column probe must ALERT, never sit silent (probe law #2: a blind detector
+  # that reports nothing is indistinguishable from a healthy one)
+  EGCOLALERT=$(grep -cE '^[[:space:]]*anom\+=\("egress_guard: origin columns=' "$0" 2>/dev/null || true)
+  [ "$EGCOLALERT" = "1" ] || { echo "selfcheck fail: egress column-degraded alert missing ($EGCOLALERT)"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
@@ -297,8 +303,12 @@ if [ "${1:-}" = "--selfcheck" ]; then
   exit 0
 fi
 if [ "${1:-}" = "--egress-sql" ]; then
-  # emit the exact egress-origin SQL a pass would run (no network, no state writes): the
-  # arm's regression test seeds a test DB and runs these bytes, never a test-side copy
+  # Emit the exact egress-origin SQL a pass would run (no network, no state writes): the
+  # arm's regression test (test/e2e/probe-egress-origin.spec.ts) seeds a test DB and runs
+  # THESE bytes, never a test-side copy. An optional column-count arg replicates the pass's
+  # column gate: the clause names both columns, so a one-column image must refuse (exit 2)
+  # rather than print bytes that throw — that path is pinned by the same spec.
+  if [ -n "${2:-}" ] && [ "$2" != "2" ]; then exit 2; fi
   egress_sql
   printf '\n'
   exit 0
@@ -431,16 +441,17 @@ fi
 # Keyed on the ORIGINS alone, never the ledger: the block's own resume legally leaves the
 # attempt ledger on a live row (#211 bounded cycles), so a ledger term would alert on a
 # healthy row. Own psql pass (probe law #4) + column gate (column-absent law).
-EGATE=$(egress_floor_met "$V" "2")
-if [ "$EGATE" = "1" ]; then
+if egress_arm_on "$V"; then
   # the arm's OWN column probe: the verge flow below runs later in the file, and this arm
   # must never assume a column count it did not read (column-absent law)
   EGCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name in ('park_from_status','pre_block_status')\"" 2>/dev/null) || EGCOL="guard-error"
   if [ "$EGCOL" = "guard-error" ]; then
     anom+=("egress_guard: column probe failed — #427 origin-exhaustion detection blind")
+  elif [ "$EGCOL" != "2" ]; then
+    # a floored image that does not carry both origin columns is a BROKEN probe, not a
+    # healthy one: the arm cannot run at all, so staying silent would be a blind detector
+    anom+=("egress_guard: origin columns=$EGCOL on $V (expected 2) — #427 arm blind")
   elif [ "$EGCOL" = "2" ]; then
-    # a one-column image is skipped silently: its clause cannot exist, and the strand
-    # arm's own column guard is what alerts on a degraded probe
     EGSQL=$(egress_sql)
     EGERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$EGSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
     EGOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$EGSQL\"" 2>/dev/null) || EGOUT="db-unreachable"

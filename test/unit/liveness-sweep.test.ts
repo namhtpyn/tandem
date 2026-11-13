@@ -5,7 +5,7 @@
 // unknown/malformed status id (this write bypasses the setStatus membership guard).
 import { describe, expect, it } from 'vitest';
 
-import { LIVENESS_GRACE_MS, livenessBounce } from '#server/domains/tasks/dispatcher.service';
+import { LIVENESS_GRACE_MS, livenessBounce, livenessBouncePatch } from '#server/domains/tasks/dispatcher.service';
 import { resolveRestoreTarget } from '#server/domains/tasks/gating.service';
 import { RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -20,6 +20,31 @@ const base = {
   newestRunSettledAt: new Date(NOW - 20 * MIN),
   updatedAt: new Date(NOW - 20 * MIN),
 };
+
+// EGRESS EXHAUSTION (#427): the bounce is a legal egress, and the scan→write window
+// admits a gating auto-block landing in between (a child spawn re-blocks its parent while
+// the sweep holds the row). The write therefore carries BOTH the status landing and the
+// machine-memory exhaustion in one statement; the patch is pure so every field is pinned
+// (a field silently dropped from an inline literal is exactly the regression class).
+describe('livenessBouncePatch (the bounce write, #427)', () => {
+  it('lands to-do AND exhausts both origins + the park ledger in the same write', () => {
+    const patch = livenessBouncePatch();
+    expect(patch).toMatchObject({
+      status: STATUS.todo,
+      preBlockStatus: null,
+      parkFromStatus: null,
+      parkRearmAttempts: 0,
+      parkRearmAfter: null,
+    });
+    // the ladder fields are PRESENT, not merely undefined: an omitted key leaves the
+    // stored column untouched, which is the bug (parkRound increments a surviving ledger)
+    expect(Object.keys(patch)).toEqual(
+      expect.arrayContaining(['preBlockStatus', 'parkFromStatus', 'parkRearmAttempts', 'parkRearmAfter']),
+    );
+    expect(patch.parkRearmAttempts).toBe(0);
+    expect(patch.parkRearmAfter).toBeNull();
+  });
+});
 
 describe('livenessBounce (sweep decision)', () => {
   it('bounces a working task whose newest run settled past the grace', () => {

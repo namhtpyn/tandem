@@ -92,12 +92,15 @@ describe('prod probe selfcheck', () => {
     expect(sql).toContain("coalesce(string_agg(t.id::text, ',' order by t.id), 'none')");
   });
 
-  it('the version floor closes on a non-semver version (the version is scraped from HTTP)', async () => {
-    // the floor gate is what decides whether the arm runs at all; its shape guard is
-    // asserted through --selfcheck (no separate emit mode)
-    const proc = await $`bash ${script} --selfcheck`.nothrow().quiet();
-    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
-    expect(proc.stdout.toString()).toContain('ok probe selfcheck');
+  // the arm's clause names BOTH origin columns: a one-column image must refuse to emit
+  // (exit 2) rather than print bytes that throw at run time (column-absent law)
+  it('refuses to emit when the column gate reports a degraded schema', async () => {
+    const oneCol = await $`bash ${script} --egress-sql 1`.nothrow().quiet();
+    expect(oneCol.exitCode).toBe(2);
+    expect(oneCol.stdout.toString().trim()).toBe('');
+    const twoCol = await $`bash ${script} --egress-sql 2`.nothrow().quiet();
+    expect(twoCol.exitCode).toBe(0);
+    expect(twoCol.stdout.toString()).toContain("select 'egressorigin'");
   });
 
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {

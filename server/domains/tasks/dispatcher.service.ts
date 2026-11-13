@@ -191,6 +191,7 @@ export function idleSweepScan(ex: DbExecutor, cutoff: Date, limit: number) {
   return asDb(ex)
     .select({
       id: tasks.id,
+      status: tasks.status,
       updatedAt: tasks.updatedAt,
       newestStatus: sql<string | null>`newest.status`,
       newestFinishedAt: sql<Date | null>`newest.finished_at`,
@@ -217,6 +218,29 @@ export function idleSweepScan(ex: DbExecutor, cutoff: Date, limit: number) {
       ),
     )
     .limit(limit);
+}
+
+/** the bounce write's field set (#427): the status landing AND the machine-memory
+ * exhaustion it must carry in the same statement. Pure so the pin can assert every field
+ * — a field silently dropped from an inline literal is the exact regression class. */
+export function livenessBouncePatch(): {
+  status: string;
+  preBlockStatus: null;
+  parkFromStatus: null;
+  parkRearmAttempts: 0;
+  parkRearmAfter: null;
+  dispatchAfter: null;
+  updatedAt: Date;
+} {
+  return {
+    status: STATUS.todo,
+    preBlockStatus: null,
+    parkFromStatus: null,
+    parkRearmAttempts: 0,
+    parkRearmAfter: null,
+    dispatchAfter: null,
+    updatedAt: new Date(),
+  };
 }
 
 export async function sweepIdleWorking(): Promise<number> {
@@ -251,10 +275,16 @@ async function sweepIdleWorkingInner(): Promise<number> {
       )
     )
       continue;
+    // EGRESS EXHAUSTION (#427): a bounce is a legal egress from a working status, and the
+    // scan's window admits a gating auto-block landing between the read and this write
+    // (a child spawn re-blocks its parent while the sweep holds the row) — the row would
+    // then leave the block carrying pre_block_status and the parent's next park would
+    // inherit it. CAS on the status this scan READ and exhaust both origins + the ledger
+    // in the same statement (the reaper's #162 pattern).
     await db
       .update(tasks)
-      .set({ status: STATUS.todo, dispatchAfter: null, updatedAt: new Date() })
-      .where(eq(tasks.id, row.id));
+      .set(livenessBouncePatch())
+      .where(and(eq(tasks.id, row.id), eq(tasks.status, row.status)));
     const { logActivity } = await import('./review.service');
     await logActivity(
       row.id,
