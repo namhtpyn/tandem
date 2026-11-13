@@ -15,14 +15,15 @@
 import { consola } from 'consola';
 import { and, eq } from 'drizzle-orm';
 
-import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db/index';
-import { tasks } from '../../db/schema';
+import { taskReviews, tasks } from '../../db/schema';
 import { hasOpenChildren, refreshParentGating } from './gating.service';
 import {
   canonicalStoredUuid,
+  currentRound,
   discardVoidRows,
   dispatchAiReviewTurns,
   liveReviewers,
@@ -49,7 +50,10 @@ function skippedCount(roster: string[], liveCount: number, droppedInRound = 0): 
  * outlive the completion — close every pending round the task still carries and
  * land done, CAS-arbitrated on the stamp the heal read (the open-subtasks HOLD is
  * the heal's, above — nothing reaches here with open children). Returns false (no
- * round) so the caller's return stays "a live round exists". */
+ * round) so the caller's return stays "a live round exists". EVIDENCE LAW: the
+ * flip is committed before the follow-ups run, so each is isolated and logged —
+ * and when no skip note covers the completion, one honest note is written (a
+ * reopen bounced back to done must never be silent). */
 async function completeWithoutReviewers(taskId: string, task: { status: string; updatedAt: Date }, skipped: number) {
   const done = await db
     .update(tasks)
@@ -57,11 +61,21 @@ async function completeWithoutReviewers(taskId: string, task: { status: string; 
     .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
   if (done.length === 0) return false; // a concurrent writer owns the outcome
-  await teardownAllPendingRounds(taskId, 'no live reviewers');
-  if (skipped > 0) {
-    await logActivity(taskId, ACTIVITY_KIND.NOTE, null, `${skipped} reviewer(s) skipped — not in the company`, {
-      skippedReviewers: skipped,
-    });
+  try {
+    await teardownAllPendingRounds(taskId, 'no live reviewers');
+  } catch (e) {
+    log.warn(`requeue heal: teardown failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
+  try {
+    if (skipped > 0) {
+      await logActivity(taskId, ACTIVITY_KIND.NOTE, null, `${skipped} reviewer(s) skipped — not in the company`, {
+        skippedReviewers: skipped,
+      });
+    } else {
+      await logActivity(taskId, ACTIVITY_KIND.NOTE, null, 'no live reviewers — completed without review', {});
+    }
+  } catch (e) {
+    log.warn(`requeue heal: completion note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
   }
   try {
     await refreshParentGating(taskId);
@@ -69,6 +83,22 @@ async function completeWithoutReviewers(taskId: string, task: { status: string; 
     log.warn(`requeue heal: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
   }
   return false;
+}
+
+/** a VOID pending row (reviewer deleted) belongs to the #365 settle — the matrix
+ * retries it; the heal never mints while one remains (a settle that lost its CAS
+ * still owns the round). Round 0 has no rows and heals. */
+async function voidPendingRoundRemains(taskId: string): Promise<boolean> {
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select({ status: taskReviews.status })
+    .from(taskReviews)
+    .where(
+      and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** the whole-heal open-subtasks hold (#440): submit never reviews a parent with
@@ -137,6 +167,9 @@ async function healRequeue(taskId: string): Promise<boolean> {
     // a concurrent writer may have opened a live round (a racing move's own heal):
     // never mint a stacked round over one
     if (await openRoundLive(taskId)) return false;
+    // a VOID pending row belongs to the #365 settle (the matrix retries it) —
+    // the heal never mints while one remains, even after a settle's lost CAS
+    if (await voidPendingRoundRemains(taskId)) return false;
     if (await holdForOpenSubtasks(taskId)) return false;
     const roster = task.reviewers ?? [];
     const reviewers = await liveReviewers(roster);

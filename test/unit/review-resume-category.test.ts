@@ -63,6 +63,9 @@ const h = vi.hoisted(() => ({
   warns: [] as string[],
   liveQueue: [] as boolean[],
   priorBrief: '',
+  currentRound: 0,
+  pendingRows: [] as Array<{ status: string }>,
+  torndownThrows: false,
   opened: [] as Array<{
     taskId: string;
     reviewers: string[];
@@ -108,6 +111,11 @@ vi.mock('../../server/db/index', () => ({
         },
       },
     },
+    select: (_cols: Record<string, unknown>) => ({
+      from: (_t: unknown) => ({
+        where: async () => h.pendingRows,
+      }),
+    }),
     update: (_table: unknown) => ({
       set: (payload: Record<string, unknown>) => ({
         where: (w: unknown) => ({
@@ -124,6 +132,7 @@ vi.mock('../../server/db/index', () => ({
 
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => (h.liveQueue.length > 0 ? (h.liveQueue.shift() as boolean) : h.live),
+  currentRound: async () => h.currentRound,
   roundResultBody: async () => h.priorBrief,
   dispatchAiReviewTurns: async (taskId: string) => {
     if (h.dispatchThrows) throw new Error('dispatch boom');
@@ -156,7 +165,10 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
     if (h.openThrows) throw new Error('round-open boom');
     return h.openResult;
   },
-  teardownAllPendingRounds: async (taskId: string, reason: string) => void h.torndown.push([taskId, reason]),
+  teardownAllPendingRounds: async (taskId: string, reason: string) => {
+    if (h.torndownThrows) throw new Error('teardown boom');
+    void h.torndown.push([taskId, reason]);
+  },
   logActivity: async (
     taskId: string,
     kind: string,
@@ -201,6 +213,9 @@ beforeEach(() => {
   h.warns = [];
   h.liveQueue = [];
   h.priorBrief = '';
+  h.currentRound = 0;
+  h.pendingRows = [];
+  h.torndownThrows = false;
   h.opened = [];
   h.openResult = { flipped: false, round: 0, opened: 0, dropped: [] };
   h.openThrows = false;
@@ -281,13 +296,14 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     h.settleResult = false; // decided round: the settle no-ops by design
     h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1, U2] };
     h.liveIds = [U1, U2];
+    h.priorBrief = 'the submission the decided round judged';
     h.openResult = { flipped: true, round: 2, opened: 2, dropped: [] };
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
     expect(h.opened).toEqual([
       {
         taskId: 'task-1',
         reviewers: [U1, U2],
-        body: '',
+        body: 'the submission the decided round judged',
         flip: { status: 'st-custom-review', updatedAt: T0 },
         targetStatus: 'st-custom-review', // the OWNER'S chosen id, never the seeded one
       },
@@ -351,6 +367,33 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.doneWhere).toEqual([['task-1', 'st-custom-review', T0]]);
     expect(h.torndown).toEqual([['task-1', 'no live reviewers']]);
     expect(h.gated).toEqual(['task-1']);
+    expect(h.noted).toEqual([['task-1', ACTIVITY_KIND.NOTE, null, 'no live reviewers — completed without review', {}]]);
+  });
+
+  it('a teardown failure after the committed flip stays isolated — done stands, failure logged', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.torndownThrows = true;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false); // no throw
+    expect(h.doneFlip).toHaveLength(1); // the outcome already committed
+    expect(h.warns.length).toBeGreaterThanOrEqual(1); // the failure is logged evidence
+    expect(h.gated).toEqual(['task-1']); // later steps still ran
+  });
+
+  it('a VOID pending round whose settle lost its CAS is never healed — the matrix retries it (#365)', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.settleResult = false; // the settle LOST its CAS — false does not mean 'decided'
+    h.currentRound = 2;
+    h.pendingRows = [{ status: 'pending' }]; // a void pending row still stands
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.openResult = { flipped: true, round: 3, opened: 1, dropped: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toHaveLength(0); // the heal never mints over the matrix's round
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.doneFlip).toHaveLength(0);
   });
 
   it('a roster of only ABSENT reviewers completes the same way and notes the skips', async () => {
@@ -497,28 +540,6 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false); // no throw
     expect(h.dispatched).toHaveLength(0);
     expect(h.parked).toHaveLength(0); // nothing committed, nothing to park over
-  });
-
-  it('a SPENT ESCALATION TOMBSTONE never blocks the heal — decided rows and tombstones heal (#440 r4)', async () => {
-    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
-    h.live = false; // no PENDING row: the escalated row is a terminal non-vote tombstone
-    h.settleResult = false; // the settle no-ops — no void signature to settle
-    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
-    h.liveIds = [U1];
-    h.priorBrief = 'the original submission';
-    h.openResult = { flipped: true, round: 2, opened: 1, dropped: [] };
-    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
-    // the fresh round judges the SAME brief the decided round judged — never an empty one
-    expect(h.opened).toEqual([
-      {
-        taskId: 'task-1',
-        reviewers: [U1],
-        body: 'the original submission',
-        flip: { status: 'st-custom-review', updatedAt: T0 },
-        targetStatus: 'st-custom-review',
-      },
-    ]);
-    expect(h.dispatched).toEqual(['task-1']);
   });
 
   it('a live round minted mid-heal (a racing move) is never stacked — the heal re-checks first', async () => {
