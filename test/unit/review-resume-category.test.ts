@@ -66,6 +66,8 @@ const h = vi.hoisted(() => ({
   currentRound: 0,
   pendingRows: [] as Array<{ status: string }>,
   torndownThrows: false,
+  parkThrows: false,
+  pendingWhere: [] as unknown[][],
   opened: [] as Array<{
     taskId: string;
     reviewers: string[];
@@ -113,7 +115,14 @@ vi.mock('../../server/db/index', () => ({
     },
     select: (_cols: Record<string, unknown>) => ({
       from: (_t: unknown) => ({
-        where: async () => h.pendingRows,
+        // the REAL chain ends .where(...).limit(1) — mock the whole shape so a
+        // chain drift fails loudly instead of falling into the heal's catch-all
+        where: (w: unknown) => ({
+          limit: async () => {
+            h.pendingWhere.push(whereVals(w));
+            return h.pendingRows;
+          },
+        }),
       }),
     }),
     update: (_table: unknown) => ({
@@ -176,8 +185,10 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
     body: string,
     meta: Record<string, unknown>,
   ) => void h.noted.push([taskId, kind, authorId, body, meta]),
-  parkRound: async (taskId: string, why: string, opts?: { rearmable?: boolean }) =>
-    void h.parked.push([taskId, why, opts]),
+  parkRound: async (taskId: string, why: string, opts?: { rearmable?: boolean }) => {
+    if (h.parkThrows) throw new Error('park boom');
+    void h.parked.push([taskId, why, opts]);
+  },
 }));
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
@@ -216,6 +227,8 @@ beforeEach(() => {
   h.currentRound = 0;
   h.pendingRows = [];
   h.torndownThrows = false;
+  h.parkThrows = false;
+  h.pendingWhere = [];
   h.opened = [];
   h.openResult = { flipped: false, round: 0, opened: 0, dropped: [] };
   h.openThrows = false;
@@ -394,6 +407,20 @@ describe('requeue heal — a move into review over a round that cannot decide (#
     expect(h.opened).toHaveLength(0); // the heal never mints over the matrix's round
     expect(h.dispatched).toHaveLength(0);
     expect(h.doneFlip).toHaveLength(0);
+    // the probe is scoped for real: task id + the CURRENT round + the PENDING status
+    expect(h.pendingWhere).toEqual([['task-1', 2, 'PENDING']]);
+  });
+
+  it('a park failure under a dispatch failure is logged, never swallowed silently', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.dispatchThrows = true;
+    h.parkThrows = true;
+    h.openResult = { flipped: true, round: 2, opened: 1, dropped: [] };
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(true);
+    expect(h.warns.join(' ')).toContain('park ALSO failed'); // isolated AND logged
   });
 
   it('a roster of only ABSENT reviewers completes the same way and notes the skips', async () => {

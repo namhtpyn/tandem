@@ -140,7 +140,12 @@ async function finishWonFlip(taskId: string, round: number, skipped: number) {
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     log.warn(`requeue heal: round ${round} dispatch failed for task ${taskId}:`, reason);
-    await parkRound(taskId, `review turn dispatch failed — ${reason}`, { rearmable: true }).catch(() => {});
+    await parkRound(taskId, `review turn dispatch failed — ${reason}`, { rearmable: true }).catch((pe) => {
+      log.warn(
+        `requeue heal: round ${round} rearmable park ALSO failed for task ${taskId}:`,
+        pe instanceof Error ? pe.message : pe,
+      );
+    });
   }
 }
 
