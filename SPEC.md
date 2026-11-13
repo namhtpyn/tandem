@@ -1160,25 +1160,45 @@ non-positive deltas render no duration.
   one excepted: the idle-liveness bounce clears it at the next tick past its grace) — an
   accepted, one-time cost: the arm cannot tell that leftover from a live egress failure,
   and a missed regression is the worse error.
-- The READY-ROUND arm (#443, floor 2.78.26) reads a `ready`- or `working`-category task
-  that owns a PENDING row in its CURRENT round (`max(round)`) for a LIVE AI reviewer
+- The READY-ROUND arm (#443, floor 2.78.26; task-wide per #445) reads a `ready`- or
+  `working`-category task that owns a PENDING row of ANY round for a LIVE AI reviewer
   (`ai_employees.user_id`; a NULL-reviewer void row is a non-vote, #365), with NO
-  `RUNNING` run on the task and the row past the arm's own 5-minute grace (stricter than
-  the stalled-review sweep's 60s in-flight window, so no legal commit→dispatch window can
-  match) — AND WITHOUT an owner status write (the `status: …` body with the
+  `RUNNING` run on the task and the row past the arm's own 5-minute grace on the row's
+  OWN age — comfortably beyond any legal commit→dispatch window, and keyed on the row
+  (not the stalled-review sweep's never-dispatched-run clause, which must not ride this
+  arm; see the reader-scope note below) — AND WITHOUT an owner status write (the
+  `status: …` body with the
   `kind = 'STATUS'` payload, the `tasks.setStatus` signature) newer than that row. The
   owner clause is the manual-freedom exception: the manual surface never tears a round
   down, so a move out of review legally leaves the round's PENDING rows behind, and its
   own move row is always newer than the rows it stranded; every machine flip that returns
   a task to a ready category logs its own body and can never borrow that signature. The
+  law is TASK-WIDE: a ready task must own no live round at all — pinning the arm to the
+  CURRENT round (`max(round)`) hid an older-round strand (a resubmit opens the next round
+  insert-only and older rows are never superseded, so a teardown regression leaving ONLY
+  non-current-round rows alerted never, #445), and the clause is retired from the arm's
+  bytes. BOTH exclusions are PER-ROW: keyed on each row's own `created_at`, evaluated per
+  round, never per task. The
   HOLD-LANDING exception is the one other legal shape the review section declares: an
   answer that lands while a verdict is held, and whose repair flip loses the dispatcher's
   claim, leaves the re-opened round on a ready/working status with only a
   `review round resumed …` thread note (a machine body with the 1:1 `kind = 'STATUS'`
   payload, written after the row it re-opened — the re-open keeps `created_at`), so the
   arm excludes any row a resume note is newer than; free text cannot forge either
-  exclusion (a NOTE's payload kind is `NOTE`). Below the floor the note-dispatch bounce
-  itself produces the shape (a parked round left behind by a legal send), so the arm stays
+  exclusion (a NOTE's payload kind is `NOTE`), and a verdict record (the round's own
+  decision, `kind = 'VERDICT'`) is not an exclusion record — an older-round strand under
+  a decided newer round fires. The residual producers the arm's floor leaves are named
+  exhaustively: every legal flip either supersedes the rows it strands (the egress
+  teardown, terminal settles, `no live reviewers`) or writes a newer STATUS-kind record;
+  the escalation replacement mint targets a live round on an in_review task, never this
+  scope; a verdict bounce cannot strand its own round's siblings — the round matrix
+  returns `waiting` and never flips while any PENDING row of the deciding round remains,
+  so the flip proceeds only on the round's LAST verdict and strands nothing it decided;
+  what a bounce CAN strand is a NEWER round's live rows when a stale AI verdict binds to
+  the older round it was dispatched for — the flip is a raw write (no note), so those
+  rows land unrecorded and the arm's firing on them is the law, not a false positive.
+  Below the floor the note-dispatch bounce itself produces the shape (a parked round
+  left behind by a legal send), so the arm stays
   silent there — a pre-fix image cannot heal it and an alert would misattribute cause. From
   the floor every dispatch flip tears its open rounds down in the same transaction (SPEC
   COMPOSER LAW, NOTE-EGRESS ROUND TEARDOWN), so a surviving count is a guard regression or
