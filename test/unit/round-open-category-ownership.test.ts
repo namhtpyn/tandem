@@ -6,13 +6,16 @@
 // PENDING rows, and the mint gate (which reads the CURRENT category) dispatched nothing:
 // a review flow owning a task its own category had just dissolved.
 //
-// The tx now key-shares the status row first — the re-categorization either commits
-// before the read (the re-verify declines: nothing flipped, nothing minted, the caller
-// routes the decline) or serializes AFTER the round commits (the round then rides the
-// manual-move-out semantics: the next in_review entry resumes, a settle tears down).
-// Taking the share FIRST makes the ordering deadlock-free: statuses.save's advisory
-// mutex touches no task row before its status write, and the removal's re-home cannot
-// start while this tx holds the share.
+// r2 (blind-review r1, lens A — ACCEPTED P1): a row-level FOR KEY SHARE cannot do this
+// job — a category re-key is a NON-KEY update (FOR NO KEY UPDATE), which does not
+// conflict with FOR KEY SHARE — so the tx's FIRST statement now takes the STATUS
+// MUTATION MUTEX (the same pg_advisory_xact_lock statuses.save/removal serialize on)
+// and the category is re-verified under it: a re-categorization either commits before
+// the read (the re-verify declines: nothing flipped, nothing minted, the caller routes
+// the decline) or waits behind the transaction and lands AFTER it (the round then rides
+// the manual-move-out semantics: the next in_review entry resumes, a settle tears down).
+// Deadlock-free: the mutex precedes every row lock this tx takes, and save/removal
+// take it before their own task-row writes.
 //
 // The mock is transaction-IDENTITY aware (#364 TX-IDENTITY PIN LAW).
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -40,6 +43,8 @@ const h = vi.hoisted(() => ({
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
   lockTxIds: [] as number[],
+  advisorySqls: [] as string[],
+  advisoryTxIds: [] as number[],
   statusLockStrengths: [] as string[],
   statusLockConds: [] as unknown[],
   statusLockTxIds: [] as number[],
@@ -79,25 +84,26 @@ vi.mock('../../server/db/index', async () => {
       return {
         from: (table: unknown) => {
           if (table === taskStatuses) {
+            h.events.push('status-read');
             return {
-              where: (cond: unknown) => ({
-                for: async (strength: string) => {
-                  h.statusLockStrengths.push(strength);
-                  h.statusLockConds.push(cond);
-                  h.statusLockTxIds.push(txId);
-                  const params = dialect.sqlToQuery(cond as never).params as unknown[];
-                  const target = String(params[0]);
-                  h.statusLockIds.push(target);
-                  // predicate-faithful: only a status row that EXISTS answers
-                  return h.statusRowExists && target === h.statusRowId ? [{ category: h.statusCategory }] : [];
-                },
-              }),
+              where: (cond: unknown) => {
+                h.statusLockConds.push(cond);
+                h.statusLockTxIds.push(txId);
+                const params = dialect.sqlToQuery(cond as never).params as unknown[];
+                const target = String(params[0]);
+                h.statusLockIds.push(target);
+                // predicate-faithful: only a status row that EXISTS answers
+                return h.statusRowExists && target === h.statusRowId
+                  ? { ...thenable(() => [{ category: h.statusCategory }]) }
+                  : { ...thenable(() => []) };
+              },
             };
           }
           if (table === user) {
             return {
               where: (cond: unknown) => ({
                 for: async (strength: string) => {
+                  h.events.push('user-lock');
                   h.lockStrengths.push(strength);
                   h.lockConds.push(cond);
                   h.lockTxIds.push(txId);
@@ -147,6 +153,13 @@ vi.mock('../../server/db/index', async () => {
           return b;
         },
       };
+    },
+    execute: function (this: { __tx?: number }, query: unknown) {
+      const txId = this.__tx ?? 0;
+      h.advisorySqls.push(dialect.sqlToQuery(query).sql);
+      h.advisoryTxIds.push(txId);
+      h.events.push('advisory');
+      return Promise.resolve({ rows: [] });
     },
     insert: function (this: { __tx?: number }, table: unknown) {
       const txId = this.__tx ?? 0;
@@ -256,6 +269,8 @@ beforeEach(() => {
   h.lockStrengths = [];
   h.lockConds = [];
   h.lockTxIds = [];
+  h.advisorySqls = [];
+  h.advisoryTxIds = [];
   h.statusLockStrengths = [];
   h.statusLockConds = [];
   h.statusLockTxIds = [];
@@ -277,19 +292,26 @@ beforeEach(() => {
 });
 
 describe('openReviewRound category-ownership lock (#454)', () => {
-  it('key-shares the landing status row FOR KEY SHARE as the tx FIRST lock, same tx as the flip', async () => {
+  it('takes the STATUS MUTATION MUTEX as the tx FIRST statement, reads the landing row in the same tx', async () => {
     await openReviewRound(T, [A, B], 'the result', FLIP);
-    expect(h.statusLockStrengths).toEqual(['key share']);
-    const lockSql = new PgDialect().sqlToQuery(h.statusLockConds[0] as never);
-    expect(lockSql.sql).toContain('"task_statuses"."id" =');
+    // the mutex is the exact advisory lock statuses.save/removal serialize on
+    expect(h.advisorySqls).toHaveLength(1);
+    expect(h.advisorySqls[0]).toContain('pg_advisory_xact_lock');
+    expect(h.advisorySqls[0]).toContain('tandem:task_statuses');
+    // ordering pin: mutex FIRST, then the category read, then the reviewer
+    // key-share, then the flip — no row lock is held while the mutex waits
+    expect(h.events.slice(0, 3)).toEqual(['advisory', 'status-read', 'user-lock']);
+    expect(h.events.indexOf('flip')).toBeGreaterThan(h.events.indexOf('user-lock'));
+    // same tx for mutex, read, user lock, flip and minted rows
+    expect(
+      new Set([...h.advisoryTxIds, ...h.statusLockTxIds, ...h.lockTxIds, ...h.flipTxIds, ...h.insertTxIds]).size,
+    ).toBe(1);
+    const readSql = new PgDialect().sqlToQuery(h.statusLockConds[0] as never);
+    expect(readSql.sql).toContain('"task_statuses"."id" =');
     expect(h.statusLockIds).toEqual([STATUS.inReview]);
-    // FIRST lock: the status share precedes the reviewer key-share and the flip
-    expect(h.statusLockTxIds[0]).toBeGreaterThan(0);
-    expect(new Set([...h.statusLockTxIds, ...h.lockTxIds, ...h.flipTxIds, ...h.insertTxIds]).size).toBe(1);
-    expect(h.events.indexOf('flip')).toBeGreaterThan(-1);
   });
 
-  it('a status row re-categorized OUT of in_review inside the verify→flip window declines the mint', async () => {
+  it('a re-categorization the re-verify read sees (committed before it, serialized by the mutex) declines the mint', async () => {
     h.statusCategory = 'working';
     const opened = await openReviewRound(T, [A, B], 'the result', FLIP);
     expect(opened).toEqual({ flipped: false, round: 0, opened: 0, dropped: [], declined: 'category' });

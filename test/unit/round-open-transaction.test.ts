@@ -42,7 +42,7 @@ const h = vi.hoisted(() => ({
   // #454: the landing status row's category — the round-open tx key-shares it and
   // re-verifies in_review before the flip (hoisted literal: vi.hoisted precedes imports)
   statusCategory: 'in_review' as string,
-  statusLockStrengths: [] as string[],
+  advisorySqls: [] as string[],
   lockTxIds: [] as number[],
   obligationConds: [] as unknown[],
   insertTxIds: [] as number[],
@@ -76,14 +76,10 @@ vi.mock('../../server/db/index', async () => {
         from: (table: unknown) => {
           if (table === taskStatuses) {
             return {
-              where: () => ({
-                for: async (strength: string) => {
-                  h.statusLockStrengths.push(strength);
-                  // #454: predicate-faithful enough for this file — the landing status
-                  // row exists and carries h.statusCategory
-                  return [{ category: h.statusCategory }];
-                },
-              }),
+              // #454 r2: a PLAIN read (the mutex, not a row lock, serializes it) —
+              // predicate-faithful enough for this file: the landing status row exists
+              // and carries h.statusCategory
+              where: async () => [{ category: h.statusCategory }],
             };
           }
           if (table === user) {
@@ -167,6 +163,13 @@ vi.mock('../../server/db/index', async () => {
         }),
       };
     },
+    execute: function (this: { __tx?: number }, query: unknown) {
+      const txId = this.__tx ?? 0;
+      // #454 r2: the round-open tx's first statement — the status-mutation mutex
+      h.advisorySqls.push(dialect.sqlToQuery(query).sql);
+      void txId;
+      return Promise.resolve({ rows: [] });
+    },
     insert: function (this: { __tx?: number }, table: unknown) {
       const txId = this.__tx ?? 0;
       return {
@@ -244,7 +247,7 @@ beforeEach(() => {
   h.lockStrengths = [];
   h.lockConds = [];
   h.statusCategory = 'in_review';
-  h.statusLockStrengths = [];
+  h.advisorySqls = [];
   h.lockTxIds = [];
   h.obligationConds = [];
   h.insertTxIds = [];

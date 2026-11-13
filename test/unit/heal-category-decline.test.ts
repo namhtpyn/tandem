@@ -289,4 +289,21 @@ describe('requeue heal bails on the #454 category decline', () => {
     expect(h.doneFlip).toHaveLength(0);
     expect(declineNotes()).not.toContain('review cannot start');
   });
+
+  it('the post-flip ride (SPEC): a live round under a re-keyed status re-fires on the next in_review entry — untouched', async () => {
+    // the admin re-categorized the OLD landing status AFTER a flip won (legal admin
+    // write); the live round rides the manual-move-out semantics — the owner's next
+    // move into any in-review-category status re-fires the reviewer turn, with NO
+    // completion, NO heal and NO teardown of the round that is still live.
+    h.statuses = [{ id: 'st-other-review', category: CATEGORY.IN_REVIEW }];
+    h.live = true; // the round opened before the re-key is still live
+    h.task = { id: 'task-1', status: 'st-other-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    expect(await resumeRoundAfterManualMove('task-1', 'st-other-review')).toBe(true);
+    expect(h.dispatched).toEqual(['task-1']); // the resume re-fires the stranded turn
+    expect(h.doneFlip).toHaveLength(0); // never completes over a live round
+    expect(h.opened).toHaveLength(0); // no fresh round mints over the live one
+    expect(h.torndown).toHaveLength(0); // no teardown — the clause the SPEC asserts
+    expect(declineNotes()).not.toContain('review cannot start');
+  });
 });

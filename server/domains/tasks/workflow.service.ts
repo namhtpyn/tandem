@@ -508,14 +508,14 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // submit never tears down a round the winner still owns; closes EVERY pending round.
   // The same arm completes a submit whose reviewers ALL vanished inside the round-open
   // transaction (#364): nothing was minted, so there is no round to settle.
-  const completeWithoutReviewers = async () => {
+  const completeWithoutReviewers = async (teardownReason = 'no live reviewers') => {
     const done = await db
       .update(tasks)
       .set({ status: DONE_STATUS, updatedAt: new Date() })
       .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
       .returning({ id: tasks.id });
     if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
-    await teardownAllPendingRounds(taskId, 'no live reviewers');
+    await teardownAllPendingRounds(taskId, teardownReason);
     await noteSkipped();
     await refreshParentGating(taskId);
     return { status: DONE_STATUS };
@@ -536,7 +536,10 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     droppedInRound = opened.dropped.length;
     // every reviewer vanished inside the round-open transaction (#364): nothing was
     // minted and no flip landed — complete exactly like zero survivors.
-    if (opened.opened === 0) return await completeWithoutReviewers();
+    if (opened.opened === 0)
+      return await completeWithoutReviewers(
+        opened.declined === 'category' ? 'review status left the in_review category' : undefined,
+      );
     // TERMINAL ARBITRATION mirror (#287, #292 r1): a won abandon/settle between the gate
     // read and the flip owns the outcome; this call refuses with the error surfaced and
     // wrote nothing at all.

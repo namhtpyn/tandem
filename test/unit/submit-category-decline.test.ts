@@ -168,7 +168,9 @@ describe('submit routes the #454 category decline', () => {
     // the zero-review completion ran: the done flip CAS'd on the UNFLIPPED task row
     expect(h.events).toContain('done-flip');
     expect(h.updates.some((u) => u.status === STATUS.done)).toBe(true);
-    expect(h.allClosed).toEqual(['no live reviewers']);
+    // the teardown ledger names the REAL reason — not 'no live reviewers' (the
+    // roster was live; the review category dissolved)
+    expect(h.allClosed).toEqual(['review status left the in_review category']);
   });
 
   it('the decline fires with a FULL roster — reviewers are not the reason', async () => {
