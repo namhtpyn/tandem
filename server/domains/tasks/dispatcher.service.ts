@@ -285,10 +285,11 @@ async function sweepIdleWorkingInner(): Promise<number> {
       continue;
     // EGRESS EXHAUSTION (#427): a bounce is a legal egress from a working status, and the
     // scan's window admits a gating auto-block landing between the read and this write
-    // (a child spawn re-blocks its parent while the sweep holds the row) — the row would
-    // then leave the block carrying pre_block_status and the parent's next park would
-    // inherit it. CAS on the status this scan READ and exhaust both origins + the ledger
-    // in the same statement (the reaper's #162 pattern).
+    // (a child spawn re-blocks its parent while the sweep holds the row). Without the CAS
+    // the bounce would write to-do OVER that block and leave pre_block_status behind (the
+    // row leaves the block still carrying its restore home, and the parent's next park
+    // inherits it) — so the write CASes on the status this scan READ and exhausts both
+    // origins + the ledger in the same statement (the reaper's #162 pattern).
     const bouncedRows = await db
       .update(tasks)
       .set(livenessBouncePatch())
