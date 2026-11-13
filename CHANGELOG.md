@@ -1,3 +1,10 @@
+## [2.78.24](https://github.com/namhtpyn/tandem/compare/v2.78.23...v2.78.24) (2026-11-13)
+
+
+### Bug Fixes
+
+* [#430](https://github.com/namhtpyn/tandem/issues/430) detect the masked dead-round wedge via the owner-status activity record ([4b64ea9](https://github.com/namhtpyn/tandem/commit/4b64ea95aa43f6b43578b4a85e692110e84ad7d4))
+
 ## [2.78.23](https://github.com/namhtpyn/tandem/compare/v2.78.22...v2.78.23) (2026-11-12)
 
 
