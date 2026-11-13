@@ -1163,9 +1163,11 @@ non-positive deltas render no duration.
 - The READY-ROUND arm (#443, floor 2.78.26; task-wide per #445) reads a `ready`- or
   `working`-category task that owns a PENDING row of ANY round for a LIVE AI reviewer
   (`ai_employees.user_id`; a NULL-reviewer void row is a non-vote, #365), with NO
-  `RUNNING` run on the task and the row past the arm's own 5-minute grace (stricter than
-  the stalled-review sweep's 60s in-flight window, so no legal commit→dispatch window can
-  match) — AND WITHOUT an owner status write (the `status: …` body with the
+  `RUNNING` run on the task and the row past the arm's own 5-minute grace on the row's
+  OWN age — comfortably beyond any legal commit→dispatch window, and keyed on the row
+  (not the stalled-review sweep's never-dispatched-run clause, which must not ride this
+  arm; see the reader-scope note below) — AND WITHOUT an owner status write (the
+  `status: …` body with the
   `kind = 'STATUS'` payload, the `tasks.setStatus` signature) newer than that row. The
   owner clause is the manual-freedom exception: the manual surface never tears a round
   down, so a move out of review legally leaves the round's PENDING rows behind, and its

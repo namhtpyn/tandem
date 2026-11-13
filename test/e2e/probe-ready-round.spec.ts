@@ -162,13 +162,24 @@ test.describe('prod probe ready-round arm (#443, task-wide per #445)', () => {
          values ('rev-old-round-2', 'e2e-ready-old-round', $1, 2, 'APPROVED', 'ai', now() - interval '20 minutes', now() - interval '19 minutes')`,
         [AI_USER],
       );
-      // the verdict twin: same strand, but the round-2 decision also wrote its record —
-      // a verdict is not an exclusion record, the strand still fires
+      // the verdict twin: same strand, and the round-2 decision ALSO wrote its record —
+      // a real human VERDICT message (kind='VERDICT' payload, newer than the round-1 row)
+      // does NOT silence the arm: only the two declared machine-egress records exclude,
+      // so a hypothetical VERDICT-keyed-exclusion mutant goes red here
       await pending('e2e-ready-old-verdict', 1);
       await db.unsafe(
         `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at, decided_at)
          values ('rev-old-verdict-2', 'e2e-ready-old-verdict', $1, 2, 'APPROVED', 'human', now() - interval '20 minutes', now() - interval '19 minutes')`,
         [HUMAN_USER],
+      );
+      await db.unsafe(
+        `insert into task_messages (id, task_id, body, created_at)
+         values ('msg-old-verdict', 'e2e-ready-old-verdict', $1, now() - interval '18 minutes')`,
+        ['changes requested — round 2 decided'],
+      );
+      await db.unsafe(
+        `insert into task_message_activities (message_id, payload)
+         values ('msg-old-verdict', '{"kind":"VERDICT","approved":true,"round":2}'::jsonb)`,
       );
       // per-round exclusions: each strand is silenced only by a record newer than ITSELF
       await pending('e2e-ready-old-move', 1);
