@@ -17,13 +17,14 @@ import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
 import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
-import { db } from '../../db/index';
+import { asDb, db } from '../../db/index';
 import {
   projects as projectsTable,
   taskRuns as taskRunsTable,
   tasks as tasksTable,
   taskProposals,
   taskMessages,
+  user as userTable,
 } from '../../db/schema';
 import { env } from '../kernel/env';
 import { requireUuid } from '../kernel/id-shape';
@@ -638,27 +639,51 @@ export const tasksRouter = os.router({
       }
       const cur = nonNull(rows[0]).status;
       const actorId = await selfIdOf(context);
-      await db
-        .update(tasksTable)
-        // owner resolution clears park-origin memory (#202): the owner's move is the
-        // verdict of record — a stale park_from_status must never outlive the park.
-        // PARK-REARM LAW (#211): the owner's move also clears the re-arm ladder —
-        // a fresh owner context restarts the machine ledger at zero.
-        .set({
-          status: input.status,
-          // MACHINE-BLOCK MEMORY (#401): the owner's move is the verdict of record, so it
-          // clears BOTH machine origins — park_from_status (a review park) and
-          // pre_block_status (a gating auto-block). A surviving origin let a later manual
-          // block look machine-recorded and let a closing verdict flip a task the owner had
-          // parked by hand; clearing it also keeps a fresh auto-block's restore target
-          // honest (gating records the CURRENT status, never a stale origin).
-          parkFromStatus: null,
-          preBlockStatus: null,
-          parkRearmAttempts: 0,
-          parkRearmAfter: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(tasksTable.id, input.id));
+      // OWNER-MOVE RECORD (#430): the status write and its `status: <from> → <to>` activity
+      // row commit in ONE transaction. The prod probe's manual-freedom discriminator reads
+      // that row to tell an owner move from a machine status write, so a landed move must
+      // never exist without it — the teardown/resume side effects below are fallible and run
+      // AFTER the commit, and events publish only once both writes land.
+      await db.transaction(async (ex) => {
+        // LOCK ORDER (#430): take the actor's user row FIRST — the activity insert's
+        // author FK needs KEY SHARE on it, and an employee delete holds that row FOR
+        // UPDATE and then cascades into tasks; locking the task row first inverts the
+        // order and turns a concurrent offboarding into a 40P01 deadlock. A vanished row
+        // is a LOST attempt (the #400 rule), never a raw 23503 from the insert below.
+        if (actorId) {
+          const actor = await asDb(ex)
+            .select({ id: userTable.id })
+            .from(userTable)
+            .where(eq(userTable.id, actorId))
+            .for('key share');
+          if (actor.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'the acting user no longer exists' });
+        }
+        await asDb(ex)
+          .update(tasksTable)
+          // owner resolution clears park-origin memory (#202): the owner's move is the
+          // verdict of record — a stale park_from_status must never outlive the park.
+          // PARK-REARM LAW (#211): the owner's move also clears the re-arm ladder —
+          // a fresh owner context restarts the machine ledger at zero.
+          .set({
+            status: input.status,
+            // MACHINE-BLOCK MEMORY (#401): the owner's move is the verdict of record, so it
+            // clears BOTH machine origins — park_from_status (a review park) and
+            // pre_block_status (a gating auto-block). A surviving origin let a later manual
+            // block look machine-recorded and let a closing verdict flip a task the owner had
+            // parked by hand; clearing it also keeps a fresh auto-block's restore target
+            // honest (gating records the CURRENT status, never a stale origin).
+            parkFromStatus: null,
+            preBlockStatus: null,
+            parkRearmAttempts: 0,
+            parkRearmAfter: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasksTable.id, input.id));
+        await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {}, ex, {
+          publish: false,
+        });
+      });
+      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       // manual settle tears the round down (final spec 2026-10-29 #8): the owner's
       // move IS the verdict of record — pending rows supersede, obligations cancel.
       // OBLIGATION LIFECYCLE (#205): category-resolved, never seeded ids — custom
@@ -673,7 +698,6 @@ export const tasksRouter = os.router({
       // silently skipped it and wedged the round).
       const { resumeRoundAfterManualMove } = await import('./review-resume');
       await resumeRoundAfterManualMove(input.id, input.status, cur);
-      await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {});
       const parentId = rows.at(0)?.parentTaskId;
       if (parentId) await refreshParentGating(parentId);
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
