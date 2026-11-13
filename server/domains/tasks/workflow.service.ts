@@ -410,24 +410,51 @@ export async function addNote(
     // stamp this attempt read — a note in flight across a terminal write must never
     // resurrect the settled task. A lost flip dispatches nothing; the note itself
     // already landed as a thread item above (thread-only, never a state write).
-    const flipped = await db
-      .update(tasks)
-      // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a
-      // block — the same write exhausts the round's machine memory (both origins clear,
-      // the park re-arm ledger resets) exactly like the settle flips (#423) and the
-      // abandon cancel above. parkRound INCREMENTS a surviving ledger, so a spent ladder
-      // handed to the task's next park would start it mid-ladder or FINAL (no recovery).
-      .set({
-        status: STATUS.todo,
-        preBlockStatus: null,
-        parkFromStatus: null,
-        parkRearmAttempts: 0,
-        parkRearmAfter: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
-      .returning({ id: tasks.id });
+    // NOTE-EGRESS ROUND TEARDOWN (#443): the flip is an egress from a review PARK too —
+    // BLOCKED with park_from_status set, its round's reviewer row still PENDING, the turn
+    // stopped — and the round it leaves is reachable by NOTHING: the stalled-review and
+    // lost-settle sweeps require review-flow ownership (in_review, or a gating block whose
+    // origin resolves there), so the parked reviewer never decides and its verdict is
+    // discarded silently. The flip returns the task to WORK, so the parked round would
+    // judge work the agent is about to redo: resolve it in the SAME transaction as the
+    // flip (PENDING rows superseded + approval obligations cancelled, the abandon/terminal
+    // teardown), and the next submit opens the next round. Change events are deferred to
+    // the post-commit note below — a redis publish must never gate a held row lock, and a
+    // rollback must never announce erased rows.
+    //
+    // LOCK ORDER (#443 r1): the TASK row is the transaction's FIRST write — the same order
+    // abandonTask (task → obligations → reviews) and the round-open tx (the in-review flip
+    // is its first write) take. Every writer that touches this task therefore serializes on
+    // that row before it touches a review row, so the teardown that follows cannot cycle
+    // with them: a concurrent abandon/round-open waits on the task row this tx holds
+    // instead of each holding one lock the other wants. (Round 1 ordered the teardown
+    // first and deadlocked against abandon — 40P01, reproduced on the scratch DB.)
+    const flipped = await db.transaction(async (ex) => {
+      const rows = await asDb(ex)
+        .update(tasks)
+        // EGRESS EXHAUSTION (#427): the note-dispatch bounce is a legal egress from a
+        // block — the same write exhausts the round's machine memory (both origins clear,
+        // the park re-arm ledger resets) exactly like the settle flips (#423) and the
+        // abandon cancel above. parkRound INCREMENTS a surviving ledger, so a spent ladder
+        // handed to the task's next park would start it mid-ladder or FINAL (no recovery).
+        .set({
+          status: STATUS.todo,
+          preBlockStatus: null,
+          parkFromStatus: null,
+          parkRearmAttempts: 0,
+          parkRearmAfter: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
+        .returning({ id: tasks.id });
+      // a lost CAS wrote nothing — no teardown ran, so there is nothing to roll back
+      if (rows.length === 0) return rows;
+      await teardownAllPendingRounds(taskId, STATUS.todo, ex, { publish: false, reason: 'egress' });
+      return rows;
+    });
     if (flipped.length === 0) continue;
+    await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     const { dispatchIfEligible } = await import('./dispatcher.service');
     const { env } = await import('#server/domains/kernel/env');
     // the skip arms (stale state, pending backoff, agent at cap) must not claim
