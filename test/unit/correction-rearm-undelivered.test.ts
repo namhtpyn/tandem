@@ -306,6 +306,22 @@ describe('an undelivered correction re-arms the parked intent (#420)', () => {
     expect(lastDispatch()).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true }); // intent survived
   });
 
+  it('a write-record identity needs NO marker text — record-true, marker-free still arms (#420 r2)', async () => {
+    // conjunct-weakening guard: a mutant adding `&& prompt.includes(MARKER)` to the
+    // identity check must fail this pin — a real correction run whose stored prompt
+    // lost the marker line (brief-builder refactor, legacy row) still re-arms
+    h.runRow = {
+      employeeId: 'rev-1',
+      startedAt: h.startAt,
+      verdictCorrection: true,
+      prompt: 'brief with no marker text at all\n',
+    };
+    await failedCorrectionFinish();
+    const fired = await dispatchAiReviewTurns('task-1');
+    expect(fired).toBe(true);
+    expect(lastDispatch()).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
+  });
+
   it('a STOPPED correction run re-arms — the owner unblock re-fire carries the block', async () => {
     const stopped = await stopRunForTask('task-1', 'actor-1');
     expect(stopped).toEqual({ ok: true, stopped: true });

@@ -170,6 +170,19 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.drops).toEqual([]);
   });
 
+  it('a delivered record needs NO marker text — record-true, marker-free still drops the intent (#420 r2)', async () => {
+    // conjunct-weakening guard: a mutant adding `&& prompt.includes(MARKER)` to the
+    // delivered-check must fail this pin — a genuine delivery whose stored prompt lost
+    // the marker line must still spend the retry
+    h.runs = [
+      run('r1', new Date(roundOpen.getTime() + 1000)),
+      run('self', self, 'DONE', 'marker-free corrected brief', true),
+    ];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(1);
+    expect(h.drops).toEqual([['task-1', 'rev-1']]);
+  });
+
   it('an ECHOED marker mid-line is not a delivery — the intent stays parked', async () => {
     // the brief embeds the result body and verdicts verbatim: a quoted mention must not be
     // read as a dispatched CORRECTION block (that would delete a live, never-sent retry)
