@@ -1140,6 +1140,31 @@ non-positive deltas render no duration.
   the block branch — it reads both origin columns, so it is emitted only at the
   two-column gate and VANISHES without `park_from_status` (an arm referencing a
   missing column would kill the whole UNION and blind every arm, #325).
+- The RE-KEYED-HOME arm (#435) reads the re-key sibling of that dangling shape: a
+  PAUSED row where a recorded origin (`pre_block_status` or `park_from_status`)
+  RESOLVES to a `task_statuses` row whose category is NOT `in_review` — the home
+  EXISTS, but its category moved after the block recorded it (the residual producer
+  is the read→upsert window in `statuses.save`'s block-state-home guard: a gating
+  block landing inside the window commits before the guard's homes read sees it, so
+  the category change goes through; the standing residual class, declared like the
+  orphan arm's ghost-task race) — and NEITHER origin resolves into review (a
+  resolvable in-review origin still lets the settle flip land: the orphan arm's
+  exclusion, mirrored). The flip then refuses on the non-review home, the round
+  closes on the verdict row with NO task write, and the task stays blocked — the
+  wedge's in_review branch cannot see it (the origin resolves outside in_review),
+  the ORPHAN-HOME arm cannot (the home exists), and the teardown heals read the row
+  as owner-settled. A terminal-by-owner shape is excluded BY CONSTRUCTION, not by a
+  category term: a legal owner settle moves the task OUT of the paused category and
+  clears both machine origins in the same statement, so a row that still carries an
+  origin cannot be owner-settled — the arm fires on a resolved `done`/`cancelled`
+  home too (that IS the counterexample shape: `in_review` → `done` under a blocked
+  task). The current-round clause (no PENDING row in `max(round)`, at least one
+  verdict row) and the verdict-vs-write ordering (newest verdict of that round
+  NEWER than the task's last write — the ORPHAN-HOME arm's simpler test; the
+  wedge's owner-status discriminator is #430's) apply as everywhere else. The
+  resolve test is PER COLUMN, VERSION-independent like the orphan arm (a pre-guard
+  image produces the strand too) and COLUMN-gated at the two-column gate (it reads
+  both origin columns; #325).
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),
