@@ -1,3 +1,16 @@
+## [2.78.32](https://github.com/namhtpyn/tandem/compare/v2.78.31...v2.78.32) (2026-11-14)
+
+
+### Bug Fixes
+
+* **release:** train preflight — fail closed when main..dev carries no releasable subject ([90b21ca](https://github.com/namhtpyn/tandem/commit/90b21caa9924fc0738882448c3a0231d4ccc958d)), closes [#438](https://github.com/namhtpyn/tandem/issues/438)
+* **release:** train preflight r1 — analyzer-parity + contract-truthful rc table (blind review round 1) ([3ccdc0c](https://github.com/namhtpyn/tandem/commit/3ccdc0cb0aed3c9777f67c215c903d8bd3e8acbc))
+* **release:** train preflight r2 — round-2 blind review: locale-proof, revert-trailer pairing, rc-truthful empty detection ([9e43081](https://github.com/namhtpyn/tandem/commit/9e430815f72919726afcdb6710433322ceac7acc))
+* **release:** train preflight r3 — oracle-verified analyzer mirror: revert-pair cancellation, breaking-scope parity, cat-file guard ([4f90752](https://github.com/namhtpyn/tandem/commit/4f90752414eda5a18a8c563c1d913dedbdb6a4dc))
+* **release:** train preflight r4 — the effective revertPattern is angular's, mirrored exactly (blind review round 4) ([5f43164](https://github.com/namhtpyn/tandem/commit/5f4316413a12da4c342caa8cfabbbb904b766680)), closes [#461](https://github.com/namhtpyn/tandem/issues/461)
+* **release:** train preflight r5 — streaming hold/match mirror + trim/parse parity (blind review round 5) ([d3cb4a5](https://github.com/namhtpyn/tandem/commit/d3cb4a5b4c96a18986e598804424617102263a1e))
+* **release:** train preflight r6 — two-view message handling + verdict-grep position truth (blind review round 6, cap) ([5a5f642](https://github.com/namhtpyn/tandem/commit/5a5f642d75e192288e51563ab7a76dac67ad8ef2))
+
 ## [2.78.31](https://github.com/namhtpyn/tandem/compare/v2.78.30...v2.78.31) (2026-11-13)
 
 
