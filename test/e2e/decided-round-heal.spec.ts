@@ -106,6 +106,14 @@ test.describe('decided-round heal (#472)', () => {
         verdict: 'CHANGE_REQUESTED',
       });
 
+      // GRACE (checked FIRST, bounded): the fresh verdict is 10s old, the grace 60s — one
+      // tick plus margin must leave it alone; checked here so a slow positive wait can
+      // never age the fixture past the grace and turn a correct heal into a failure.
+      await Bun.sleep(6_000);
+      expect(await statusOf(sql, fresh), 'a verdict inside the 60s grace may still be settling — never replayed').toBe(
+        IN_REVIEW,
+      );
+
       expect(await waitForStatus(sql, heal, DONE, 20_000), 'the tick must replay the lost settle to DONE').toBe(true);
       expect(
         await waitForStatus(sql, removed, DONE, 20_000),
@@ -131,7 +139,7 @@ test.describe('decided-round heal (#472)', () => {
       expect(notes.length, 'the replayed settle logs its verdict note').toBe(1);
       expect(Number((notes[0] as { n?: number }).n)).toBe(1);
 
-      // the legal re-queue and the grace shape are never stomped
+      // the legal re-queue shapes are never stomped
       expect(await statusOf(sql, legal), 'a legal manual re-queue over a decided round is not a machine wedge').toBe(
         IN_REVIEW,
       );
@@ -139,9 +147,6 @@ test.describe('decided-round heal (#472)', () => {
         await statusOf(sql, stale),
         "the owner record is judged against the CURRENT round verdict — an older round's later verdict cannot unmask a legal move",
       ).toBe(IN_REVIEW);
-      expect(await statusOf(sql, fresh), 'a verdict inside the 60s grace may still be settling — never replayed').toBe(
-        IN_REVIEW,
-      );
     } finally {
       await sql.end();
     }

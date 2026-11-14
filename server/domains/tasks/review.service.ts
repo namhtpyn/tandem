@@ -1632,8 +1632,9 @@ export type DecidedRoundCandidate = {
   note: string | null;
   source: string | null;
   decidedAt: Date | null;
-  /** the task row's stamp at scan time — the heal pins its flip to it (#292 r2) */
+  /** the task row's stamp + status at scan time — the heal pins its flip to them (#292 r2) */
   updatedAt: Date;
+  taskStatus: string;
 };
 
 /** the sweep's bounded read: the shape's SQL discriminators ride the query so the
@@ -1653,6 +1654,7 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
       source: taskReviews.source,
       decidedAt: taskReviews.decidedAt,
       updatedAt: tasks.updatedAt,
+      taskStatus: tasks.status,
     })
     .from(taskReviews)
     .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
@@ -1718,7 +1720,7 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
         // after the re-read — a manual re-queue inside that window wins, the heal retries
         // next tick. REPLAY: this must never re-open or re-mint a vote on a task the owner
         // moved (the waiting-answer hold is a fresh-verdict behavior, not a replay one).
-        { updatedAt: row.updatedAt },
+        { updatedAt: row.updatedAt, status: row.taskStatus },
         true,
       );
       if (outcome === 'done' || outcome === 'returned' || outcome === 'cancelled') {
@@ -2165,11 +2167,23 @@ async function flipScopeIds(d: DbExecutor = db): Promise<{ inReview: string[]; p
  *  after the read that decided the flip. MILLISECOND PRECISION: Postgres stores µs and a
  *  JS Date does not, so a raw equality misses every row written by SQL `now()` (the pin
  *  would be a permanent no-op there) — truncate the column to the Date's precision. */
-export function staleSettlePin(pin?: { updatedAt: Date }) {
-  return pin ? sql`date_trunc('milliseconds', ${tasks.updatedAt}) = ${pin.updatedAt}` : undefined;
+export function staleSettlePin(pin?: { updatedAt: Date; status?: string }) {
+  if (!pin) return undefined;
+  // the status term closes the same-millisecond window: a legal manual move always lands
+  // on a DIFFERENT status id (a self-edge is refused), so it wins the CAS even when the
+  // ms stamp is identical.
+  return and(
+    sql`date_trunc('milliseconds', ${tasks.updatedAt}) = ${pin.updatedAt}`,
+    pin.status ? eq(tasks.status, pin.status) : undefined,
+  );
 }
 
-async function flipTaskRow(d: typeof db, taskId: string, status: string, pin?: { updatedAt: Date }): Promise<boolean> {
+async function flipTaskRow(
+  d: typeof db,
+  taskId: string,
+  status: string,
+  pin?: { updatedAt: Date; status?: string },
+): Promise<boolean> {
   // the machine-block carve-out must prove the ROUND's home: the recorded origin has to
   // RESOLVE to an in-review-category id (a bare non-null origin is not enough — gating
   // records whatever status the task held, and a stale origin would let a hand-made block
@@ -2234,7 +2248,7 @@ async function regateAfterFlip(taskId: string) {
 /** the plain settle flip: conditional status write, then the post-commit re-gate.
  *  `pin` is the STALE-SETTLE PIN (#292 r2) for a replay that read the task BEFORE the
  *  flip — a manual move (or any task write) after that read makes the CAS miss. */
-async function flipTask(taskId: string, status: string, pin?: { updatedAt: Date }): Promise<boolean> {
+async function flipTask(taskId: string, status: string, pin?: { updatedAt: Date; status?: string }): Promise<boolean> {
   if (!(await flipTaskRow(db, taskId, status, pin))) return false;
   await regateAfterFlip(taskId);
   return true;
@@ -2278,9 +2292,11 @@ async function flipTaskAndSweep(
   taskId: string,
   status: string,
   cancelApprovals: (ex: DbExecutor) => Promise<void>,
-  pin?: { updatedAt: Date },
+  pin?: { updatedAt: Date; status?: string },
 ): Promise<boolean> {
-  const before = pin ?? (await db.select({ updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const before =
+    pin ??
+    (await db.select({ updatedAt: tasks.updatedAt, status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   try {
     await db.transaction(async (tx) => {
       const d = asDb(tx);
@@ -2545,7 +2561,7 @@ async function settleRound(
   note: string,
   source: 'human' | 'ai',
   round: number,
-  pin?: { updatedAt: Date },
+  pin?: { updatedAt: Date; status?: string },
   /** REPLAY (#472): skip the waiting-answer hold — a replayed verdict must never re-open
    *  or re-mint a vote; a task the owner moved out of review is simply superseded. */
   replay?: boolean,
@@ -2624,9 +2640,7 @@ async function settleRound(
         pin,
       ))
     )
-      return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
-        ? { outcome: 'parked' }
-        : { outcome: 'superseded' };
+      return settleMissed(taskId, reviewerId, verdict, source, round, replay);
     await logVerdict(
       taskId,
       reviewerId,
