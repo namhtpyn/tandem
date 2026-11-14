@@ -1155,25 +1155,30 @@ non-positive deltas render no duration.
   ready/working status, then gating-blocked: the block legally records a non-review
   home and a later verdict closes the round with no task write — the unblock restore
   heals it). That sub-shape is OUT of this arm and NAMED here so no one assumes
-  coverage. A terminal home cannot host that class; the OTHER legal class a terminal
-  home DOES host is the #423 re-block after a settle — the task settles to a
-  terminal status, a still-open child re-blocks it, and the block records the
-  settled status as its home with the verdict necessarily OLDER than the re-block
-  write — and the verdict-vs-write ordering excludes it (a cancel that re-blocks
-  records the cancelled status the same way), so the arm cannot false-alarm. The flip then refuses on
+  coverage. A terminal home cannot host the hold-landing class; the OTHER legal class
+  a terminal home DOES host is the #423 re-block after a settle — the task settles
+  to a terminal status, a still-open child re-blocks it, and the block records the
+  settled status as its home with the applied verdict necessarily OLDER than the
+  re-block write (a cancel that re-blocks records the cancelled status the same
+  way). The ordering therefore reads EVERY verdict of the round, not the newest: it
+  fires only when ALL verdict timestamps (min, not max) are NEWER than the task's
+  last write. That also excludes the flip→supersede window shape (#467: a second
+  reviewer's verdict CAS landing between the first verdict's flip and the supersede
+  sweep — the late row carries a decided_at past the re-block write while the
+  applied verdict predates it), which a max() test would misread as a re-key. The flip then refuses on
   the terminal home, the round closes on the verdict row with NO task write, and the
   task stays blocked — the wedge's in_review branch cannot see it (the origin resolves outside
   in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown heals
-  read the row as owner-settled. An OWNER-SETTLED shape is excluded BY
-  CONSTRUCTION: a legal owner settle moves the task OUT of the paused category and
-  clears both machine origins in the same statement, so a row that still carries an
-  origin cannot be owner-settled — which is why the arm fires on a resolved
-  `done`/`cancelled` home (that IS the counterexample shape: `in_review` → `done`
-  under a blocked task). The current-round clause (no PENDING
-  row in `max(round)`, at least one verdict row) and the verdict-vs-write ordering
-  (newest verdict of that round NEWER than the task's last write — the ORPHAN-HOME
-  arm's simpler test; the wedge's owner-status discriminator is #430's) apply as
-  everywhere else. The resolve test is PER COLUMN, VERSION-independent like the
+  read the row as owner-settled. A DIRECT owner settle is excluded by construction:
+  `setStatus` moves the task out of the paused category and clears both machine
+  origins in the same statement, so it leaves no origin behind; the residual
+  owner-settle shape is the machine #423 re-block above, excluded by the MIN
+  ordering. That is why the arm fires on a resolved `done`/`cancelled` home when no
+  verdict predates the block write (the counterexample shape: `in_review` → `done`
+  under a blocked task). The current-round clause (no PENDING row in `max(round)`,
+  at least one verdict row) and the MIN ordering above apply as specified; below
+  the `2.78.24` record floor the WEDGE falls back to its legacy test (#430) — this
+  arm keeps the simpler test everywhere, with the mask tracked as #466. The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
   a stale origin on a NON-paused row is the EGRESS-ORIGIN arm's shape (#427), never

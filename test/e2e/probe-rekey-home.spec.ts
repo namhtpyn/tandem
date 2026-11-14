@@ -83,6 +83,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const danglingOnly = `probe-rekey-dangle-${tag}`; // silent: an UNRESOLVABLE home is the orphan arm's shape
       const egressRekey = `probe-rekey-egress-${tag}`; // silent: a stale origin on a NON-paused row is #427's shape
       const staleRound = `probe-rekey-staleround-${tag}`; // silent: the VERDICT must sit in max(round)
+      const lateVerdict = `probe-rekey-lateverdict-${tag}`; // silent: flip->supersede window (#467), min() ordering
 
       // updated_at = now() - written minutes (the block write's stamp); the round's rows
       // sit at created - 10 minutes and decided - N minutes, so a verdict decided 1 minute
@@ -117,6 +118,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         // verdict-round binding must read max(round) only — without it, round 1's
         // verdict (1m) beats the write (5m) and the row fires wrongly
         { id: staleRound, status: BLOCKED, pre: DONE, park: null, written: 5 },
+        // the #423 re-block + flip->supersede window (#467): the APPLIED verdict (10m)
+        // predates the re-block write (5m); a late second reviewer's CAS (1m) lands
+        // after it — the MIN ordering must stay silent (a MAX test would fire)
+        { id: lateVerdict, status: BLOCKED, pre: DONE, park: null, written: 5 },
       ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -162,6 +167,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(egressRekey, 'APPROVED', 1);
       await seedReview(staleRound, 'APPROVED', 1);
       await seedReview(staleRound, 'SUPERSEDED', 2, null, 2);
+      await seedReview(lateVerdict, 'APPROVED', 10);
+      await seedReview(lateVerdict, 'APPROVED', 1);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -199,6 +206,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         fired,
         'the verdict must sit in max(round): a newer verdict on a SUPERSEDED round is not this shape',
       ).not.toContain(staleRound);
+      expect(
+        fired,
+        'a late verdict CAS after the re-block (#467) must not read as a re-key: the MIN ordering excludes it',
+      ).not.toContain(lateVerdict);
     } finally {
       await sql.end();
     }
