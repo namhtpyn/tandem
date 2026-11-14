@@ -166,7 +166,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(bothRekey, 'APPROVED', 1);
       await seedReview(bothMixed, 'APPROVED', 1);
       await seedReview(mixedReview, 'APPROVED', 1);
-      await seedReview(resolvable, 'APPROVED', 1);
+      await seedReview(resolvable, 'APPROVED', 0); // inside the #472 heal's grace: the live tick must not drain the fixture mid-spec
       await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveRound, 'APPROVED', 1);
       await seedReview(liveRound, 'PENDING', null, adminId);
