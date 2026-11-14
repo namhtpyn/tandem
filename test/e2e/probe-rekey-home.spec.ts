@@ -5,10 +5,14 @@ import { E2E_DATABASE_URL } from './helpers/env';
 
 // Contract: SPEC.md "Probe versioning" — the RE-KEYED-HOME arm (#435) reads the re-key
 // sibling of the ORPHAN-HOME shape: a PAUSED row where a recorded block/park home
-// RESOLVES to a task_statuses row whose category is NOT in_review — the home EXISTS, but
-// its category moved after the block recorded it (statuses.save's block-state-home guard
-// is a read-then-write check; the gating block landing inside its read->upsert window is
-// the declared residual producer). The settle flip then refuses on the non-review home,
+// RESOLVES to a TERMINAL (done/cancelled-category) task_statuses row — the home EXISTS,
+// but its category was re-keyed after the block recorded it (statuses.save's
+// block-state-home guard is a read-then-write check; the gating block landing inside its
+// read->upsert window is the declared residual producer). TERMINAL-only is a declared
+// boundary: a re-key into a NON-terminal category is SQL-indistinguishable from the
+// declared legal hold-landing class (a repair round re-opened on a ready/working status,
+// then gating-blocked, the block recording a non-review home legally) and is OUT of this
+// arm, never a false alarm here. The settle flip then refuses on the terminal home,
 // the round closes on the verdict row with NO task write, and the task stays blocked: the
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
 // ORPHAN-HOME arm cannot (the home exists), and the teardown heals read it as
@@ -66,7 +70,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
       const tag = crypto.randomUUID();
       const rekeyDone = `probe-rekey-done-${tag}`; // fires: THE counterexample — block home re-keyed in_review -> done
-      const rekeyDoing = `probe-rekey-doing-${tag}`; // fires: park home re-keyed to a working category
+      const rekeyDoing = `probe-rekey-doing-${tag}`; // silent: a NON-terminal re-key is the declared boundary
       const rekeyCancelled = `probe-rekey-cancelled-${tag}`; // fires: a cancelled-category home is the same wedge (no owner settle cleared the origin)
       const bothRekey = `probe-rekey-both-${tag}`; // fires: either column re-keyed is enough
       const mixedReview = `probe-rekey-mixedrev-${tag}`; // silent: the park origin still resolves to in-review
@@ -78,6 +82,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const manualBlock = `probe-rekey-manual-${tag}`; // silent: a hand-made block writes no origin
       const danglingOnly = `probe-rekey-dangle-${tag}`; // silent: an UNRESOLVABLE home is the orphan arm's shape
       const egressRekey = `probe-rekey-egress-${tag}`; // silent: a stale origin on a NON-paused row is #427's shape
+      const staleRound = `probe-rekey-staleround-${tag}`; // silent: the VERDICT must sit in max(round)
 
       // updated_at = now() - written minutes (the block write's stamp); the round's rows
       // sit at created - 10 minutes and decided - N minutes, so a verdict decided 1 minute
@@ -85,6 +90,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       // minutes ago is OLDER than a write 1 minute ago (the legal ordering shape)
       const seedTasks = [
         { id: rekeyDone, status: BLOCKED, pre: DONE, park: null, written: 5 },
+        // a re-key into a NON-terminal category is indistinguishable from the declared
+        // legal hold-landing gate block (the block legally records a ready/working home)
+        // — the terminal term is what keeps this arm silent on it
         { id: rekeyDoing, status: BLOCKED, pre: null, park: DOING, written: 5 },
         { id: rekeyCancelled, status: BLOCKED, pre: CANCELLED, park: null, written: 5 },
         // a row carrying both origins (no live writer emits that, but the schema permits
@@ -95,8 +103,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         // a gating block landing AFTER the verdict closed the round (verdict older than
         // the write) is the legal shape the write-vs-verdict discriminator exists for
         { id: legalRequeue, status: BLOCKED, pre: DONE, park: null, written: 1 },
-        // a legal owner re-queue into an in-review status over a decided round leaves the
-        // paused category — the paused clause owns this exclusion, not the ordering
+        // a legal owner re-queue into an in-review status over a decided round always
+        // carries a write NEWER than the old verdict — the ORDERING owns this exclusion
+        // (the paused clause is pinned by the egress seed below)
         { id: requeueReview, status: IN_REVIEW, pre: DONE, park: null, written: 1 },
         { id: liveRound, status: BLOCKED, pre: DONE, park: null, written: 5 },
         { id: tornDown, status: BLOCKED, pre: DONE, park: null, written: 5 },
@@ -106,6 +115,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         // a stale origin on a non-paused row is the EGRESS-ORIGIN shape (#427): the
         // paused clause must own this exclusion
         { id: egressRekey, status: DOING, pre: DONE, park: null, written: 5 },
+        // round 1 holds a NEWER verdict but round 2 (max) closed with NO verdict: the
+        // verdict-round binding must read max(round) only — without it, round 1's
+        // verdict (1m) beats the write (5m) and the row fires wrongly
+        { id: staleRound, status: BLOCKED, pre: DONE, park: null, written: 5 },
       ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -122,12 +135,13 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         status: string,
         decidedMinutesAgo: number | null,
         reviewerId: string | null = null,
+        round = 1,
       ) => {
         await sql.unsafe(
           `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
-           values ($1, $2, 1, $3, $4, now() - interval '10 minutes',
-                   case when $5::int is null then null else now() - ($5::int * interval '1 minute') end)`,
-          [`rev-${crypto.randomUUID()}`, taskId, status, reviewerId, decidedMinutesAgo],
+           values ($1, $2, $3, $4, $5, now() - interval '10 minutes',
+                   case when $6::int is null then null else now() - ($6::int * interval '1 minute') end)`,
+          [`rev-${crypto.randomUUID()}`, taskId, round, status, reviewerId, decidedMinutesAgo],
         );
       };
       await seedReview(rekeyDone, 'APPROVED', 1);
@@ -148,6 +162,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(manualBlock, 'APPROVED', 1);
       await seedReview(danglingOnly, 'APPROVED', 1);
       await seedReview(egressRekey, 'APPROVED', 1);
+      await seedReview(staleRound, 'APPROVED', 1);
+      await seedReview(staleRound, 'SUPERSEDED', 2, null, 2);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -156,7 +172,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const fired = new Set(String(arm?.[1] ?? 'none').split(','));
 
       expect(fired, 'a block home re-keyed in_review -> done over a decided round is the strand').toContain(rekeyDone);
-      expect(fired, 'a park home re-keyed to a working category strands the same way').toContain(rekeyDoing);
+      expect(
+        fired,
+        'a re-key into a NON-terminal category is the declared boundary: the legal hold-landing block shares the shape',
+      ).not.toContain(rekeyDoing);
       expect(
         fired,
         'a cancelled-category home is the same wedge: no legal owner settle can leave an origin behind',

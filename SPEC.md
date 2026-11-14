@@ -1142,24 +1142,30 @@ non-positive deltas render no duration.
   missing column would kill the whole UNION and blind every arm, #325).
 - The RE-KEYED-HOME arm (#435) reads the re-key sibling of that dangling shape: a
   PAUSED row where a recorded origin (`pre_block_status` or `park_from_status`)
-  RESOLVES to a `task_statuses` row — the home EXISTS, but its category moved after
-  the block recorded it (the residual producer is the read→upsert window in
-  `statuses.save`'s block-state-home guard: a gating block landing inside the window
-  commits before the guard's homes read sees it, so the category change goes
-  through; the standing residual class, declared like the orphan arm's ghost-task
-  race) — and NEITHER origin resolves into review. That exclusion ALONE forces
-  every resolved home outside `in_review` (a resolvable in-review origin still lets
-  the settle flip land: the orphan arm's exclusion, mirrored — a category term on
-  the resolve itself would be redundant). The flip then refuses on the non-review
-  home, the round closes on the verdict row with NO task write, and the task stays
-  blocked — the wedge's in_review branch cannot see it (the origin resolves outside
+  RESOLVES to a TERMINAL (`done`/`cancelled`-category) `task_statuses` row — the
+  home EXISTS, but its category was re-keyed after the block recorded it (the
+  residual producer is the read→upsert window in `statuses.save`'s block-state-home
+  guard: a gating block landing inside the window commits before the guard's homes
+  read sees it, so the category change goes through; the standing residual class,
+  declared like the orphan arm's ghost-task race) — and NEITHER origin resolves
+  into review (a resolvable in-review origin still lets the settle flip land: the
+  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED BOUNDARY, not an
+  accident: a re-key into a NON-terminal category is, from the SQL, indistinguishable
+  from the declared legal class (a hold-landing repair round re-opened on a
+  ready/working status, then gating-blocked: the block legally records a non-review
+  home and a later verdict closes the round with no task write — the unblock restore
+  heals it). That sub-shape is OUT of this arm and NAMED here so no one assumes
+  coverage; a terminal home cannot host the legal class (a terminal task's rounds are
+  closed by the teardown), so the arm cannot false-alarm. The flip then refuses on
+  the terminal home, the round closes on the verdict row with NO task write, and the
+  task stays blocked — the wedge's in_review branch cannot see it (the origin resolves outside
   in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown heals
-  read the row as owner-settled. A terminal-by-owner shape is excluded BY
-  CONSTRUCTION, not by a category term: a legal owner settle moves the task OUT of
-  the paused category and clears both machine origins in the same statement, so a
-  row that still carries an origin cannot be owner-settled — the arm fires on a
-  resolved `done`/`cancelled` home too (that IS the counterexample shape:
-  `in_review` → `done` under a blocked task). The current-round clause (no PENDING
+  read the row as owner-settled. An OWNER-SETTLED shape is excluded BY
+  CONSTRUCTION: a legal owner settle moves the task OUT of the paused category and
+  clears both machine origins in the same statement, so a row that still carries an
+  origin cannot be owner-settled — which is why the arm fires on a resolved
+  `done`/`cancelled` home (that IS the counterexample shape: `in_review` → `done`
+  under a blocked task). The current-round clause (no PENDING
   row in `max(round)`, at least one verdict row) and the verdict-vs-write ordering
   (newest verdict of that round NEWER than the task's last write — the ORPHAN-HOME
   arm's simpler test; the wedge's owner-status discriminator is #430's) apply as
@@ -1167,7 +1173,9 @@ non-positive deltas render no duration.
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
   a stale origin on a NON-paused row is the EGRESS-ORIGIN arm's shape (#427), never
-  this one's.
+  this one's. The live pass carries the arm's emit + previous-pass presence confirm
+  + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped file: a SQL
+  arm with no pass consumer is a detector that never runs).
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),

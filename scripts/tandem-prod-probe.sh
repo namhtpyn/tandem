@@ -206,27 +206,30 @@ strand_sql() {
   if [ "${2:-}" = "2" ]; then
     orphan=" union all select 'orphanhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
   fi
-  # RE-KEYED-HOME arm (#435): a PAUSED row with a recorded origin that RESOLVES to a
-  # task_statuses row — the home EXISTS, but its category moved after the block recorded
-  # it (NEITHER origin may resolve into review, and that exclusion ALONE forces every
-  # resolved home outside in_review — a category term on the resolve would be redundant) (statuses.save's block-state-home guard is a
+  # RE-KEYED-HOME arm (#435): a PAUSED row whose recorded block/park origin RESOLVES to
+  # a TERMINAL (done/cancelled-category) home — the home EXISTS, but its category moved
+  # after the block recorded it (statuses.save's block-state-home guard is a
   # read-then-write check; a gating block landing inside its read->upsert window is the
   # DECLARED residual producer, the orphan arm's ghost-task race class). The flip refuses
-  # on the non-review home, the round closes on the verdict row with NO task write, and
-  # the task stays blocked: the wedge's in_review branch cannot see it (the origin
-  # resolves outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the
-  # teardown heals read it as owner-settled. A terminal-by-owner shape is excluded BY
-  # CONSTRUCTION, not by a category term — a legal owner settle leaves the paused
-  # category and clears both origins in the same statement, so a row still carrying an
-  # origin cannot be owner-settled — which is why the arm fires on a resolved
-  # done/cancelled home too (that IS the counterexample: in_review -> done under a
-  # blocked task). Current-round clause + verdict-vs-write ordering mirrored from the
+  # on the terminal home, the round closes on the verdict row with NO task write, and the
+  # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
+  # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
+  # heals read it as owner-settled. TERMINAL-only on purpose: a re-key INTO a non-terminal
+  # category is, from the SQL, indistinguishable from the DECLARED legal class (a
+  # hold-landing repair round re-opened on a ready/working status, then gating-blocked:
+  # the block legally records a non-review home and a later verdict closes the round), so
+  # that sub-shape is OUT of this arm and named in SPEC (r1 boundary, #435) — a terminal
+  # home cannot host the legal class (a terminal task's rounds are closed by the
+  # teardown), so no false alarm is possible here. The owner-settle shape is excluded BY
+  # CONSTRUCTION — a legal owner settle leaves the paused category and clears both
+  # origins in the same statement, so a row still carrying an origin cannot be
+  # owner-settled. Current-round clause + verdict-vs-write ordering mirrored from the
   # orphan arm (the owner-status discriminator is the WEDGE's, #430). Per-column resolve,
   # VERSION-independent (a pre-guard image produces the strand too), COLUMN-gated like
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
   fi
   printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $rule${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${ready}${orphan}${rekey}"
 }
@@ -357,7 +360,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   REKEY_ON=$(strand_rekey_arm 2.78.19 2)
   [ "$(printf '%s' "$REKEY_ON" | grep -oF "select 'rekeyhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey arm"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "s.category = 'paused'" || { echo "selfcheck fail: rekey paused scope"; exit 1; }
-  printf '%s' "$REKEY_ON" | grep -qF "(t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status))" || { echo "selfcheck fail: rekey resolve clause (per column)"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "(t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))" || { echo "selfcheck fail: rekey resolve clause (per column)"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status))" || { echo "selfcheck fail: rekey in-review-resolver exclusion"; exit 1; }
   [ "$(printf '%s' "$REKEY_ON" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey write discriminator"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: rekey verdict scope"; exit 1; }
@@ -367,6 +370,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(printf '%s' "$(strand_sql 2.78.19 2)" | grep -oF "select 'rekeyhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey arm missing at the pre-guard version"; exit 1; }
   printf '%s' "$(strand_sql 2.78.19 1)" | grep -qF "rekeyhome" && { echo "selfcheck fail: rekey arm emitted without the park column"; exit 1; }
   printf '%s' "$(strand_orphan_arm 2.78.19 2)" | grep -qF "rekeyhome" && { echo "selfcheck fail: rekey arm leaked into the orphan slice"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.19 2)" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the rekey slice"; exit 1; }
   printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "orphanhome" || { echo "selfcheck fail: orphan arm missing at the current gate pair"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
@@ -451,6 +455,15 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # that reports nothing is indistinguishable from a healthy one)
   EGCOLALERT=$(grep -cE '^[[:space:]]*anom\+=\("egress_guard: origin columns=' "$0" 2>/dev/null || true)
   [ "$EGCOLALERT" = "1" ] || { echo "selfcheck fail: egress column-degraded alert missing ($EGCOLALERT)"; exit 1; }
+  # WIRING pin for the REKEY-HOME arm (#435 r1 review, the same class as the egress one):
+  # the emit mode and the live pass are two places; without this, deleting the pass's arm
+  # block keeps every SQL assertion green and ships a detector that never runs.
+  REKPASS=$(grep -cE '^[[:space:]]*REKEYHOME=\$\(echo "\$STROUT"' "$0" 2>/dev/null || true)
+  [ "$REKPASS" = "1" ] || { echo "selfcheck fail: rekey pass emit missing ($REKPASS)"; exit 1; }
+  REKALERT=$(grep -cE '^[[:space:]]*anom\+=\("rekey_home:' "$0" 2>/dev/null || true)
+  [ "$REKALERT" = "1" ] || { echo "selfcheck fail: rekey alert line missing ($REKALERT)"; exit 1; }
+  REKPREV=$(grep -cE '^[[:space:]]*printf .*rekeyhome\.prev' "$0" 2>/dev/null || true)
+  [ "$REKPREV" = "1" ] || { echo "selfcheck fail: rekey prev-write missing ($REKPREV)"; exit 1; }
   [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
@@ -921,6 +934,21 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/orphanhome.alerted"
     fi
     printf '%s\n' "${ORPHANHOME:-none}" > "$PROBE_STATE/orphanhome.prev"
+    # (f2) rekey home: a block/park whose recorded origin RESOLVES to a TERMINAL home the
+    # category was re-keyed under after the block recorded it, with the round closed over
+    # it (#435). VERSION-INDEPENDENT like the orphan arm: the residual producer is the
+    # statuses.save read->upsert window, present on every image. Previous-pass presence
+    # confirm + id-set dedupe, like every other shape arm.
+    REKEYHOME=$(echo "$STROUT" | awk -F'|' '/^rekeyhome/{print $2}')
+    if [ -n "${REKEYHOME:-}" ] && [ "$REKEYHOME" != "none" ] && [ "$(cat "$PROBE_STATE/rekeyhome.prev" 2>/dev/null || echo none)" != "none" ]; then
+      if [ "$(cat "$PROBE_STATE/rekeyhome.alerted" 2>/dev/null || echo none)" != "$REKEYHOME" ]; then
+        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed into a terminal category over a decided round [$REKEYHOME] — the settle flip cannot land, #435 class")
+        echo "$REKEYHOME" > "$PROBE_STATE/rekeyhome.alerted"
+      fi
+    else
+      rm -f "$PROBE_STATE/rekeyhome.alerted"
+    fi
+    printf '%s\n' "${REKEYHOME:-none}" > "$PROBE_STATE/rekeyhome.prev"
     # (g) ready-category task owning a live PENDING row of ANY round (#443, task-wide per
     # #445): the parked/stranded round a legal egress or a teardown regression left behind
     # — no sweep reaches a ready task (stalled-review and lost-settle require review-flow
