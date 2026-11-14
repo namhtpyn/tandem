@@ -24,6 +24,13 @@ const h = vi.hoisted(() => ({
   ops: [] as string[],
   /** when true, the pre-lock finds no actor row (a concurrent employee delete) */
   actorGone: false,
+  /** flips ONLY when the transaction helper resolved — the commit of record (#438 r2) */
+  committed: false,
+  /** post-commit side-effect invocations, in handler order */
+  sideFx: [] as string[],
+  /** when true, the named post-commit side effect throws (the SPEC's can't-erase case) */
+  throwTeardown: false,
+  throwResume: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -70,7 +77,14 @@ vi.mock('../../server/db/index', async () => {
       },
       // a move written OUTSIDE the transaction helper must be visible as tx 0 (a pin)
       update: () => ({ set: () => ({ where: async () => undefined }) }),
-      transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()),
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = makeTx();
+        const out = await fn(tx);
+        // the commit of record: flipped only when the tx helper RESOLVED — a side effect
+        // that sees this false ran before the owner-move record landed (#438 r2 pin)
+        h.committed = true;
+        return out;
+      },
     },
   };
 });
@@ -84,7 +98,18 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
   // logActivity stays REAL: the pin must observe the activity row the writer actually
   // builds (body + kind) and the executor it actually forwards — not a re-implementation
-  return { ...mod, teardownOnManualMove: async () => {} };
+  return {
+    ...mod,
+    teardownOnManualMove: async () => {
+      h.sideFx.push('teardown');
+      // #438 r2: SPEC — "the teardown/resume side effects run AFTER that commit, so their
+      // failure can never erase it". The committed flag is checked INSIDE the mock: a
+      // handler reorder that hoists a side effect above the transaction fails HERE, with
+      // the ordering violation as the message, before any outer assertion can misread it.
+      if (!h.committed) throw new Error('SIDE EFFECT BEFORE COMMIT: teardown ran before the owner-move tx resolved');
+      if (h.throwTeardown) throw new Error('teardown exploded (pin)');
+    },
+  };
 });
 
 // the terminal write of the real logActivity — capture its input AND its executor, so a
@@ -103,7 +128,16 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/review-resume', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review-resume')>();
-  return { ...mod, resumeRoundAfterManualMove: async () => false };
+  return {
+    ...mod,
+    resumeRoundAfterManualMove: async () => {
+      h.sideFx.push('resume');
+      // same committed-check discipline as the teardown mock above (#438 r2)
+      if (!h.committed) throw new Error('SIDE EFFECT BEFORE COMMIT: resume ran before the owner-move tx resolved');
+      if (h.throwResume) throw new Error('resume exploded (pin)');
+      return false;
+    },
+  };
 });
 
 vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
@@ -129,6 +163,10 @@ beforeEach(() => {
   h.logBody = '';
   h.ops = [];
   h.actorGone = false;
+  h.committed = false;
+  h.sideFx = [];
+  h.throwTeardown = false;
+  h.throwResume = false;
 });
 
 describe('a manual status move clears the machine block memory (#401)', () => {
@@ -185,5 +223,39 @@ describe('a manual status move clears the machine block memory (#401)', () => {
       code: 'BAD_REQUEST',
     });
     expect(h.sets).toHaveLength(0);
+  });
+});
+
+// #438 r2 (blind review, spec lens): SPEC — "the teardown/resume side effects run AFTER
+// that commit, so their failure can never erase it". Until now both side effects were
+// mocked as silent no-ops, so nothing failed when a reorder hoisted them above the
+// transaction, or when the activity row drifted off the tx. A THROWING side effect is
+// the red-making mutation: the record of the move must already be durable.
+describe('a throwing post-commit side effect cannot erase the owner-move record (#438)', () => {
+  it('a throwing teardown rejects the move but leaves the committed record intact', async () => {
+    h.throwTeardown = true;
+    await expect(call(tasksRouter.setStatus, { id: 'task-1', status: STATUS.todo })).rejects.toThrow(
+      'teardown exploded (pin)',
+    );
+    // the tx helper resolved BEFORE the side effect was reached — the mock's internal
+    // committed-check would have thrown 'SIDE EFFECT BEFORE COMMIT' on any reorder
+    expect(h.committed).toBe(true);
+    // the status write and its activity row landed on the SAME committed transaction
+    expect(h.updateTx).toBeGreaterThan(0);
+    expect(h.logTx, 'the activity row must ride the status write transaction').toBe(h.updateTx);
+    expect(h.sideFx).toContain('teardown');
+  });
+
+  it('a throwing resume rejects the move but leaves the committed record intact too', async () => {
+    h.throwResume = true;
+    await expect(call(tasksRouter.setStatus, { id: 'task-1', status: STATUS.todo })).rejects.toThrow(
+      'resume exploded (pin)',
+    );
+    expect(h.committed).toBe(true);
+    expect(h.updateTx).toBeGreaterThan(0);
+    expect(h.logTx).toBe(h.updateTx);
+    // BOTH post-commit side effects ran (in handler order) and both saw committed=true:
+    // the resume is the second one, so reaching it proves the teardown already passed
+    expect(h.sideFx).toEqual(['teardown', 'resume']);
   });
 });
