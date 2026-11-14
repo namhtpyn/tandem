@@ -35,6 +35,8 @@ const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
 const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 const CANCELLED = '01a14743-43f5-759d-a00e-b0f2a5a04f4c';
+/** a canonical uuid that names no task_statuses row — a DELETED home, the orphan arm's shape */
+const DANGLING = '01a14743-dead-7e57-8000-000000000001';
 
 test.describe('prod probe re-keyed-home arm (#435)', () => {
   test('fires on a re-keyed home over a closed round, silent on every legal shape', async () => {
@@ -74,6 +76,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const liveRound = `probe-rekey-live-${tag}`; // silent: a PENDING row keeps the round open
       const tornDown = `probe-rekey-void-${tag}`; // silent: the round holds no verdict row
       const manualBlock = `probe-rekey-manual-${tag}`; // silent: a hand-made block writes no origin
+      const danglingOnly = `probe-rekey-dangle-${tag}`; // silent: an UNRESOLVABLE home is the orphan arm's shape
+      const egressRekey = `probe-rekey-egress-${tag}`; // silent: a stale origin on a NON-paused row is #427's shape
 
       // updated_at = now() - written minutes (the block write's stamp); the round's rows
       // sit at created - 10 minutes and decided - N minutes, so a verdict decided 1 minute
@@ -97,6 +101,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         { id: liveRound, status: BLOCKED, pre: DONE, park: null, written: 5 },
         { id: tornDown, status: BLOCKED, pre: DONE, park: null, written: 5 },
         { id: manualBlock, status: BLOCKED, pre: null, park: null, written: 5 },
+        // a DELETED home resolves to nothing — the orphan-home arm owns that shape
+        { id: danglingOnly, status: BLOCKED, pre: DANGLING, park: null, written: 5 },
+        // a stale origin on a non-paused row is the EGRESS-ORIGIN shape (#427): the
+        // paused clause must own this exclusion
+        { id: egressRekey, status: DOING, pre: DONE, park: null, written: 5 },
       ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -131,10 +140,14 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(requeueReview, 'APPROVED', 10);
       await seedReview(liveRound, 'APPROVED', 1);
       await seedReview(liveRound, 'PENDING', null, adminId);
-      // torn down INSIDE the block: no verdict row, so it is not a decided round at all
-      await seedReview(tornDown, 'SUPERSEDED', null);
-      await seedReview(tornDown, 'ESCALATED', null);
+      // torn down INSIDE the block: no VERDICT row, so it is not a decided round at
+      // all — the non-verdict rows are NEWER than the write on purpose, so the verdict
+      // status filter (never the ordering) is the only exclusion
+      await seedReview(tornDown, 'SUPERSEDED', 1);
+      await seedReview(tornDown, 'ESCALATED', 2);
       await seedReview(manualBlock, 'APPROVED', 1);
+      await seedReview(danglingOnly, 'APPROVED', 1);
+      await seedReview(egressRekey, 'APPROVED', 1);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -165,6 +178,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(fired, 'a PENDING row keeps the round open').not.toContain(liveRound);
       expect(fired, 'no verdict row means no decided round').not.toContain(tornDown);
       expect(fired, 'a hand-made block writes no origin').not.toContain(manualBlock);
+      expect(fired, 'an UNRESOLVABLE home is the orphan arm shape, never this one').not.toContain(danglingOnly);
+      expect(fired, 'a stale origin on a NON-paused row belongs to the egress-origin arm').not.toContain(egressRekey);
     } finally {
       await sql.end();
     }
