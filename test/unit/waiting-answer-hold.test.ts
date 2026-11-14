@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   pendingRows: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
   /** taskReviews UPDATEs in order: [0] = the verdict CAS, later = holds */
-  reviewUpdates: [] as Array<{ set: Record<string, unknown>; where: unknown }>,
+  reviewUpdates: [] as Array<{ set: Record<string, unknown>; where: unknown; inTx?: boolean; via?: string }>,
   /** tasks UPDATEs in order (settle flips) */
   taskUpdates: [] as Array<{ set: Record<string, unknown>; where: unknown }>,
   casMiss: false,
@@ -32,6 +32,8 @@ const h = vi.hoisted(() => ({
   dispatched: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   published: 0,
+  txThrew: 0,
+  inTx: false,
   reviewReadCounter: 0,
   taskReadCounter: 0,
 }));
@@ -41,6 +43,26 @@ vi.mock('../../server/db/index', async () => {
   return {
     asDb: (x: unknown) => x,
     db: {
+      /** #467: the settle's sweep+flip ride ONE transaction. The double runs the
+       *  callback against ITSELF; `txThrew` records a thrown callback, which is the
+       *  real driver's ROLLBACK signal (a lost flip must never commit the sweep). */
+      async transaction(this: Record<string, unknown>, fn: (tx: unknown) => Promise<unknown>) {
+        h.inTx = true;
+        // a DISTINCT tx handle whose `update` stamps itself 'tx': a write routed to the
+        // POOL inside this callback is caught by the stamp, not by a boolean
+        const tx = {
+          ...this,
+          update: (table: unknown) => (this.update as (t: unknown, via?: string) => unknown)(table, 'tx'),
+        };
+        try {
+          return await fn(tx);
+        } catch (e) {
+          h.txThrew += 1;
+          throw e;
+        } finally {
+          h.inTx = false;
+        }
+      },
       select: (...selArgs: Array<Record<string, unknown> | undefined>) => ({
         from: (table: unknown) => {
           const arg = selArgs[0] as Record<string, unknown> | undefined;
@@ -54,6 +76,9 @@ vi.mock('../../server/db/index', async () => {
                 : 'bare'
             : 'bare';
           const resolveRows = () => {
+            // the settle's task-row lock selects { id } only — never a status read, so it
+            // must not consume the ordered task-read sequence
+            if (table === tasks && arg && 'id' in arg) return Promise.resolve([]);
             if (table === tasks) {
               // read order: [0] recordVerdict's terminal gate, [1] the hold arm's
               // fresh status, [2+] the hold's post-revert re-read / flip-miss re-check
@@ -70,7 +95,7 @@ vi.mock('../../server/db/index', async () => {
               h.reviewReadCounter === 1 ? h.reviewRows : h.reviewReadCounter === 2 ? h.matrixRows : h.pendingRows;
             return Promise.resolve(src);
           };
-          const mkRows = () => ({
+          const mkRows = (): Record<string, unknown> => ({
             then: (
               onFulfilled?: (v: Array<Record<string, unknown>>) => unknown,
               onRejected?: (e: unknown) => unknown,
@@ -81,6 +106,7 @@ vi.mock('../../server/db/index', async () => {
             orderBy: () => mkRows(),
             // roundResultBody chains .limit(1) straight off .where(...)
             limit: async () => resolveRows(),
+            for: () => mkRows(), // #467: the settle's task-row lock (SELECT ... FOR UPDATE)
           });
           const base = {
             where: (_cond: unknown) => mkRows(),
@@ -90,31 +116,33 @@ vi.mock('../../server/db/index', async () => {
           return base;
         },
       }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              if (table === taskReviews) {
-                h.reviewUpdates.push({ set, where: cond });
-                if (h.casMiss && h.reviewUpdates.length === 1) return []; // the verdict CAS missed
-                return [{ id: 'row-1' }];
-              }
-              h.taskUpdates.push({ set, where: cond });
-              return h.flipWins ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              // the hold revert awaits the where() directly (no .returning) — the
-              // write must also record on the bare-await path, not only on returning()
-              then: (
-                onFulfilled?: (v: Array<Record<string, unknown>>) => unknown,
-                onRejected?: (e: unknown) => unknown,
-              ) => Promise.resolve(applied()).then(onFulfilled, onRejected),
-              catch: (onRejected: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onRejected),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
+      update(this: Record<string, unknown>, table: unknown, via = 'pool') {
+        return {
+          set: (set: Record<string, unknown>) => ({
+            where: (cond: unknown) => {
+              const applied = () => {
+                if (table === taskReviews) {
+                  h.reviewUpdates.push({ set, where: cond, inTx: h.inTx, via });
+                  if (h.casMiss && h.reviewUpdates.length === 1) return []; // the verdict CAS missed
+                  return [{ id: 'row-1' }];
+                }
+                h.taskUpdates.push({ set, where: cond });
+                return h.flipWins ? [{ id: 'task-1' }] : [];
+              };
+              return {
+                // the hold revert awaits the where() directly (no .returning) — the
+                // write must also record on the bare-await path, not only on returning()
+                then: (
+                  onFulfilled?: (v: Array<Record<string, unknown>>) => unknown,
+                  onRejected?: (e: unknown) => unknown,
+                ) => Promise.resolve(applied()).then(onFulfilled, onRejected),
+                catch: (onRejected: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onRejected),
+                returning: async () => applied(),
+              };
+            },
+          }),
+        };
+      },
       query: {
         taskStatuses: {
           findMany: async () => h.statuses,
@@ -251,10 +279,20 @@ describe('waiting-answer verdict hold (#288)', () => {
     h.flipWins = false;
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'parked' });
-    // one refused flip attempt, then the hold revert — never a superseded strand
+    // one refused flip attempt, then the hold revert. #467: the sweep rides the
+    // transaction AHEAD of the flip, so a lost flip must ROLL IT BACK — the tx double
+    // records the throw (h.txThrew) and the revert is the last committed review write.
     expect(h.taskUpdates).toHaveLength(1);
-    expect(h.reviewUpdates).toHaveLength(2);
-    expect(h.reviewUpdates[1]!.set.status).toBe(REVIEW_STATUS.PENDING);
+    expect(h.reviewUpdates.map((u) => u.set.status)).toEqual([
+      REVIEW_STATUS.APPROVED,
+      REVIEW_STATUS.SUPERSEDED,
+      REVIEW_STATUS.PENDING,
+    ]);
+    // the sweep was written INSIDE the tx (so the throw rolled it back), and the revert
+    // after it is the last committed write
+    expect(h.reviewUpdates[1]!.via).toBe('tx'); // the STAMP, not an in-callback flag
+    expect(h.reviewUpdates[2]!.via).toBe('pool');
+    expect(h.txThrew).toBe(1);
   });
 
   it('IN-WINDOW RESCUE: an answer flipping the task to todo inside the hold window is repaired — guarded ready->in_review flip + re-fire', async () => {
@@ -382,8 +420,13 @@ describe('waiting-answer verdict hold (#288)', () => {
     expect(outcome).toEqual({ outcome: 'done' });
     // the verdict CAS + the terminal task-wide supersede (#365 r3 / #361 r6: no pending
     // row outlives a terminal task) — no hold revert
-    expect(h.reviewUpdates).toHaveLength(2);
+    // the verdict CAS + the in-tx sweep + the post-commit net (#361 r6): no pending row
+    // outlives a terminal task, not even one minted while the settle tx was open
+    expect(h.reviewUpdates).toHaveLength(3);
     expect(h.reviewUpdates[1]!.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
+    expect(h.reviewUpdates[1]!.via).toBe('tx');
+    expect(h.reviewUpdates[2]!.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
+    expect(h.reviewUpdates[2]!.via).toBe('pool');
     expect(h.taskUpdates[0]!.set.status).toBe(STATUS.done);
   });
 });
