@@ -133,7 +133,7 @@ test.describe('prod probe wedge arm (#424)', () => {
           [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo, createdMinutesAgo, round, reviewerId],
         );
       };
-      await seedReview(illegal, 'APPROVED', 1);
+      await seedReview(illegal, 'APPROVED', 0);
       await seedReview(legalRequeue, 'APPROVED', 10);
       await seedReview(liveBlock, 'APPROVED', 1);
       await seedReview(liveBlock, 'PENDING', null, 1, 1, adminId);
@@ -153,13 +153,13 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedReview(nonPausedStale, 'APPROVED', 1);
       // the in_review half must read the CURRENT round: an older round's PENDING row is debris
       await seedReview(inReviewOlderPending, 'PENDING', null, 15, 1, adminId);
-      await seedReview(inReviewOlderPending, 'APPROVED', 1, 10, 2);
+      await seedReview(inReviewOlderPending, 'APPROVED', 0, 10, 2);
       // the CURRENT round is decided; a PENDING row in an OLDER round must not hide it
       // round 1 is debris from before the round-2 open (created 15 min ago), round 2 was
-      // opened at the task's last write (10 min ago) and decided 1 min ago
+      // opened at the task's last write (10 min ago) and decided now (inside the heal's grace)
       await seedReview(olderPending, 'PENDING', null, 15, 1, adminId);
-      await seedReview(olderPending, 'CHANGE_REQUESTED', 1, 10, 2);
-      await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 1);
+      await seedReview(olderPending, 'CHANGE_REQUESTED', 0, 10, 2);
+      await seedReview(inReviewWedge, 'CHANGE_REQUESTED', 0);
       await seedReview(inReviewManual, 'APPROVED', 10);
       await seedReview(inReviewLive, 'APPROVED', 1, 10, 1, null);
       await seedReview(inReviewLive, 'PENDING', null, 1, 1, adminId);
@@ -169,10 +169,10 @@ test.describe('prod probe wedge arm (#424)', () => {
       // no verdict, so an older round's late verdict must not stand in for it
       await seedReview(inReviewOldVerdict, 'APPROVED', 1, 15, 1);
       await seedReview(inReviewOldVerdict, 'SUPERSEDED', null, 1, 2);
-      await seedReview(maskedRestore, 'APPROVED', 6);
-      await seedReview(maskedBlock, 'APPROVED', 6);
+      await seedReview(maskedRestore, 'APPROVED', 0);
+      await seedReview(maskedBlock, 'APPROVED', 0);
       await seedReview(restoredRequeue, 'APPROVED', 30);
-      await seedReview(noteDecoy, 'APPROVED', 6);
+      await seedReview(noteDecoy, 'APPROVED', 0);
       await seedReview(deletedMoverRequeue, 'APPROVED', 30);
       // the CURRENT round (2) was decided 30 min ago; round 1's verdict is LATER (10 min
       // ago) — the owner move at 20 min outranks the round it actually answered, and must
@@ -184,7 +184,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       // This is the one shape that separates "a move exists" from "a move after the
       // verdict exists": dropping the gap clause's time term silences this seed and every
       // other seed stays green.
-      await seedReview(staleMoveWedge, 'APPROVED', 10, 10, 1);
+      await seedReview(staleMoveWedge, 'APPROVED', 0, 10, 1);
       // Status activity rows: the discriminator is the activity ROW (body + its 1:1
       // payload kind), never the author — `author_id` is ON DELETE SET NULL, so a
       // deleted mover's row must still read as an owner move. tasks.setStatus is the
@@ -212,10 +212,11 @@ test.describe('prod probe wedge arm (#424)', () => {
       // than the verdict (the whole point of the discriminator)
       await seedStatusActivity(legalRequeue, 3, 'status: doing → in-review', adminId);
       await seedStatusActivity(inReviewManual, 2, 'status: doing → in-review', adminId);
-      // maskedRestore: block (-12) → killing verdict (-6) → child-restore (-2), task write -1
+      // maskedRestore: block (-12) → killing verdict (NOW, inside the heal's grace) →
+      // child-restore (now, after the verdict row) → task write LAST
       await seedStatusActivity(maskedRestore, 12, 'auto-blocked: 1 subtask(s) open', null);
-      await seedStatusActivity(maskedRestore, 2, `unblocked: all subtasks terminal → ${IN_REVIEW}`, null);
-      // maskedBlock: block (-10) → killing verdict (-6) → a title edit wrote the task row (-1)
+      await seedStatusActivity(maskedRestore, 0, `unblocked: all subtasks terminal → ${IN_REVIEW}`, null);
+      // maskedBlock: block (-10) → killing verdict (NOW) → a title edit writes the task row LAST
       await seedStatusActivity(maskedBlock, 10, 'auto-blocked: 1 subtask(s) open', null);
       // restoredRequeue LEGAL: verdict (-30) → owner re-queue (-25) → block (-20) → restore (-12)
       await seedStatusActivity(restoredRequeue, 25, 'status: todo → in-review', adminId);
@@ -223,15 +224,26 @@ test.describe('prod probe wedge arm (#424)', () => {
       await seedStatusActivity(restoredRequeue, 12, `unblocked: all subtasks terminal → ${IN_REVIEW}`, null);
       // the FREE-TEXT forgery control: a NOTE whose body starts with `status: ` is not a
       // status write — the wedge must still fire (the arm keys on the payload kind too)
-      await seedStatusActivity(noteDecoy, 2, 'status: blocked on the vendor cert', adminId, 'NOTE');
+      await seedStatusActivity(noteDecoy, 0, 'status: blocked on the vendor cert', adminId, 'NOTE');
       // the DELETED-MOVER control: the author was deleted (FK sets NULL) but the move is
       // still an owner move — body + kind decide, never the author
       await seedStatusActivity(deletedMoverRequeue, 20, 'status: doing → in-review', null);
       // the STALE-VERDICT control: an owner move after the CURRENT round's verdict, an
       // older round holding a later verdict — the round binding must keep this silent
       await seedStatusActivity(staleVerdictRequeue, 20, 'status: doing → in-review', adminId);
-      // the owner move PREDATES the verdict (20 min ago vs decided 10 min ago)
+      // the owner move PREDATES the verdict (20 min ago vs decided now)
       await seedStatusActivity(staleMoveWedge, 20, 'status: doing → in-review', adminId);
+
+      // The live DECIDED-ROUND HEAL (#472) replays any machine shape whose newest verdict
+      // is older than its 60s grace, so these seeds' verdicts are stamped NOW (inside the
+      // grace) — the arm still sees them, and the tick cannot heal the fixture between the
+      // seed and the SQL read. The masked trio's task rows are written LAST for the
+      // pre-floor run: the legacy updated_at ordering must still read them as masked.
+      await sql.unsafe(`update tasks set updated_at = now() where id in ($1, $2, $3)`, [
+        maskedRestore,
+        maskedBlock,
+        noteDecoy,
+      ]);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases

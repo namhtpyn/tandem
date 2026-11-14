@@ -123,7 +123,7 @@ test.describe('prod probe orphan-home arm (#432)', () => {
       await seedReview(tornDown, 'ESCALATED', null);
       await seedReview(manualBlock, 'APPROVED', 1);
       await seedReview(nonPaused, 'APPROVED', 1);
-      await seedReview(resolvable, 'APPROVED', 1);
+      await seedReview(resolvable, 'APPROVED', 0); // inside the #472 heal's grace: the live tick must not drain the fixture mid-spec
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
