@@ -15,6 +15,7 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // bug this pins).
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
 const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
+const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
 
 async function seedUser(sql: SQL, id: string, name: string) {
   await sql.unsafe('insert into "user" (id, name, email, created_at, updated_at) values ($1, $2, $3, now(), now())', [
@@ -142,6 +143,39 @@ test.describe('escalation-handoff heal (#474)', () => {
       await Bun.sleep(6_000);
       expect(await targetRowCount(sql, taskId, target), 'the round×reviewer uniqueness holds across ticks').toBe(1);
       expect(await statusOf(sql, taskId)).toBe(IN_REVIEW);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  test('a recorded target that became the assignee parks — never a self-review mint', async () => {
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const escalator = crypto.randomUUID();
+      const target = crypto.randomUUID(); // ALSO the assignee: the owner reassigned mid-handoff
+      await seedUser(sql, escalator, `E2E Escalator ${tag}`);
+      await seedUser(sql, target, `E2E Target ${tag}`);
+
+      const taskId = `e2e-handoff-park-${tag}`;
+      await seedReviewTask(sql, taskId, { reviewers: [escalator], assigneeId: target });
+      await seedRow(sql, {
+        taskId,
+        reviewerId: escalator,
+        status: 'ESCALATED',
+        referralTargetId: target,
+        note: 'escalate to E2E Target for reviewing — wrong domain',
+        createdAtSeconds: 1800,
+        decidedAtSeconds: 300,
+      });
+
+      const end = Date.now() + 20_000;
+      while (Date.now() < end && (await statusOf(sql, taskId)) === IN_REVIEW) await Bun.sleep(500);
+      expect(
+        await statusOf(sql, taskId),
+        'the recorded target is now the assignee: the round parks for the owner',
+      ).toBe(BLOCKED);
+      expect(await targetRowCount(sql, taskId, target), 'no self-review row is minted').toBe(0);
     } finally {
       await sql.end();
     }

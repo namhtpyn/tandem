@@ -543,6 +543,11 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
   if (!rows.some(voidPending)) return false; // machine signature only — never a manual state
   if (rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null)) return false; // a live voter owns the round
+  // REFERRAL OWED (#474): the removal matrix must not judge unanimity while the round
+  // owes a recorded referral's vote — the handoff heal mints the target within its grace
+  // and the round then decides WITH it. A deleted ESCALATOR is removal debris (the
+  // user-delete FK nulls the reviewer) and never owed, so a removal still settles.
+  if (referralOwesVote(rows)) return false;
   const live = rows.filter(
     (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
   );
@@ -1910,20 +1915,48 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       if ((await liveReviewers([targetId])).length === 0) continue;
       const target = await db.query.user.findFirst({ columns: { name: true }, where: { id: { eq: targetId } } });
       if (!target) continue;
-      const task = (await db.select({ reviewers: tasks.reviewers }).from(tasks).where(eq(tasks.id, fresh.taskId)))[0];
+      const task = (
+        await db
+          .select({
+            reviewers: tasks.reviewers,
+            assigneeId: tasks.assigneeId,
+            status: tasks.status,
+            updatedAt: tasks.updatedAt,
+          })
+          .from(tasks)
+          .where(eq(tasks.id, fresh.taskId))
+      )[0];
       if (!task) continue;
-      // ROSTER FIRST: the roster write is idempotent (filter + dedupe append), so a crash
-      // between it and the row insert leaves the next tick able to re-run the replay;
-      // the reverse order would leave a roster the scan can no longer see as unredeemed.
+      // the assignment may have changed since the escalation: minting the recorded target
+      // onto their OWN work would defeat the never-the-assignee rule — park for the owner
+      // instead of guessing a replacement (the escalation-stall contract)
+      if (task.assigneeId === targetId) {
+        await parkRound(fresh.taskId, 'review escalation target became the assignee — resolve to resume');
+        continue;
+      }
       const nextRoster = [...new Set([...task.reviewers.filter((r) => r !== escalatorId), targetId])];
-      await db.update(tasks).set({ reviewers: nextRoster, updatedAt: new Date() }).where(eq(tasks.id, fresh.taskId));
-      await db.insert(taskReviews).values({
-        id: uuidv7(),
-        taskId: fresh.taskId,
-        reviewerId: targetId,
-        round: fresh.round,
-        status: REVIEW_STATUS.PENDING,
+      // ONE transaction, roster FIRST: the update takes the task row lock, so a concurrent
+      // status move serializes AFTER this mint (its own teardown then applies) and the
+      // stamp+status CAS makes any task write that already landed WIN — a miss skips the
+      // whole mint and the next tick re-reads. The insert commits atomically with the
+      // handover: never a roster that moved without the vote row.
+      const minted = await db.transaction(async (tx) => {
+        const won = await tx
+          .update(tasks)
+          .set({ reviewers: nextRoster, updatedAt: new Date() })
+          .where(and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: task.updatedAt, status: task.status })))
+          .returning({ id: tasks.id });
+        if (won.length === 0) return false;
+        await tx.insert(taskReviews).values({
+          id: uuidv7(),
+          taskId: fresh.taskId,
+          reviewerId: targetId,
+          round: fresh.round,
+          status: REVIEW_STATUS.PENDING,
+        });
+        return true;
       });
+      if (!minted) continue;
       const { why } = parseEscalationNote(fresh.note ?? '');
       await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId).catch(() => {});
       await spawnObligation(fresh.taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date());
