@@ -25,7 +25,10 @@ const h = vi.hoisted(() => ({
   dispatched: [] as Array<Record<string, unknown>>,
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   cancelledAll: [] as string[],
+  cancelExec: [] as unknown[],
+  txArg: undefined as unknown,
   published: 0,
+  txThrew: 0,
   casMiss: false,
   /** taskReviews read counter: [1] the verdict's own row, [2] the settle matrix, [3+] mint rows */
   reviewRead: 0,
@@ -46,10 +49,12 @@ vi.mock('../../server/db/index', async () => {
   const { tasks, taskReviews, taskRuns } = await import('../../server/db/schema');
   const rowsThenable = (resolve: () => Array<Record<string, unknown>>) => {
     const p = () => Promise.resolve(resolve());
-    return {
+    const api: Record<string, unknown> = {
       then: (onF?: (v: Array<Record<string, unknown>>) => unknown, onR?: (e: unknown) => unknown) => p().then(onF, onR),
       catch: (onR: (e: unknown) => unknown) => p().catch(onR),
     };
+    api.for = () => api; // #467: the settle's task-row lock (SELECT ... FOR UPDATE)
+    return api;
   };
   const reviewRows = () => {
     h.reviewRead += 1;
@@ -58,6 +63,19 @@ vi.mock('../../server/db/index', async () => {
   return {
     asDb: (x: unknown) => x,
     db: {
+      /** #467: the settle's writes ride ONE transaction. The double hands the callback a
+       *  DISTINCT tx handle (the real driver's tx is not the pool — a write routed to the
+       *  pool is detectable by identity) and `txThrew` records the rollback signal. */
+      async transaction(this: Record<string, unknown>, fn: (tx: unknown) => Promise<unknown>) {
+        const tx = { ...this };
+        h.txArg = tx;
+        try {
+          return await fn(tx);
+        } catch (e) {
+          h.txThrew += 1;
+          throw e;
+        }
+      },
       select: (cols?: Record<string, unknown>) => ({
         from: (table: unknown) => {
           const resolve = (): Array<Record<string, unknown>> => {
@@ -191,7 +209,10 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     ...mod,
     resolveObligation: async () => {},
     cancelObligations: async () => {},
-    cancelAllObligations: async (_t: unknown, role: unknown) => void h.cancelledAll.push(String(role)),
+    cancelAllObligations: async (_t: unknown, role: unknown, ex: unknown) => {
+      h.cancelledAll.push(String(role));
+      h.cancelExec.push(ex);
+    },
     spawnObligation: async () => {},
     spawnObligationTracked: async () => ({ created: true }),
   };
@@ -258,6 +279,8 @@ beforeEach(() => {
   h.dispatched = [];
   h.notes = [];
   h.cancelledAll = [];
+  h.cancelExec = [];
+  h.txArg = undefined;
   h.published = 0;
   h.casMiss = false;
   h.reviewRead = 0;
@@ -287,7 +310,11 @@ describe('off-review settle refusal (#401)', () => {
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.REJECTED, '', 'human');
     expect(outcome).toEqual({ outcome: 'superseded' });
     expect(h.task.status).toBe(STATUS.todo);
-    expect(h.cancelledAll).toHaveLength(0);
+    // #467: the approval cancel now rides the settle transaction AHEAD of the flip, so a
+    // lost flip rolls it back — the cancel's executor IS the tx handle (identity proves it
+    // did not go to the pool) and h.txThrew is the driver's rollback signal.
+    expect(h.cancelExec[0]).toBe(h.txArg);
+    expect(h.txThrew).toBe(1);
   });
 
   it('a request_change settle never bounces a task the owner moved out of review', async () => {

@@ -468,12 +468,15 @@ async function extinguishVoidPendingRows(taskId: string, round: number) {
 }
 
 /** supersede EVERY pending row in EVERY round — a terminal settle closes the whole
- *  task (#361 r6): a done/cancelled task must never keep a pending review row. */
-async function supersedeAllPendingRows(taskId: string) {
-  await db
+ *  task (#361 r6): a done/cancelled task must never keep a pending review row.
+ *  Takes the settle transaction's executor so the sweep can ride the SAME
+ *  transaction as the status flip (#467, SETTLE-SWEEP ATOMICITY). */
+async function supersedeAllPendingRows(taskId: string, ex: DbExecutor = db) {
+  await asDb(ex)
     .update(taskReviews)
     .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
+    .returning({ id: taskReviews.id });
 }
 
 /** TERMINAL RESIDUE (#365 r5): the settle's flip is its FIRST write, so a crash or a
@@ -1994,8 +1997,8 @@ async function logVerdict(
  *  WRITE time and keyed on CATEGORIES, never seeded ids (CATEGORY-GATE LAW, #336/#260):
  *  the task must still sit in review, or in a PAUSED-category block whose recorded
  *  origin (park_from_status / pre_block_status) resolves to an in-review id. */
-async function flipScopeIds(): Promise<{ inReview: string[]; paused: string[] }> {
-  const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+async function flipScopeIds(d: DbExecutor = db): Promise<{ inReview: string[]; paused: string[] }> {
+  const statuses = await asDb(d).query.taskStatuses.findMany({ columns: { id: true, category: true } });
   return {
     inReview: statuses.filter((s) => s.category === CATEGORY.IN_REVIEW).map((s) => s.id),
     paused: statuses.filter((s) => s.category === CATEGORY.PAUSED).map((s) => s.id),
@@ -2013,14 +2016,14 @@ async function flipScopeIds(): Promise<{ inReview: string[]; paused: string[] }>
  * (terminal, waiting_answer and a plain re-queue/block alike); its verdict becomes a
  * recorded-but-superseded audit row (returns false). #288: the refused waiting_answer flip is re-checked by the hold
  * arm below, which parks instead of superseding. */
-async function flipTask(taskId: string, status: string): Promise<boolean> {
+async function flipTaskRow(d: typeof db, taskId: string, status: string, pin?: { updatedAt: Date }): Promise<boolean> {
   // the machine-block carve-out must prove the ROUND's home: the recorded origin has to
   // RESOLVE to an in-review-category id (a bare non-null origin is not enough — gating
   // records whatever status the task held, and a stale origin would let a hand-made block
   // look machine-recorded, reopening the #401 hole this gate closes; a manual move clears
   // both origins, see tasks.router setStatus)
-  const { inReview, paused } = await flipScopeIds();
-  const flipped = await db
+  const { inReview, paused } = await flipScopeIds(d);
+  const flipped = await d
     .update(tasks)
     .set({
       status,
@@ -2042,6 +2045,10 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
     .where(
       and(
         eq(tasks.id, taskId),
+        // STALE-SETTLE PIN (degraded path only): the retry runs after an UNKNOWN tx
+        // outcome, so a status-only CAS could re-settle a task the owner legally
+        // reopened in the meantime (#292 r2). Pinning updatedAt makes that retry miss.
+        pin ? eq(tasks.updatedAt, pin.updatedAt) : undefined,
         or(
           inArray(tasks.status, inReview),
           and(
@@ -2052,19 +2059,118 @@ async function flipTask(taskId: string, status: string): Promise<boolean> {
       ),
     )
     .returning({ id: tasks.id });
-  if (flipped.length === 0) return false;
-  // RE-GATE (#423): the flip changed the gating input (this task's status), so the derived
-  // block is recomputed — a task that still owns an open child is blocked again FROM THE
-  // NEW STATUS (todo/done/cancelled), never from the pre-flip in-review origin, and a
-  // done/cancelled settle unblocks its parents (the same walk). A plain in-review settle
-  // pays a few reads; the gate is fault-isolated because the flip already committed and
-  // its outcome must never be turned into a caller-visible error (BEST-EFFORT-BETWEEN).
+  return flipped.length > 0;
+}
+
+/** RE-GATE (#423): the flip changed the gating input (this task's status), so the derived
+ * block is recomputed — a task that still owns an open child is blocked again FROM THE
+ * NEW STATUS (todo/done/cancelled), never from the pre-flip in-review origin, and a
+ * done/cancelled settle unblocks its parents (the same walk). A plain in-review settle
+ * pays a few reads; the gate is fault-isolated because the flip already committed and
+ * its outcome must never be turned into a caller-visible error (BEST-EFFORT-BETWEEN). */
+async function regateAfterFlip(taskId: string) {
   try {
     const { refreshParentGating } = await import('./gating.service');
     await refreshParentGating(taskId);
   } catch (e) {
     log.warn(`settle: re-gate after the flip failed for task ${taskId}:`, e instanceof Error ? e.message : e);
   }
+}
+
+/** the plain settle flip: conditional status write, then the post-commit re-gate. */
+async function flipTask(taskId: string, status: string): Promise<boolean> {
+  if (!(await flipTaskRow(db, taskId, status))) return false;
+  await regateAfterFlip(taskId);
+  return true;
+}
+
+/** thrown out of the settle transaction when the flip CAS misses, so the sweep and the
+ *  obligation cancel that preceded it ROLL BACK (the tail of the tx, never a commit). */
+class SettleFlipLost extends Error {}
+
+/** SETTLE-SWEEP ATOMICITY (#467): a terminal settle's row sweep, approval-obligation
+ *  cancel and status flip are ONE transaction, and the TASK ROW IS ITS FIRST LOCK — the
+ *  FIRST-LOCK ORDER the other writers on this task take (abandonTask and the round-open
+ *  tx both write the task row before any review row, workflow.service.ts LOCK ORDER),
+ *  so a review-row-first order here would cycle with them (40P01; and a deadlocked
+ *  settle would 500 AFTER its verdict CAS committed — the exact recorded-but-unapplied
+ *  outcome this fix removes). The FLIP comes LAST: a throw anywhere rolls back every write the
+ *  settle made, and a lost flip throws for the same reason, so a refused settle writes
+ *  nothing at all (never a decided round whose rows a settle that did not land had
+ *  already superseded). No committed gap separates the flip from the sweep — a task is
+ *  never observed between its own flip and sweep. A verdict CAS arriving
+ *  once the sweep's rows are locked waits for the commit and then fails its
+ *  `status = pending` guard — refused loudly ('verdict already recorded for this
+ *  round'); one arriving BEFORE the sweep is a genuinely concurrent vote whose own
+ *  settle arbitrates on the task row like any other (#260).
+ *
+ *  Two nets the transaction alone cannot provide, both kept:
+ *  - POST-COMMIT SWEEP (#361 r6, best effort): a round row whose INSERT was blocked on
+ *    the task lock and commits after this tx releases it is outside the tx's sweep; the
+ *    same task-wide sweep runs once more after the commit. A mint that commits after
+ *    that sweep is left to the escalation's own self-heal (#292 r2).
+ *  - DEGRADED FALLBACK: if the tx itself fails the verdict CAS is already committed, so
+ *    rolling back would leave a fully-decided round with no pending row — a shape no
+ *    healer keys on. The pre-#467 sequence then runs on the pool (flip, then the sweep
+ *    and cancel as best-effort net) so a failure leaves a SETTLED task with reachable
+ *    residue instead of an unreachable wedge.
+ *
+ *  Obligation cancel rides the tx for the reason #397 r4 gives: the sweep erases the
+ *  signature the residual heals key on, so a cancel that failed after the commit would
+ *  leave a terminal task with a pending approval nothing ever revisits. */
+async function flipTaskAndSweep(
+  taskId: string,
+  status: string,
+  cancelApprovals: (ex: DbExecutor) => Promise<void>,
+): Promise<boolean> {
+  const before = (await db.select({ updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  try {
+    await db.transaction(async (tx) => {
+      const d = asDb(tx);
+      await d.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
+      await supersedeAllPendingRows(taskId, d);
+      await cancelApprovals(d);
+      if (!(await flipTaskRow(d, taskId, status))) throw new SettleFlipLost();
+    });
+  } catch (e) {
+    if (e instanceof SettleFlipLost) return false;
+    log.warn(`settle tx failed for task ${taskId} — falling back to the pre-#467 order:`, e);
+    try {
+      if (!(await flipTaskRow(db, taskId, status, before))) {
+        // A COMMIT can succeed server-side and throw client-side; the pinned retry then
+        // misses because the settle already landed. "Already at the target status" is a
+        // WON settle, not a lost one — returning false here would skip the verdict note
+        // and the change event for a settle that actually happened. The stamp pin is what
+        // keeps a LEGAL reopen (which bumps updated_at) from being re-settled here.
+        const cur = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+        if (cur?.status !== status) return false;
+      }
+    } catch (err) {
+      // the retry flip never landed either: nothing was written, so the caller's hold
+      // arm owns the outcome instead of a 500 on an already-committed verdict
+      log.warn(`settle fallback: flip failed for task ${taskId}:`, err);
+      return false;
+    }
+    // CANCEL FIRST, SWEEP ONLY IF IT LANDED (#397 r4 on the degraded path): the sweep
+    // erases the pending row every residual heal keys on, so a failed cancel must leave
+    // that signature in place rather than strand a settled task with an approval nothing
+    // ever revisits.
+    try {
+      await cancelApprovals(db);
+      await supersedeAllPendingRows(taskId);
+    } catch (err) {
+      log.warn(
+        `settle fallback: cancel/sweep failed for task ${taskId} — the pending row stays as the heal signature:`,
+        err,
+      );
+    }
+    await regateAfterFlip(taskId);
+    return true;
+  }
+  await supersedeAllPendingRows(taskId).catch((err) => {
+    log.warn(`settle: post-commit sweep failed for task ${taskId}:`, err);
+  });
+  await regateAfterFlip(taskId);
   return true;
 }
 
@@ -2311,23 +2417,26 @@ async function settleRound(
   if (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round)) return { outcome: 'parked' };
 
   if (allRejected) {
-    if (!(await flipTask(taskId, CANCELLED_STATUS)))
+    // #467: sweep + flip + approval cancel are ONE transaction, sweep first — a
+    // concurrent verdict CAS can no longer land in a flip→sweep gap
+    if (
+      !(await flipTaskAndSweep(taskId, CANCELLED_STATUS, (ex) =>
+        cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex),
+      ))
+    )
       return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
-    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
   if (allApproved) {
-    if (!(await flipTask(taskId, DONE_STATUS)))
+    // #467: sweep + flip + approval cancel are ONE transaction, sweep first
+    if (!(await flipTaskAndSweep(taskId, DONE_STATUS, (ex) => cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex))))
       return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
-    await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(
       taskId,
       reviewerId,
