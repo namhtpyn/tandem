@@ -1174,8 +1174,8 @@ non-positive deltas render no duration.
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
   a stale origin on a NON-paused row is the EGRESS-ORIGIN arm's shape (#427), never
   this one's. The live pass carries the arm's emit + previous-pass presence confirm
-  + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped file: a SQL
-  arm with no pass consumer is a detector that never runs).
+  - id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped file: a SQL
+    arm with no pass consumer is a detector that never runs).
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),
