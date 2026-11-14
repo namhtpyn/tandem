@@ -1589,6 +1589,133 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
   return healed;
 }
 
+/** DECIDED-ROUND HEAL (#472): the #467 settle transaction's declared crash boundary —
+ *  a hard process kill inside the transaction rolls back to "task in review, this round
+ *  decided". Every other healer keys on a PENDING row (or a live run), so that shape was
+ *  owner-only recovery. This arm replays the END-OF-ROUND MATRIX over the round's own
+ *  committed verdict rows: no new turn, no new verdict — the same settle the killed
+ *  transaction would have landed.
+ *
+ *  Discriminators (the probe's dead-round wedge SQL, one copy here):
+ *  - review-flow-owned: an in_review-category status, or a PAUSED gating auto-block whose
+ *    recorded origin resolves to in_review (#419) — same predicate as the other two
+ *    review sweeps;
+ *  - the CURRENT round holds NO PENDING row at all (a void PENDING row is still an
+ *    unsettled row its own removal/boot heals own) and at least one VERDICT row;
+ *  - the newest verdict of that round is older than DECIDED_ROUND_GRACE_MS — a settle
+ *    lands in milliseconds, so the grace never races a live settle;
+ *  - NO OWNER STATUS WRITE newer than that verdict (#430): the `status: …` activity body
+ *    with its 1:1 STATUS payload is the manual-freedom test, so a legal manual re-queue
+ *    over a decided round is never stomped. A title/assignee edit or a child-restore
+ *    cannot mask a lost settle (the mask-proof record term).
+ *  The scan's LIMIT applies to true candidates only; at most one action per task per
+ *  tick; never rejects (a failed tick means try again next tick). Returns the healed
+ *  count. */
+export const DECIDED_ROUND_GRACE_MS = 60_000;
+export const DECIDED_ROUND_SCAN_LIMIT = 20;
+export const decidedRoundWarnState = { lastAt: 0 };
+const DECIDED_ROUND_WARN_INTERVAL_MS = 5 * 60_000;
+function warnDecidedRound(msg: string, e: unknown) {
+  const now = Date.now();
+  if (now - decidedRoundWarnState.lastAt < DECIDED_ROUND_WARN_INTERVAL_MS) return;
+  decidedRoundWarnState.lastAt = now;
+  log.warn(msg, e instanceof Error ? e.message : e);
+}
+
+export type DecidedRoundCandidate = {
+  taskId: string;
+  round: number;
+  reviewerId: string | null;
+  status: string;
+  note: string | null;
+  source: string | null;
+  decidedAt: Date | null;
+};
+
+/** the sweep's bounded read: the shape's SQL discriminators ride the query so the
+ *  LIMIT applies to true candidates only. One row per task — the round's NEWEST verdict
+ *  (the one whose settle was killed). `taskId` pins the decision-time re-read to the
+ *  candidate that was scanned (the scan→settle window is not atomic). */
+export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) {
+  const verdicts = sql`('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')`;
+  const currentRound = sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${tasks.id})`;
+  return asDb(ex)
+    .select({
+      taskId: taskReviews.taskId,
+      round: taskReviews.round,
+      reviewerId: taskReviews.reviewerId,
+      status: taskReviews.status,
+      note: taskReviews.note,
+      source: taskReviews.source,
+      decidedAt: taskReviews.decidedAt,
+    })
+    .from(taskReviews)
+    .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .where(
+      and(
+        reviewFlowOwnsTaskSql(),
+        taskId ? eq(tasks.id, taskId) : undefined,
+        isNotNull(taskReviews.reviewerId),
+        sql`${taskReviews.status} in ${verdicts}`,
+        sql`${taskReviews.round} = ${currentRound}`,
+        // the newest verdict of the round: the row a lost settle was triggered by
+        sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) = (select max(coalesce(r4.decided_at, r4.created_at)) from task_reviews r4 where r4.task_id = ${tasks.id} and r4.round = ${taskReviews.round} and r4.status in ${verdicts})`,
+        lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
+        // no PENDING row at all in the current round — a void row is another arm's job
+        sql`not exists (select 1 from task_reviews p where p.task_id = ${tasks.id} and p.status = 'PENDING' and p.round = ${taskReviews.round})`,
+        // the #430 owner record: an OWNER status write newer than the round's newest verdict
+        sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
+      ),
+    )
+    .orderBy(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) asc`)
+    .limit(DECIDED_ROUND_SCAN_LIMIT);
+}
+
+export async function sweepDecidedRoundSettles(): Promise<number> {
+  try {
+    return await sweepDecidedRoundSettlesInner();
+  } catch (e) {
+    warnDecidedRound('decided-round sweep failed:', e);
+    return 0;
+  }
+}
+
+async function sweepDecidedRoundSettlesInner(): Promise<number> {
+  const cutoff = new Date(Date.now() - DECIDED_ROUND_GRACE_MS);
+  const candidates = await decidedRoundScan(db, cutoff);
+  const seen = new Set<string>();
+  let healed = 0;
+  for (const candidate of candidates) {
+    if (!candidate.reviewerId || seen.has(candidate.taskId)) continue;
+    seen.add(candidate.taskId);
+    try {
+      // decision-time re-read: an owner move (its `status:` record) or a fresh round can
+      // land between the scan and the replay — the newer shape owns the task.
+      const fresh = await decidedRoundScan(db, cutoff, candidate.taskId);
+      const row = fresh[0];
+      if (!row || row.round !== candidate.round || row.reviewerId !== candidate.reviewerId) continue;
+      const { outcome } = await settleRound(
+        candidate.taskId,
+        candidate.reviewerId,
+        candidate.status as ReviewVerdict,
+        candidate.note ?? '',
+        candidate.source === 'ai' ? 'ai' : 'human',
+        candidate.round,
+      );
+      if (outcome === 'done' || outcome === 'returned' || outcome === 'cancelled') {
+        healed += 1;
+        log.info(
+          `decided-round heal: replayed the lost settle of round ${candidate.round} on task ${candidate.taskId} (${outcome})`,
+        );
+      }
+    } catch (e) {
+      warnDecidedRound(`decided-round heal: could not settle task ${candidate.taskId}:`, e);
+    }
+  }
+  return healed;
+}
+
 /** BOOT HEAL (#365): settle every in-review round left with a void pending row and
  *  no live voter — the shape a removal that crashed between the user delete and the
  *  settle leaves behind — and clear the void debris (stale-round rows, orphaned
