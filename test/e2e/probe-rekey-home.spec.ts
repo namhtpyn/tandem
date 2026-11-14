@@ -15,8 +15,12 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // arm, never a false alarm here. The settle flip then refuses on the terminal home,
 // the round closes on the verdict row with NO task write, and the task stays blocked: the
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
-// ORPHAN-HOME arm cannot (the home exists), and the teardown heals read it as
-// owner-settled. A terminal-by-owner shape is excluded BY CONSTRUCTION, not by a category
+// ORPHAN-HOME arm cannot (the home exists), and no sweep reaches it: the PRE-block half
+// reads as owner-settled (`settledByOwner`: paused + a pre_block_status resolving
+// terminal), and the PARK half is excluded from every review sweep by the
+// `park_from_status IS NULL` term of the flow-ownership predicate (its heals fire only
+// through a park restore, which resolves the still-existing terminal row). A
+// terminal-by-owner shape is excluded BY CONSTRUCTION, not by a category
 // term — a DIRECT owner settle leaves the paused category and clears both origins in the
 // same statement; the residual owner-settle shape is the machine #423 re-block, excluded
 // by the ordering. That is why the arm fires on a resolved done/cancelled home when no
@@ -93,16 +97,18 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       // minutes ago is OLDER than a write 1 minute ago (the legal ordering shape)
       const seedTasks = [
         { id: rekeyDone, status: BLOCKED, pre: DONE, park: null, written: 5 },
-        // a re-key into a NON-terminal category is indistinguishable from the declared
-        // legal hold-landing gate block (the block legally records a ready/working home)
-        // — the terminal term is what keeps this arm silent on it
-        { id: rekeyDoing, status: BLOCKED, pre: null, park: DOING, written: 5 },
+        // the DECLARED boundary on the BLOCK column: a gating block legally records a
+        // ready/working home (the hold-landing class), so a non-terminal PRE home is not
+        // this arm's shape — the terminal term is what keeps it silent
+        { id: rekeyDoing, status: BLOCKED, pre: DOING, park: null, written: 5 },
         { id: rekeyCancelled, status: BLOCKED, pre: CANCELLED, park: null, written: 5 },
+        // a PARK-only origin: a park always records an in-review home, so a terminal park
+        // home is by construction a re-key; the round closes when its single reviewer
+        // decides (a still-PENDING voter correctly keeps the arm silent — live round)
+        { id: parkRekey, status: BLOCKED, pre: null, park: DONE, written: 5 },
         // a row carrying both origins (no live writer emits that, but the schema permits
         // it) still fires when either of them was re-keyed
-        // a PARK-only origin: the park recorded an in-review home that was re-keyed terminal
-        { id: parkRekey, status: BLOCKED, pre: null, park: DONE, written: 5 },
-        { id: bothRekey, status: BLOCKED, pre: DONE, park: DOING, written: 5 },
+        { id: bothRekey, status: BLOCKED, pre: DONE, park: DONE, written: 5 },
         { id: mixedReview, status: BLOCKED, pre: DONE, park: IN_REVIEW, written: 5 },
         { id: resolvable, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
         // a gating block landing AFTER the verdict closed the round (verdict older than

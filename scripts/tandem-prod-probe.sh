@@ -371,6 +371,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$REKEY_ON" | grep -qF "not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status))" || { echo "selfcheck fail: rekey in-review-resolver exclusion"; exit 1; }
   [ "$(printf '%s' "$REKEY_ON" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey write discriminator"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: rekey ordering is not the MIN test"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at" || { echo "selfcheck fail: rekey MIN subquery lost its round binding"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "max(coalesce(r.decided_at" && { echo "selfcheck fail: rekey ordering fell back to max"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: rekey verdict scope"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "r.status = 'PENDING' and r.round = (select max(r3.round)" || { echo "selfcheck fail: rekey live-round clause"; exit 1; }
