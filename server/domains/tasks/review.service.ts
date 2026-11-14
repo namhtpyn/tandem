@@ -1609,8 +1609,10 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
  *    over a decided round is never stomped. A title/assignee edit or a child-restore
  *    cannot mask a lost settle (the mask-proof record term).
  *  The scan's LIMIT applies to true candidates only; at most one action per task per
- *  tick; never rejects (a failed tick means try again next tick). Returns the healed
- *  count. */
+ *  tick; the decision-time re-read repeats the same predicates AND the flip is pinned to
+ *  the re-read's task stamp (#292 r2 STALE-SETTLE PIN), so any task write landing inside
+ *  the window (a manual re-queue, a title edit) makes the CAS miss instead of stomping;
+ *  never rejects (a failed tick means try again next tick). Returns the healed count. */
 export const DECIDED_ROUND_GRACE_MS = 60_000;
 export const DECIDED_ROUND_SCAN_LIMIT = 20;
 export const decidedRoundWarnState = { lastAt: 0 };
@@ -1630,6 +1632,8 @@ export type DecidedRoundCandidate = {
   note: string | null;
   source: string | null;
   decidedAt: Date | null;
+  /** the task row's stamp at scan time — the heal pins its flip to it (#292 r2) */
+  updatedAt: Date;
 };
 
 /** the sweep's bounded read: the shape's SQL discriminators ride the query so the
@@ -1648,6 +1652,7 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
       note: taskReviews.note,
       source: taskReviews.source,
       decidedAt: taskReviews.decidedAt,
+      updatedAt: tasks.updatedAt,
     })
     .from(taskReviews)
     .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
@@ -1671,12 +1676,20 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
     .limit(DECIDED_ROUND_SCAN_LIMIT);
 }
 
+let decidedRoundSweepInFlight = false;
+
 export async function sweepDecidedRoundSettles(): Promise<number> {
+  // SINGLE-FLIGHT: a slow pass can overlap the next 5s tick; a concurrent scan would
+  // replay the same rows (benign CAS, but duplicate publishes) — one pass at a time.
+  if (decidedRoundSweepInFlight) return 0;
+  decidedRoundSweepInFlight = true;
   try {
     return await sweepDecidedRoundSettlesInner();
   } catch (e) {
     warnDecidedRound('decided-round sweep failed:', e);
     return 0;
+  } finally {
+    decidedRoundSweepInFlight = false;
   }
 }
 
@@ -1701,6 +1714,9 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
         candidate.note ?? '',
         candidate.source === 'ai' ? 'ai' : 'human',
         candidate.round,
+        // STALE-SETTLE PIN (#292 r2): the flip must miss if ANY task write landed after
+        // the re-read — a manual re-queue inside that window wins, the heal retries next tick.
+        { updatedAt: row.updatedAt },
       );
       if (outcome === 'done' || outcome === 'returned' || outcome === 'cancelled') {
         healed += 1;
@@ -2171,10 +2187,13 @@ async function flipTaskRow(d: typeof db, taskId: string, status: string, pin?: {
     .where(
       and(
         eq(tasks.id, taskId),
-        // STALE-SETTLE PIN (degraded path only): the retry runs after an UNKNOWN tx
-        // outcome, so a status-only CAS could re-settle a task the owner legally
-        // reopened in the meantime (#292 r2). Pinning updatedAt makes that retry miss.
-        pin ? eq(tasks.updatedAt, pin.updatedAt) : undefined,
+        // STALE-SETTLE PIN: the replay runs after a read, and the degraded retry after an
+        // UNKNOWN tx outcome, so a status-only CAS could re-settle a task the owner
+        // legally reopened in the meantime (#292 r2). Pinning updatedAt makes that write
+        // miss. MILLISECOND-PRECISION: Postgres timestamps carry µs, a JS Date does not,
+        // so a raw equality misses every row written by SQL `now()` (the pin would be a
+        // permanent no-op there) — truncate the column to the Date's precision.
+        pin ? sql`date_trunc('milliseconds', ${tasks.updatedAt}) = ${pin.updatedAt}` : undefined,
         or(
           inArray(tasks.status, inReview),
           and(
@@ -2203,9 +2222,11 @@ async function regateAfterFlip(taskId: string) {
   }
 }
 
-/** the plain settle flip: conditional status write, then the post-commit re-gate. */
-async function flipTask(taskId: string, status: string): Promise<boolean> {
-  if (!(await flipTaskRow(db, taskId, status))) return false;
+/** the plain settle flip: conditional status write, then the post-commit re-gate.
+ *  `pin` is the STALE-SETTLE PIN (#292 r2) for a replay that read the task BEFORE the
+ *  flip — a manual move (or any task write) after that read makes the CAS miss. */
+async function flipTask(taskId: string, status: string, pin?: { updatedAt: Date }): Promise<boolean> {
+  if (!(await flipTaskRow(db, taskId, status, pin))) return false;
   await regateAfterFlip(taskId);
   return true;
 }
@@ -2248,15 +2269,16 @@ async function flipTaskAndSweep(
   taskId: string,
   status: string,
   cancelApprovals: (ex: DbExecutor) => Promise<void>,
+  pin?: { updatedAt: Date },
 ): Promise<boolean> {
-  const before = (await db.select({ updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const before = pin ?? (await db.select({ updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId)))[0];
   try {
     await db.transaction(async (tx) => {
       const d = asDb(tx);
       await d.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).for('update');
       await supersedeAllPendingRows(taskId, d);
       await cancelApprovals(d);
-      if (!(await flipTaskRow(d, taskId, status))) throw new SettleFlipLost();
+      if (!(await flipTaskRow(d, taskId, status, pin))) throw new SettleFlipLost();
     });
   } catch (e) {
     if (e instanceof SettleFlipLost) return false;
@@ -2497,6 +2519,7 @@ async function settleRound(
   note: string,
   source: 'human' | 'ai',
   round: number,
+  pin?: { updatedAt: Date },
 ): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' | 'parked' }> {
   const roundRows = await db
     .select()
@@ -2549,8 +2572,11 @@ async function settleRound(
     // #467: sweep + flip + approval cancel are ONE transaction, sweep first — a
     // concurrent verdict CAS can no longer land in a flip→sweep gap
     if (
-      !(await flipTaskAndSweep(taskId, CANCELLED_STATUS, (ex) =>
-        cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex),
+      !(await flipTaskAndSweep(
+        taskId,
+        CANCELLED_STATUS,
+        (ex) => cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex),
+        pin,
       ))
     )
       return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
@@ -2562,7 +2588,14 @@ async function settleRound(
   }
   if (allApproved) {
     // #467: sweep + flip + approval cancel are ONE transaction, sweep first
-    if (!(await flipTaskAndSweep(taskId, DONE_STATUS, (ex) => cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex))))
+    if (
+      !(await flipTaskAndSweep(
+        taskId,
+        DONE_STATUS,
+        (ex) => cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex),
+        pin,
+      ))
+    )
       return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
@@ -2578,7 +2611,7 @@ async function settleRound(
   }
   // any request_change — or a split approve/reject — bounces the task to the
   // assignee; the verdict notes already sit on the thread and ride the next brief
-  if (!(await flipTask(taskId, TODO_STATUS)))
+  if (!(await flipTask(taskId, TODO_STATUS, pin)))
     return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
       ? { outcome: 'parked' }
       : { outcome: 'superseded' };

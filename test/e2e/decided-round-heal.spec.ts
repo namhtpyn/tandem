@@ -12,12 +12,20 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // that keeps it off a settle that is still landing.
 const IN_REVIEW = '01a14743-43f5-759d-a00e-a90831248ea5';
 const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
+const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
+const CANCELLED = '01a14743-43f5-759d-a00e-b0f2a5a04f4c';
 
 async function seedDecidedTask(
   sql: SQL,
   id: string,
   reviewerId: string | null,
-  opts: { writtenMinutes: number; decidedSeconds: number; ownerMoveMinutes?: number; source?: string },
+  opts: {
+    writtenMinutes: number;
+    decidedSeconds: number;
+    ownerMoveMinutes?: number;
+    source?: string;
+    verdict?: string;
+  },
 ) {
   await sql.unsafe(
     `insert into tasks (id, title, status, created_at, updated_at)
@@ -26,8 +34,8 @@ async function seedDecidedTask(
   );
   await sql.unsafe(
     `insert into task_reviews (id, task_id, reviewer_id, round, status, note, source, created_at, decided_at)
-     values ($1, $2, $3, 1, 'APPROVED', 'looks good', $5, now() - interval '30 minutes', now() - ($4::int * interval '1 second'))`,
-    [`rev-${id}`, id, reviewerId, opts.decidedSeconds, opts.source ?? 'human'],
+     values ($1, $2, $3, 1, $6, 'looks good', $5, now() - interval '30 minutes', now() - ($4::int * interval '1 second'))`,
+    [`rev-${id}`, id, reviewerId, opts.decidedSeconds, opts.source ?? 'human', opts.verdict ?? 'APPROVED'],
   );
   if (opts.ownerMoveMinutes !== undefined) {
     const messageId = `msg-${id}`;
@@ -69,16 +77,32 @@ test.describe('decided-round heal (#472)', () => {
       const legal = `e2e-decided-legal-${tag}`; // #430 legal re-queue: the owner move is newer than the verdict
       const fresh = `e2e-decided-fresh-${tag}`; // inside the 60s grace: a settle could still be landing
       const removed = `e2e-decided-removed-${tag}`; // the deciding reviewer was deleted after the crash (FK-nulled row)
+      const rejected = `e2e-decided-rejected-${tag}`; // the all-rejected matrix arm -> cancelled
+      const changes = `e2e-decided-changes-${tag}`; // the request-change matrix arm -> back to ready
 
       await seedDecidedTask(sql, heal, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, legal, adminId, { writtenMinutes: 10, decidedSeconds: 300, ownerMoveMinutes: 1 });
       await seedDecidedTask(sql, fresh, adminId, { writtenMinutes: 10, decidedSeconds: 10 });
       await seedDecidedTask(sql, removed, null, { writtenMinutes: 10, decidedSeconds: 300 });
+      await seedDecidedTask(sql, rejected, adminId, { writtenMinutes: 10, decidedSeconds: 300, verdict: 'REJECTED' });
+      await seedDecidedTask(sql, changes, adminId, {
+        writtenMinutes: 10,
+        decidedSeconds: 300,
+        verdict: 'CHANGE_REQUESTED',
+      });
 
       expect(await waitForStatus(sql, heal, DONE, 20_000), 'the tick must replay the lost settle to DONE').toBe(true);
       expect(
         await waitForStatus(sql, removed, DONE, 20_000),
         'a decided round whose reviewer was deleted (FK-nulled row) still settles',
+      ).toBe(true);
+      expect(
+        await waitForStatus(sql, rejected, CANCELLED, 20_000),
+        'the all-rejected matrix arm replays to cancelled',
+      ).toBe(true);
+      expect(
+        await waitForStatus(sql, changes, TODO, 20_000),
+        'the request-change matrix arm replays back to ready',
       ).toBe(true);
 
       // the replay is the SAME settle: its verdict note landed exactly once
