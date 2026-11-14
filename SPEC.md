@@ -1155,8 +1155,12 @@ non-positive deltas render no duration.
   ready/working status, then gating-blocked: the block legally records a non-review
   home and a later verdict closes the round with no task write — the unblock restore
   heals it). That sub-shape is OUT of this arm and NAMED here so no one assumes
-  coverage; a terminal home cannot host the legal class (a terminal task's rounds are
-  closed by the teardown), so the arm cannot false-alarm. The flip then refuses on
+  coverage. A terminal home cannot host that class; the OTHER legal class a terminal
+  home DOES host is the #423 re-block after a settle — the task settles to a
+  terminal status, a still-open child re-blocks it, and the block records the
+  settled status as its home with the verdict necessarily OLDER than the re-block
+  write — and the verdict-vs-write ordering excludes it (a cancel that re-blocks
+  records the cancelled status the same way), so the arm cannot false-alarm. The flip then refuses on
   the terminal home, the round closes on the verdict row with NO task write, and the
   task stays blocked — the wedge's in_review branch cannot see it (the origin resolves outside
   in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown heals

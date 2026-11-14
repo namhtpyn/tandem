@@ -172,7 +172,7 @@ ready_round_arm() {
   printf "%s" " union all select 'readyround', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category in ('ready', 'working') and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and $(ready_owner_gap) and $(ready_hold_gap)) x), 'none')"
 }
 strand_sql() {
-  local own blkarm orphan decided gap rule ready
+  local own blkarm orphan rekey decided gap rule ready
   own=$(own_predicate "${1:-}" "${2:-}")
   ready=""
   if ready_floor_met "${1:-}"; then ready=$(ready_round_arm); fi

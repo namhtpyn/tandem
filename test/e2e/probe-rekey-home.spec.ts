@@ -72,11 +72,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const rekeyDone = `probe-rekey-done-${tag}`; // fires: THE counterexample — block home re-keyed in_review -> done
       const rekeyDoing = `probe-rekey-doing-${tag}`; // silent: a NON-terminal re-key is the declared boundary
       const rekeyCancelled = `probe-rekey-cancelled-${tag}`; // fires: a cancelled-category home is the same wedge (no owner settle cleared the origin)
+      const parkRekey = `probe-rekey-park-${tag}`; // fires: a PARK-only origin re-keyed terminal
       const bothRekey = `probe-rekey-both-${tag}`; // fires: either column re-keyed is enough
       const mixedReview = `probe-rekey-mixedrev-${tag}`; // silent: the park origin still resolves to in-review
       const resolvable = `probe-rekey-resolvable-${tag}`; // silent: the block home still resolves to in-review
       const legalRequeue = `probe-rekey-verdictold-${tag}`; // silent: the verdict predates the last write
-      const requeueReview = `probe-rekey-toreview-${tag}`; // silent: a legal owner re-queue leaves the paused category
       const liveRound = `probe-rekey-live-${tag}`; // silent: a PENDING row keeps the round open
       const tornDown = `probe-rekey-void-${tag}`; // silent: the round holds no verdict row
       const manualBlock = `probe-rekey-manual-${tag}`; // silent: a hand-made block writes no origin
@@ -97,16 +97,14 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         { id: rekeyCancelled, status: BLOCKED, pre: CANCELLED, park: null, written: 5 },
         // a row carrying both origins (no live writer emits that, but the schema permits
         // it) still fires when either of them was re-keyed
+        // a PARK-only origin: the park recorded an in-review home that was re-keyed terminal
+        { id: parkRekey, status: BLOCKED, pre: null, park: DONE, written: 5 },
         { id: bothRekey, status: BLOCKED, pre: DONE, park: DOING, written: 5 },
         { id: mixedReview, status: BLOCKED, pre: DONE, park: IN_REVIEW, written: 5 },
         { id: resolvable, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
         // a gating block landing AFTER the verdict closed the round (verdict older than
         // the write) is the legal shape the write-vs-verdict discriminator exists for
         { id: legalRequeue, status: BLOCKED, pre: DONE, park: null, written: 1 },
-        // a legal owner re-queue into an in-review status over a decided round always
-        // carries a write NEWER than the old verdict — the ORDERING owns this exclusion
-        // (the paused clause is pinned by the egress seed below)
-        { id: requeueReview, status: IN_REVIEW, pre: DONE, park: null, written: 1 },
         { id: liveRound, status: BLOCKED, pre: DONE, park: null, written: 5 },
         { id: tornDown, status: BLOCKED, pre: DONE, park: null, written: 5 },
         { id: manualBlock, status: BLOCKED, pre: null, park: null, written: 5 },
@@ -147,11 +145,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(rekeyDone, 'APPROVED', 1);
       await seedReview(rekeyDoing, 'CHANGE_REQUESTED', 1);
       await seedReview(rekeyCancelled, 'REJECTED', 1);
+      await seedReview(parkRekey, 'APPROVED', 1);
       await seedReview(bothRekey, 'APPROVED', 1);
       await seedReview(mixedReview, 'APPROVED', 1);
       await seedReview(resolvable, 'APPROVED', 1);
       await seedReview(legalRequeue, 'APPROVED', 10);
-      await seedReview(requeueReview, 'APPROVED', 10);
       await seedReview(liveRound, 'APPROVED', 1);
       await seedReview(liveRound, 'PENDING', null, adminId);
       // torn down INSIDE the block: no VERDICT row, so it is not a decided round at
@@ -180,6 +178,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         fired,
         'a cancelled-category home is the same wedge: no legal owner settle can leave an origin behind',
       ).toContain(rekeyCancelled);
+      expect(fired, 'a PARK-only origin re-keyed terminal strands through the park path').toContain(parkRekey);
       expect(fired, 'either column re-keyed is enough').toContain(bothRekey);
 
       expect(
@@ -191,14 +190,15 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         fired,
         'a verdict OLDER than the last write is a gating block over an already-decided round — legal',
       ).not.toContain(legalRequeue);
-      expect(fired, 'a legal owner re-queue leaves the paused category over the decided round').not.toContain(
-        requeueReview,
-      );
       expect(fired, 'a PENDING row keeps the round open').not.toContain(liveRound);
       expect(fired, 'no verdict row means no decided round').not.toContain(tornDown);
       expect(fired, 'a hand-made block writes no origin').not.toContain(manualBlock);
       expect(fired, 'an UNRESOLVABLE home is the orphan arm shape, never this one').not.toContain(danglingOnly);
       expect(fired, 'a stale origin on a NON-paused row belongs to the egress-origin arm').not.toContain(egressRekey);
+      expect(
+        fired,
+        'the verdict must sit in max(round): a newer verdict on a SUPERSEDED round is not this shape',
+      ).not.toContain(staleRound);
     } finally {
       await sql.end();
     }
