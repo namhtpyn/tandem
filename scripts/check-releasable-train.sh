@@ -15,8 +15,9 @@
 #   - releasable subjects (per analyzed commit):
 #       fix|feat|perf|revert (lowercase), FIX|FEAT (JSHint defaults),
 #       any conventional type with breaking header `!:` — breaking scope
-#       class EXCLUDES `+` (`type(a+b)!:` parses as a plain non-breaking
-#       type: releasable only for fix|feat|perf|revert|FIX|FEAT),
+#       class INCLUDES `+`, in exact parity with the headerPattern scope
+#       class (`type(a+b)!:` releases major via the BREAKING CHANGE note;
+#       blind-review r6 mirror of .releaserc.json's fixed breakingHeaderPattern),
 #       empty type/scope allowed (`!: x` and `fix(): x` release).
 #       any REVERTISH commit releases patch via the default
 #       {type: revert, release: patch} rule (commit.revert truthy) —
@@ -256,7 +257,7 @@ for i in "${YIELDED[@]}"; do
   [ "${REVT_OF[$i]}" = "1" ] && REVERT_PATCH+="${SUBJ_OF[$i]}"$'\n'
   CAND+="${SUBJ_OF[$i]}"$'\n'
 done
-RELEASABLE=$(printf '%s' "$CAND" | LC_ALL=C grep -E '^(fix|feat|perf|revert|FIX|FEAT)(\([A-Za-z0-9_$@.+*/ -]*\))?!?: |^[A-Za-z0-9_]*(\([A-Za-z0-9_$@.*/ -]*\))?!: ' || true)
+RELEASABLE=$(printf '%s' "$CAND" | LC_ALL=C grep -E '^(fix|feat|perf|revert|FIX|FEAT)(\([A-Za-z0-9_$@.+*/ -]*\))?!?: |^[A-Za-z0-9_]*(\([A-Za-z0-9_$@.+*/ -]*\))?!: ' || true)
 if [ -n "$RELEASABLE" ]; then
   printf '%s\n' "$RELEASABLE" | sed '/^$/d'
   exit 0
