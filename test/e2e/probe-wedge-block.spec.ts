@@ -63,6 +63,7 @@ test.describe('prod probe wedge arm (#424)', () => {
       const noteDecoy = `probe-wedge-notedecoy-${crypto.randomUUID()}`; // fires: a NOTE body starting `status: ` must not mask
       const deletedMoverRequeue = `probe-wedge-deletedmover-${crypto.randomUUID()}`; // legal: the mover's user row is gone (author NULL)
       const staleVerdictRequeue = `probe-wedge-staleverdict-${crypto.randomUUID()}`; // legal: owner move after the CURRENT round's verdict
+      const staleMoveWedge = `probe-wedge-stalemove-${crypto.randomUUID()}`; // fires: the only owner move PREDATES the round's verdict (#438)
 
       // task write age (minutes ago) per seed; the wedge needs the verdict NEWER than it
       const seedTasks: Array<{ id: string; status: string; pre: string | null; park: string | null; written: number }> =
@@ -105,6 +106,7 @@ test.describe('prod probe wedge arm (#424)', () => {
           { id: noteDecoy, status: IN_REVIEW, pre: null, park: null, written: 1 },
           { id: deletedMoverRequeue, status: IN_REVIEW, pre: null, park: null, written: 20 },
           { id: staleVerdictRequeue, status: IN_REVIEW, pre: null, park: null, written: 20 },
+          { id: staleMoveWedge, status: IN_REVIEW, pre: null, park: null, written: 20 },
         ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -177,6 +179,12 @@ test.describe('prod probe wedge arm (#424)', () => {
       // outrank round 1's debris too (the round binding in the gap clause)
       await seedReview(staleVerdictRequeue, 'APPROVED', 10, 10, 1);
       await seedReview(staleVerdictRequeue, 'APPROVED', 30, 40, 2);
+      // the STALE-MOVE control (#438): the round decided 10 min ago, the ONLY owner move
+      // landed 20 min ago — a move exists, but not AFTER the verdict, so the wedge fires.
+      // This is the one shape that separates "a move exists" from "a move after the
+      // verdict exists": dropping the gap clause's time term silences this seed and every
+      // other seed stays green.
+      await seedReview(staleMoveWedge, 'APPROVED', 10, 10, 1);
       // Status activity rows: the discriminator is the activity ROW (body + its 1:1
       // payload kind), never the author — `author_id` is ON DELETE SET NULL, so a
       // deleted mover's row must still read as an owner move. tasks.setStatus is the
@@ -222,6 +230,8 @@ test.describe('prod probe wedge arm (#424)', () => {
       // the STALE-VERDICT control: an owner move after the CURRENT round's verdict, an
       // older round holding a later verdict — the round binding must keep this silent
       await seedStatusActivity(staleVerdictRequeue, 20, 'status: doing → in-review', adminId);
+      // the owner move PREDATES the verdict (20 min ago vs decided 10 min ago)
+      await seedStatusActivity(staleMoveWedge, 20, 'status: doing → in-review', adminId);
 
       const rows = await sql.unsafe(strandSql);
       // union columns are unnamed: key on the arm's own label column, never on aliases
@@ -256,6 +266,10 @@ test.describe('prod probe wedge arm (#424)', () => {
         fired,
         'an owner move newer than the CURRENT round verdict keeps the task legal even when an older round holds a later verdict',
       ).not.toContain(staleVerdictRequeue);
+      expect(
+        fired,
+        'an owner move PREDATING the round verdict cannot mask the wedge — the time term, not mere existence, decides (#438)',
+      ).toContain(staleMoveWedge);
       // VERSION-GATE CONTROL (#430): below the atomic-writer release (2.78.24) the arm
       // must keep the retired verdict-vs-write rule — the plain wedge fires, while the
       // shapes only the owner record can unmask (a child-restore or title edit after the
