@@ -1,3 +1,10 @@
+## [2.78.35](https://github.com/namhtpyn/tandem/compare/v2.78.34...v2.78.35) (2026-11-14)
+
+
+### Bug Fixes
+
+* **review:** [#467](https://github.com/namhtpyn/tandem/issues/467) settle sweep rides the flip transaction (task row first, flip last) ([5d345d4](https://github.com/namhtpyn/tandem/commit/5d345d482f71c45b26a40a0521b9bdf3618edfa5)), closes [#361](https://github.com/namhtpyn/tandem/issues/361) [#292](https://github.com/namhtpyn/tandem/issues/292)
+
 ## [2.78.34](https://github.com/namhtpyn/tandem/compare/v2.78.33...v2.78.34) (2026-11-14)
 
 
