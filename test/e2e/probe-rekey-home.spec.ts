@@ -80,6 +80,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const rekeyCancelled = `probe-rekey-cancelled-${tag}`; // fires: a cancelled-category home is the same wedge (no owner settle cleared the origin)
       const parkRekey = `probe-rekey-park-${tag}`; // fires: a PARK-only origin re-keyed terminal
       const bothRekey = `probe-rekey-both-${tag}`; // fires: either column re-keyed is enough
+      const bothMixed = `probe-rekey-bothmixed-${tag}`; // fires: a MIXED pair (terminal + non-terminal) still fires on the terminal one
       const mixedReview = `probe-rekey-mixedrev-${tag}`; // silent: the park origin still resolves to in-review
       const resolvable = `probe-rekey-resolvable-${tag}`; // silent: the block home still resolves to in-review
       const legalRequeue = `probe-rekey-verdictold-${tag}`; // silent: the verdict predates the last write
@@ -109,6 +110,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         // a row carrying both origins (no live writer emits that, but the schema permits
         // it) still fires when either of them was re-keyed
         { id: bothRekey, status: BLOCKED, pre: DONE, park: DONE, written: 5 },
+        // the per-column OR against an all-present-terminals mutant: the non-terminal
+        // park home must not suppress the terminal pre home
+        { id: bothMixed, status: BLOCKED, pre: DONE, park: DOING, written: 5 },
         { id: mixedReview, status: BLOCKED, pre: DONE, park: IN_REVIEW, written: 5 },
         { id: resolvable, status: BLOCKED, pre: IN_REVIEW, park: null, written: 5 },
         // a gating block landing AFTER the verdict closed the round (verdict older than
@@ -160,6 +164,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(rekeyCancelled, 'REJECTED', 1);
       await seedReview(parkRekey, 'APPROVED', 1);
       await seedReview(bothRekey, 'APPROVED', 1);
+      await seedReview(bothMixed, 'APPROVED', 1);
       await seedReview(mixedReview, 'APPROVED', 1);
       await seedReview(resolvable, 'APPROVED', 1);
       await seedReview(legalRequeue, 'APPROVED', 10);
@@ -195,6 +200,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       ).toContain(rekeyCancelled);
       expect(fired, 'a PARK-only origin re-keyed terminal strands through the park path').toContain(parkRekey);
       expect(fired, 'either column re-keyed is enough').toContain(bothRekey);
+      expect(fired, 'a MIXED pair fires on the terminal home (the per-column OR)').toContain(bothMixed);
 
       expect(
         fired,

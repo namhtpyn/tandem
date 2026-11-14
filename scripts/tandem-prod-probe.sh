@@ -209,8 +209,8 @@ strand_sql() {
   # RE-KEYED-HOME arm (#435): a PAUSED row whose recorded block/park origin RESOLVES to
   # a TERMINAL (done/cancelled-category) home — the home EXISTS, but its category moved
   # after the block recorded it (statuses.save's block-state-home guard is a
-  # read-then-write check; a gating block landing inside its read->upsert window is the
-  # DECLARED residual producer, the orphan arm's ghost-task race class). The flip refuses
+  # read-then-write check; a gating block committing AFTER the homes read but BEFORE the
+  # category upsert is the DECLARED residual producer, the orphan arm's ghost-task class). The flip refuses
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
@@ -361,9 +361,11 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # whole UNION, so the arm must VANISH at the column-count-1 gate pair
   [ "$(printf '%s' "$(strand_sql 2.78.19 2)" | grep -oF "select 'orphanhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: orphan arm missing at the pre-guard version"; exit 1; }
   printf '%s' "$(strand_sql 2.78.19 1)" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm emitted without the park column"; exit 1; }
-  # RE-KEYED-HOME arm (#435) — same slice discipline as the orphan arm: the wedge, strand,
-  # orphanans, stallrv, lostsettle and ready arms share the current-round + verdict-newer
-  # clauses verbatim, so every pin greps the arm's OWN bytes only.
+  # RE-KEYED-HOME arm (#435) — same slice discipline as the orphan arm: the wedge and the
+  # wait-state arms share pieces of the current-round clause, and the MIN subquery's text
+  # (`r.status in (...)` + the round binding) is echoed by other arms' verdict scopes, so
+  # every pin greps the arm's OWN bytes only — a whole-SQL substring pin stayed green
+  # with arms deleted before (the #445 ready arm's shared `PENDING` text is the textbook).
   REKEY_ON=$(strand_rekey_arm 2.78.19 2)
   [ "$(printf '%s' "$REKEY_ON" | grep -oF "select 'rekeyhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey arm"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "s.category = 'paused'" || { echo "selfcheck fail: rekey paused scope"; exit 1; }
