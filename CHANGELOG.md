@@ -1,3 +1,14 @@
+## [2.78.34](https://github.com/namhtpyn/tandem/compare/v2.78.33...v2.78.34) (2026-11-14)
+
+
+### Bug Fixes
+
+* **probe:** [#435](https://github.com/namhtpyn/tandem/issues/435) — RE-KEYED-HOME arm reads a paused row whose block/park home was re-keyed outside in_review over a decided round ([7c66ca4](https://github.com/namhtpyn/tandem/commit/7c66ca4df5bd40e61a4aa831c5abd8dca4cc8ea8))
+* **probe:** [#435](https://github.com/namhtpyn/tandem/issues/435) r1 review — terminal-only boundary (the legal hold-landing gate block shares the non-terminal shape), live-pass consumer + wiring pins, stale-round seed pins the verdict-round binding, comment truth ([450b47e](https://github.com/namhtpyn/tandem/commit/450b47ef5348e74927cc6f9954846f23eab08ccb))
+* **probe:** [#435](https://github.com/namhtpyn/tandem/issues/435) r1 vacuity — drop the redundant category term (the no-in-review exclusion alone forces every resolved home outside in_review); seeds: egress shape pins the paused scope, dangling pins the resolve, retimed teardown pins the verdict filter ([fff438b](https://github.com/namhtpyn/tandem/commit/fff438ba85a00ae96f19d913681fee711e0cbea2))
+* **probe:** [#435](https://github.com/namhtpyn/tandem/issues/435) r2 review — stale-round assertion (the seed pinned nothing), park-only positive path, drop the unreachable requeue seed, declare the [#423](https://github.com/namhtpyn/tandem/issues/423) re-block class truthfully, local rekey ([d913b3f](https://github.com/namhtpyn/tandem/commit/d913b3f826187599ea513ce9bfc9ed6b927c4259))
+* **probe:** [#435](https://github.com/namhtpyn/tandem/issues/435) r3 review — MIN ordering (every verdict newer than the write): excludes the [#423](https://github.com/namhtpyn/tandem/issues/423) re-block and the [#467](https://github.com/namhtpyn/tandem/issues/467) flip->supersede window a MAX test misreads; SPEC wording truth ([7f8ecc9](https://github.com/namhtpyn/tandem/commit/7f8ecc95f754849873ccd73f2cc9dfd3274746fa))
+
 ## [2.78.33](https://github.com/namhtpyn/tandem/compare/v2.78.32...v2.78.33) (2026-11-14)
 
 
