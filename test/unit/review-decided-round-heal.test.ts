@@ -99,6 +99,15 @@ describe('decidedRoundScan (#472 SQL discriminators)', () => {
       .toSQL();
     expect(q.sql.toLowerCase()).toContain("date_trunc('milliseconds'");
     expect(q.params.some((p) => p instanceof Date && p.getTime() === at.getTime())).toBe(true);
+    // the status term closes the same-millisecond window: a legal manual move always lands
+    // on a different status id (a self-edge is refused).
+    const q2 = d
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(staleSettlePin({ updatedAt: at, status: 'st-in-review' }))
+      .toSQL();
+    expect(q2.sql.toLowerCase()).toContain('"tasks"."status" =');
+    expect(q2.params).toContain('st-in-review');
     expect(staleSettlePin()).toBeUndefined();
   });
 

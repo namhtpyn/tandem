@@ -1644,38 +1644,44 @@ export type DecidedRoundCandidate = {
 export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) {
   const verdicts = sql`('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')`;
   const currentRound = sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${tasks.id})`;
-  return asDb(ex)
-    .select({
-      taskId: taskReviews.taskId,
-      round: taskReviews.round,
-      reviewerId: taskReviews.reviewerId,
-      status: taskReviews.status,
-      note: taskReviews.note,
-      source: taskReviews.source,
-      decidedAt: taskReviews.decidedAt,
-      updatedAt: tasks.updatedAt,
-      taskStatus: tasks.status,
-    })
-    .from(taskReviews)
-    .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
-    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
-    .where(
-      and(
-        reviewFlowOwnsTaskSql(),
-        taskId ? eq(tasks.id, taskId) : undefined,
-        sql`${taskReviews.status} in ${verdicts}`,
-        sql`${taskReviews.round} = ${currentRound}`,
-        // the newest verdict of the round: the row a lost settle was triggered by
-        sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) = (select max(coalesce(r4.decided_at, r4.created_at)) from task_reviews r4 where r4.task_id = ${tasks.id} and r4.round = ${taskReviews.round} and r4.status in ${verdicts})`,
-        lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
-        // no PENDING row at all in the current round — a void row is another arm's job
-        sql`not exists (select 1 from task_reviews p where p.task_id = ${tasks.id} and p.status = 'PENDING' and p.round = ${taskReviews.round})`,
-        // the #430 owner record: an OWNER status write newer than the round's newest verdict
-        sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
-      ),
-    )
-    .orderBy(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) asc`)
-    .limit(DECIDED_ROUND_SCAN_LIMIT);
+  return (
+    asDb(ex)
+      .select({
+        taskId: taskReviews.taskId,
+        round: taskReviews.round,
+        reviewerId: taskReviews.reviewerId,
+        status: taskReviews.status,
+        note: taskReviews.note,
+        source: taskReviews.source,
+        decidedAt: taskReviews.decidedAt,
+        updatedAt: tasks.updatedAt,
+        taskStatus: tasks.status,
+      })
+      .from(taskReviews)
+      .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
+      .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+      .where(
+        and(
+          reviewFlowOwnsTaskSql(),
+          taskId ? eq(tasks.id, taskId) : undefined,
+          sql`${taskReviews.status} in ${verdicts}`,
+          sql`${taskReviews.round} = ${currentRound}`,
+          // the newest verdict of the round: the row a lost settle was triggered by
+          sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) = (select max(coalesce(r4.decided_at, r4.created_at)) from task_reviews r4 where r4.task_id = ${tasks.id} and r4.round = ${taskReviews.round} and r4.status in ${verdicts})`,
+          lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
+          // no PENDING row at all in the current round — a void row is another arm's job
+          sql`not exists (select 1 from task_reviews p where p.task_id = ${tasks.id} and p.status = 'PENDING' and p.round = ${taskReviews.round})`,
+          // the #430 owner record: an OWNER status write newer than the round's newest verdict
+          sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
+        ),
+      )
+      // TIE-BREAK (#472 r5): two verdicts stamped in the same instant must resolve to the
+      // LATEST-inserted row (uuidv7 text order) — otherwise the replay picks an arbitrary
+      // reviewer, logs the wrong note and drops the deciding verdict's. Newest first also
+      // keeps the LIMIT window on the freshest wedges.
+      .orderBy(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}) desc`, desc(taskReviews.id))
+      .limit(DECIDED_ROUND_SCAN_LIMIT)
+  );
 }
 
 let decidedRoundSweepInFlight = false;
@@ -1709,9 +1715,13 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
       const fresh = await decidedRoundScan(db, cutoff, candidate.taskId);
       const row = fresh[0];
       if (!row || row.round !== candidate.round || row.reviewerId !== candidate.reviewerId) continue;
+      // the reviewer may have been DELETED between the scan and the replay: the note's
+      // author FK would then throw inside the settle's log. Resolve once — a dead author
+      // becomes null (the deleted-reviewer arm of the same heal).
+      const liveReviewerId = candidate.reviewerId ? ((await liveReviewers([candidate.reviewerId]))[0] ?? null) : null;
       const { outcome } = await settleRound(
         candidate.taskId,
-        candidate.reviewerId,
+        liveReviewerId,
         candidate.status as ReviewVerdict,
         candidate.note ?? '',
         candidate.source === 'ai' ? 'ai' : 'human',
