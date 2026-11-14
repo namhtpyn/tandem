@@ -1671,12 +1671,13 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
           lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
           // no PENDING row at all in the current round — a void row is another arm's job
           sql`not exists (select 1 from task_reviews p where p.task_id = ${tasks.id} and p.status = 'PENDING' and p.round = ${taskReviews.round})`,
-          // REFERRAL IN FLIGHT (#472 r6): escalateReview flips the escalator's row to
-          // ESCALATED and inserts the replacement's row in SEPARATE statements, so a crash
-          // between them leaves a round with no PENDING row that still OWES the target's
-          // vote. settleRound treats ESCALATED as a non-vote, so replaying here would settle
-          // unanimity without it — never replay a round carrying a referral.
-          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED')`,
+          // REFERRAL IN FLIGHT (#472 r6, refined #474): an ESCALATED row whose recorded
+          // target has NO row in the round leaves the round OWING that vote —
+          // settleRound treats ESCALATED as a non-vote, so replaying here would settle
+          // unanimity without it. The term keys on the RECORDED target: a tombstone (no
+          // target recorded — pre-#474 data or a deleted target — or the target's row
+          // present) is a non-vote audit row and never blocks the heal.
+          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED' and e.referral_target_id is not null and not exists (select 1 from task_reviews t2 where t2.task_id = e.task_id and t2.round = e.round and t2.reviewer_id = e.referral_target_id))`,
           // the #430 owner record: an OWNER status write newer than the round's newest verdict
           sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
         ),
@@ -1747,6 +1748,196 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
       }
     } catch (e) {
       warnDecidedRound(`decided-round heal: could not settle task ${candidate.taskId}:`, e);
+    }
+  }
+  return healed;
+}
+
+/** REFERRAL SATISFACTION (#474): a round OWES the vote of every ESCALATED row whose
+ *  recorded target (referral_target_id — persisted by the flip's OWN statement) has no
+ *  row in that round. A tombstone — an escalated row with NO recorded target (pre-#474
+ *  data, or a target the FK nulled on user delete) or one whose target's row exists — is
+ *  a NON-VOTE audit row and owes nothing. settleRound refuses the end-of-round matrix
+ *  while anything is owed (the verdict stands, the round waits for the target); the 5s
+ *  escalation-handoff heal below re-fires the referral. */
+export function referralOwesVote(
+  rows: Array<{ status: string; reviewerId: string | null; referralTargetId?: string | null }>,
+): boolean {
+  const onRound = new Set(rows.map((r) => r.reviewerId).filter((id): id is string => id !== null));
+  return rows.some(
+    (r) => r.status === REVIEW_STATUS.ESCALATED && r.referralTargetId != null && !onRound.has(r.referralTargetId),
+  );
+}
+
+export const ESCALATION_HANDOFF_GRACE_MS = 60_000;
+export const ESCALATION_HANDOFF_SCAN_LIMIT = 20;
+export const escalationHandoffWarnState = { lastAt: 0 };
+const ESCALATION_HANDOFF_WARN_INTERVAL_MS = 5 * 60_000;
+
+function warnEscalationHandoff(msg: string, e: unknown) {
+  const now = Date.now();
+  if (now - escalationHandoffWarnState.lastAt < ESCALATION_HANDOFF_WARN_INTERVAL_MS) return;
+  escalationHandoffWarnState.lastAt = now;
+  log.warn(msg, e instanceof Error ? e.message : e);
+}
+
+export type EscalationHandoffCandidate = {
+  taskId: string;
+  round: number;
+  reviewerId: string | null;
+  referralTargetId: string | null;
+  note: string | null;
+  decidedAt: Date | null;
+  /** the task row's stamp + status at scan time — the sweep pins nothing to them (it
+   *  never flips the task): the decision-time re-read repeats the scan instead */
+  updatedAt: Date;
+  taskStatus: string;
+};
+
+/** ESCALATION-HANDOFF HEAL (#474): the referral handoff writes the ESCALATED row, the
+ *  roster, the replacement's row, the obligations and the activity in SEPARATE
+ *  statements; a crash between them strands the round mid-handoff. The flip's own
+ *  statement now persists the target (referral_target_id), so the intent survives every
+ *  later crash; this scan finds the rows whose intent was never REDEEMED — the recorded
+ *  target has no row in the current round. A round that merely carries a tombstone
+ *  (no recorded target, or the target's row exists) is never a candidate.
+ *
+ *  Discriminators:
+ *  - review-flow-owned (same predicate as every other review sweep: in_review category
+ *    or a paused gating auto-block whose recorded origin resolves to in_review, #419);
+ *  - CURRENT round only, ESCALATED, reviewer + recorded target non-NULL (a NULL
+ *    reviewer is removal debris; a NULL target proves nothing — pre-#474 data);
+ *  - the escalation is older than ESCALATION_HANDOFF_GRACE_MS (a live handoff lands in
+ *    milliseconds, so the grace never races the request that is still writing);
+ *  - NO OWNER STATUS WRITE newer than the escalation (#430): the `status: …` activity
+ *    body with its 1:1 STATUS payload — a manual move after the crash wins and excludes
+ *    the heal. No legal manual write can REMOVE a review row, so the shape itself is
+ *    machine-only.
+ *  Newest escalation first, one task per loop: a chain A→B→C leaves A's target B with a
+ *  row (A satisfied) and only the last handoff can be unredeemed. */
+export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: string) {
+  const currentRound = sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${tasks.id})`;
+  return asDb(ex)
+    .select({
+      taskId: taskReviews.taskId,
+      round: taskReviews.round,
+      reviewerId: taskReviews.reviewerId,
+      referralTargetId: taskReviews.referralTargetId,
+      note: taskReviews.note,
+      decidedAt: taskReviews.decidedAt,
+      updatedAt: tasks.updatedAt,
+      taskStatus: tasks.status,
+    })
+    .from(taskReviews)
+    .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .where(
+      and(
+        reviewFlowOwnsTaskSql(),
+        taskId ? eq(tasks.id, taskId) : undefined,
+        eq(taskReviews.status, REVIEW_STATUS.ESCALATED),
+        isNotNull(taskReviews.referralTargetId),
+        isNotNull(taskReviews.reviewerId),
+        sql`${taskReviews.round} = ${currentRound}`,
+        lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
+        // UNREDEEMED: the recorded target has no row in the round (the round×reviewer
+        // unique index keeps a re-insert idempotent — a duplicate fails, never doubles)
+        sql`not exists (select 1 from task_reviews t2 where t2.task_id = ${taskReviews.taskId} and t2.round = ${taskReviews.round} and t2.reviewer_id = ${taskReviews.referralTargetId})`,
+        // the #430 owner record, relative to the escalation (not the round's verdicts:
+        // a lost handoff may have no verdict at all)
+        sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}))`,
+      ),
+    )
+    .orderBy(desc(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`))
+    .limit(ESCALATION_HANDOFF_SCAN_LIMIT);
+}
+
+let escalationHandoffSweepInFlight = false;
+
+export async function sweepEscalationHandoffs(): Promise<number> {
+  // SINGLE-FLIGHT: a slow pass can overlap the next 5s tick; a concurrent pass would
+  // replay the same referral (the unique index would reject the duplicate row, but the
+  // roster/obligation writes would still double) — one pass at a time.
+  if (escalationHandoffSweepInFlight) return 0;
+  escalationHandoffSweepInFlight = true;
+  try {
+    return await sweepEscalationHandoffsInner();
+  } catch (e) {
+    warnEscalationHandoff('escalation-handoff sweep failed:', e);
+    return 0;
+  } finally {
+    escalationHandoffSweepInFlight = false;
+  }
+}
+
+async function sweepEscalationHandoffsInner(): Promise<number> {
+  const cutoff = new Date(Date.now() - ESCALATION_HANDOFF_GRACE_MS);
+  const candidates = await escalationHandoffScan(db, cutoff);
+  const attempted = new Set<string>();
+  let healed = 0;
+  for (const candidate of candidates) {
+    // one referral per task per pass: the newest unredeemed escalation is the only one
+    // a healthy round can carry (an older referral's target has its own row). The scan
+    // guarantees both ids (SQL NOT NULL terms); narrow them for the replay.
+    if (!candidate.reviewerId || !candidate.referralTargetId) continue;
+    if (attempted.has(candidate.taskId)) continue;
+    attempted.add(candidate.taskId);
+    try {
+      // DECISION-TIME RE-READ: the scan→replay window is not atomic. A handoff that
+      // completed, an owner move (its `status: …` record) or another tick's heal makes
+      // the fresh scan empty; the row identity must still match the candidate.
+      const fresh = (await escalationHandoffScan(db, cutoff, candidate.taskId))[0];
+      if (
+        !fresh ||
+        !fresh.reviewerId ||
+        !fresh.referralTargetId ||
+        fresh.round !== candidate.round ||
+        fresh.reviewerId !== candidate.reviewerId ||
+        fresh.referralTargetId !== candidate.referralTargetId
+      )
+        continue;
+      const targetId = fresh.referralTargetId;
+      const escalatorId = fresh.reviewerId;
+      // A target deleted between the scan and the replay owes nothing: the FK nulls the
+      // column at delete time, but the window is real — resolve liveness before minting.
+      if ((await liveReviewers([targetId])).length === 0) continue;
+      const target = await db.query.user.findFirst({ columns: { name: true }, where: { id: { eq: targetId } } });
+      if (!target) continue;
+      const task = (await db.select({ reviewers: tasks.reviewers }).from(tasks).where(eq(tasks.id, fresh.taskId)))[0];
+      if (!task) continue;
+      // ROSTER FIRST: the roster write is idempotent (filter + dedupe append), so a crash
+      // between it and the row insert leaves the next tick able to re-run the replay;
+      // the reverse order would leave a roster the scan can no longer see as unredeemed.
+      const nextRoster = [...new Set([...task.reviewers.filter((r) => r !== escalatorId), targetId])];
+      await db.update(tasks).set({ reviewers: nextRoster, updatedAt: new Date() }).where(eq(tasks.id, fresh.taskId));
+      await db.insert(taskReviews).values({
+        id: uuidv7(),
+        taskId: fresh.taskId,
+        reviewerId: targetId,
+        round: fresh.round,
+        status: REVIEW_STATUS.PENDING,
+      });
+      const { why } = parseEscalationNote(fresh.note ?? '');
+      await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId).catch(() => {});
+      await spawnObligation(fresh.taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date());
+      await logActivity(
+        fresh.taskId,
+        ACTIVITY_KIND.STATUS,
+        escalatorId,
+        `review escalated to ${target.name}${why ? ` — ${why}` : ''}`,
+        { escalated: true, from: escalatorId, to: targetId, round: fresh.round, recovered: true },
+      );
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      // a settle that landed inside this replay window owns the task: tear the mint down
+      // (never dispatch into a terminal task) — the same self-heal the live path runs
+      if (await selfHealEscalationIfSettled(fresh.taskId, task.reviewers)) continue;
+      await dispatchAiReviewTurns(fresh.taskId, undefined, { targetReviewerId: targetId });
+      healed += 1;
+      log.info(
+        `escalation-handoff heal: re-fired the referral of round ${fresh.round} on task ${fresh.taskId} (target ${targetId})`,
+      );
+    } catch (e) {
+      warnEscalationHandoff(`escalation-handoff heal: could not re-fire task ${candidate.taskId}:`, e);
     }
   }
   return healed;
@@ -2154,6 +2345,32 @@ async function logVerdict(
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note, meta, db, {
     thread: source !== 'ai',
   });
+}
+
+/** a verdict bounded to the round WITHOUT settling it (the pending branch and the #474
+ *  referral-owed guard): its meta names the vote, never a unanimous settle. */
+async function logWaitingVerdict(
+  taskId: string,
+  reviewerId: string | null,
+  verdict: ReviewVerdict,
+  note: string,
+  source: 'human' | 'ai',
+  round: number,
+) {
+  await logVerdict(
+    taskId,
+    reviewerId,
+    note || verdict.toLowerCase(),
+    {
+      [verdict === REVIEW_STATUS.APPROVED
+        ? 'approved'
+        : verdict === REVIEW_STATUS.REJECTED
+          ? 'rejected'
+          : 'changeRequested']: true,
+      round,
+    },
+    source,
+  );
 }
 
 /** the flip's status scope, resolved fresh so the predicate is evaluated in SQL at
@@ -2590,20 +2807,7 @@ async function settleRound(
   if (pending.length > 0) {
     // round still waiting — advance the sequence (lazy mint: the settle path fires
     // the next reviewer's turn; humans just keep their card)
-    await logVerdict(
-      taskId,
-      reviewerId,
-      note || verdict.toLowerCase(),
-      {
-        [verdict === REVIEW_STATUS.APPROVED
-          ? 'approved'
-          : verdict === REVIEW_STATUS.REJECTED
-            ? 'rejected'
-            : 'changeRequested']: true,
-        round,
-      },
-      source,
-    );
+    await logWaitingVerdict(taskId, reviewerId, verdict, note, source, round);
     // LAZY MINT (#402 r6): skip a reviewer whose turn already reached DONE — a mint here
     // would open a later run and mask the settle-replay arm for a crashed settle. The
     // recovery callers keep the fallback, so no round strands.
@@ -2629,6 +2833,18 @@ async function settleRound(
   // waiting_answer; the answer's unblock re-fires the held reviewer)
   if (!replay && (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round)))
     return { outcome: 'parked' };
+
+  // REFERRAL OWED (#474): an ESCALATED row whose recorded target has NO row in this
+  // round is a handoff that crashed before the replacement was minted — the round still
+  // OWES that vote, so the end-of-round matrix must never judge unanimity without it.
+  // The verdict stands on its row (logged like the waiting branch); the 5s
+  // escalation-handoff heal mints the target and only the target's own verdict can
+  // close the round.
+  if (referralOwesVote(roundRows)) {
+    await logWaitingVerdict(taskId, reviewerId, verdict, note, source, round);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    return { outcome: 'waiting' };
+  }
 
   if (allRejected) {
     // #467: sweep + flip + approval cancel are ONE transaction, sweep first — a
@@ -2825,7 +3041,16 @@ export async function escalateReview(
   // mutation, no target row, no obligation — a settled task never gains a reviewer).
   const escalated = await db
     .update(taskReviews)
-    .set({ status: REVIEW_STATUS.ESCALATED, note: body || null, decidedAt: new Date(), source: 'ai' })
+    .set({
+      status: REVIEW_STATUS.ESCALATED,
+      note: body || null,
+      decidedAt: new Date(),
+      source: 'ai',
+      // REFERRAL INTENT (#474): the target is persisted by the SAME statement that wins
+      // the flip, so every later write of the handoff can crash and the 5s heal still
+      // knows WHICH supervisor owes the vote.
+      referralTargetId: targetId,
+    })
     .where(and(eq(taskReviews.id, row.id), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
     .returning({ id: taskReviews.id });
   if (escalated.length === 0) throw new Error('verdict already recorded for this round');

@@ -1,0 +1,2 @@
+ALTER TABLE "task_reviews" ADD COLUMN "referral_target_id" uuid;--> statement-breakpoint
+ALTER TABLE "task_reviews" ADD CONSTRAINT "task_reviews_referral_target_id_user_id_fkey" FOREIGN KEY ("referral_target_id") REFERENCES "user"("id") ON DELETE SET NULL;

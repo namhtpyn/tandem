@@ -570,6 +570,12 @@ export const taskReviews = pgTable(
     note: text('note'),
     /** human click | ai review turn */
     source: text('source'),
+    /** the referral's persisted target (#474): written by the SAME statement that flips
+     *  the row to escalated, so a crash later in the handoff (roster, replacement row,
+     *  obligations, activity are separate statements) can never lose WHICH supervisor
+     *  owes the vote. NULL on non-escalated rows, pre-#474 escalated rows, and when the
+     *  target user is deleted (the FK nulls it — a gone target owes nothing). */
+    referralTargetId: uuid('referral_target_id').references(() => user.id, { onDelete: 'set null' }),
     /** the submitted result this round judges — set at round open; re-armed
      * review turns (answer/unblock) replay it without an activity archive */
     resultBody: text('result_body'),
