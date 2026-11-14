@@ -96,6 +96,14 @@ owner_gap_clause() {
 # crash between the status write and the log could lose it — a missing record there
 # proves nothing. Old images therefore keep the retired verdict-vs-updated_at ordering
 # (maskable by a later write, but never a false alarm); 2.78.24+ uses the owner record.
+# The floor gates the WRITER's atomicity: if a release ever moves the record OUT of
+# setStatus's transaction, RE-DERIVE the floor for that release, never assume it. A
+# per-row deploy-stamp boundary was considered and REJECTED (#438, 2026-11-14) — the
+# pre-floor era is verified closed (the arm emitted `none` on prod under both the
+# 2.78.24 and 2.78.23 SQL at the discriminator's merge). The manual-move surface also
+# rides the employee tier DELIBERATELY: an agent/API-key credential that performs a
+# setStatus transition performs a REAL owner move and mints the same record (no
+# humanProcedure gate — it would break a future agent-driven re-queue).
 OWNER_FLOOR=2.78.24
 owner_floor_met() {
   case "${1:-}" in
