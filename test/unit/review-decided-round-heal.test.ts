@@ -111,6 +111,17 @@ describe('decidedRoundScan (#472 SQL discriminators)', () => {
     expect(staleSettlePin()).toBeUndefined();
   });
 
+  it('never treats a round carrying a referral as decided (#472 r6)', async () => {
+    const { text } = await emitted();
+    expect(text).toContain("e.status = 'escalated'");
+    expect(text).toContain('e.round = ' + '"task_reviews"."round"');
+  });
+
+  it('excludes an owner record written in the same instant (conservative direction)', async () => {
+    const { text } = await emitted();
+    expect(text).toContain('m.created_at >=');
+  });
+
   it('scopes a re-read to one task when pinned (the decision-time re-check)', async () => {
     const { SQL } = await import('bun');
     const { drizzle } = await import('drizzle-orm/bun-sql');

@@ -1671,8 +1671,14 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
           lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
           // no PENDING row at all in the current round — a void row is another arm's job
           sql`not exists (select 1 from task_reviews p where p.task_id = ${tasks.id} and p.status = 'PENDING' and p.round = ${taskReviews.round})`,
+          // REFERRAL IN FLIGHT (#472 r6): escalateReview flips the escalator's row to
+          // ESCALATED and inserts the replacement's row in SEPARATE statements, so a crash
+          // between them leaves a round with no PENDING row that still OWES the target's
+          // vote. settleRound treats ESCALATED as a non-vote, so replaying here would settle
+          // unanimity without it — never replay a round carrying a referral.
+          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED')`,
           // the #430 owner record: an OWNER status write newer than the round's newest verdict
-          sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at > (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
+          sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
         ),
       )
       // TIE-BREAK (#472 r5): two verdicts stamped in the same instant must resolve to the

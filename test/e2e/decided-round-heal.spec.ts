@@ -84,6 +84,7 @@ test.describe('decided-round heal (#472)', () => {
       const rejected = `e2e-decided-rejected-${tag}`; // the all-rejected matrix arm -> cancelled
       const changes = `e2e-decided-changes-${tag}`; // the request-change matrix arm -> back to ready
       const stale = `e2e-decided-stale-${tag}`; // legal: the owner move outranks the CURRENT round's verdict even when an older round holds a later one
+      const escalated = `e2e-decided-escalated-${tag}`; // legal: a referral in flight still owes the target's vote
 
       await seedDecidedTask(sql, heal, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, legal, adminId, { writtenMinutes: 10, decidedSeconds: 300, ownerMoveMinutes: 1 });
@@ -100,6 +101,15 @@ test.describe('decided-round heal (#472)', () => {
         [`rev2-${stale}`, stale, adminId],
       );
       await seedOwnerMove(sql, stale, adminId, 2);
+      // a round carrying an ESCALATED row is NOT decided: the referral's replacement row
+      // may never have landed, so the round still owes a vote — the heal must never settle
+      // unanimity over the remaining (non-vote) rows.
+      await seedDecidedTask(sql, escalated, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
+      await sql.unsafe(
+        `insert into task_reviews (id, task_id, reviewer_id, round, status, note, source, created_at, decided_at)
+         values ($1, $2, null, 1, 'ESCALATED', 'escalated to the lead', 'ai', now() - interval '30 minutes', now() - interval '240 seconds')`,
+        [`rev-esc-${escalated}`, escalated],
+      );
       await seedDecidedTask(sql, changes, adminId, {
         writtenMinutes: 10,
         decidedSeconds: 300,
