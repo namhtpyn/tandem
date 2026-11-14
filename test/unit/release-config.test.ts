@@ -76,9 +76,10 @@ describe('breaking-header release contract', () => {
     for (const { name, opts } of PLUGIN_OPTS) {
       const header = opts.headerPattern as string;
       const breaking = opts.breakingHeaderPattern as string;
-      // the scope character classes must be IDENTICAL strings
-      const headerScope = header.match(/\(\(([^)]*)\)\)\?/);
-      const breakingScope = breaking.match(/\(\(([^)]*)\)\)\?/);
+      // the scope character classes must be IDENTICAL strings: extract the
+      // bracketed class right after the escaped `\(` group opener
+      const headerScope = header.match(/\((\[[^\]]*\])/);
+      const breakingScope = breaking.match(/\((\[[^\]]*\])/);
       expect(headerScope, `${name} headerPattern scope class shape`).not.toBeNull();
       expect(breakingScope, `${name} breakingHeaderPattern scope class shape`).not.toBeNull();
       expect(breakingScope?.[1], `${name} breaking scope class must equal the header scope class`).toBe(
