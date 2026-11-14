@@ -1677,7 +1677,7 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
           // unanimity without it. The term keys on the RECORDED target: a tombstone (no
           // target recorded — pre-#474 data or a deleted target — or the target's row
           // present) is a non-vote audit row and never blocks the heal.
-          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED' and e.referral_target_id is not null and not exists (select 1 from task_reviews t2 where t2.task_id = e.task_id and t2.round = e.round and t2.reviewer_id = e.referral_target_id))`,
+          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED' and e.reviewer_id is not null and e.referral_target_id is not null and not exists (select 1 from task_reviews t2 where t2.task_id = e.task_id and t2.round = e.round and t2.reviewer_id = e.referral_target_id))`,
           // the #430 owner record: an OWNER status write newer than the round's newest verdict
           sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
         ),
@@ -1764,8 +1764,15 @@ export function referralOwesVote(
   rows: Array<{ status: string; reviewerId: string | null; referralTargetId?: string | null }>,
 ): boolean {
   const onRound = new Set(rows.map((r) => r.reviewerId).filter((id): id is string => id !== null));
+  // a NULL reviewer is the user-delete signature: the escalator is gone, so the referral
+  // is un-attributable and un-re-fireable — the removal contract makes it a non-vote
+  // (blocking the round forever would judge it owner-only recovery for a legal delete)
   return rows.some(
-    (r) => r.status === REVIEW_STATUS.ESCALATED && r.referralTargetId != null && !onRound.has(r.referralTargetId),
+    (r) =>
+      r.status === REVIEW_STATUS.ESCALATED &&
+      r.reviewerId !== null &&
+      r.referralTargetId != null &&
+      !onRound.has(r.referralTargetId),
   );
 }
 

@@ -94,6 +94,12 @@ describe('referralOwesVote (#474 satisfaction predicate)', () => {
     expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null)])).toBe(false);
   });
 
+  it('a deleted escalator (FK-nulled reviewer) is removal debris, not an owed referral', () => {
+    // the user delete nulls the reviewer; the referral is un-attributable/un-re-fireable
+    // and the removal contract makes it a non-vote — it must never block a settle
+    expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null, 'b')])).toBe(false);
+  });
+
   it('a normal round owes nothing', () => {
     expect(referralOwesVote([row(REVIEW_STATUS.APPROVED, 'a'), row(REVIEW_STATUS.PENDING, 'b')])).toBe(false);
   });
