@@ -65,7 +65,10 @@ describe('breaking-header release contract', () => {
       const probe = new RegExp(`(?:(?:${opts.breakingHeaderPattern as string})|)`);
       const matches = probe.exec('');
       expect(matches, `${name} pattern must compile`).not.toBeNull();
-      expect(matches?.length, `${name} breakingHeaderPattern must carry type+scope+subject (3 groups + full match)`).toBe(4);
+      expect(
+        matches?.length,
+        `${name} breakingHeaderPattern must carry type+scope+subject (3 groups + full match)`,
+      ).toBe(4);
     }
   });
 
@@ -78,7 +81,9 @@ describe('breaking-header release contract', () => {
       const breakingScope = breaking.match(/\(\(([^)]*)\)\)\?/);
       expect(headerScope, `${name} headerPattern scope class shape`).not.toBeNull();
       expect(breakingScope, `${name} breakingHeaderPattern scope class shape`).not.toBeNull();
-      expect(breakingScope?.[1], `${name} breaking scope class must equal the header scope class`).toBe(headerScope?.[1]);
+      expect(breakingScope?.[1], `${name} breaking scope class must equal the header scope class`).toBe(
+        headerScope?.[1],
+      );
     }
   });
 
