@@ -1656,7 +1656,6 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
       and(
         reviewFlowOwnsTaskSql(),
         taskId ? eq(tasks.id, taskId) : undefined,
-        isNotNull(taskReviews.reviewerId),
         sql`${taskReviews.status} in ${verdicts}`,
         sql`${taskReviews.round} = ${currentRound}`,
         // the newest verdict of the round: the row a lost settle was triggered by
@@ -1687,7 +1686,7 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
   const seen = new Set<string>();
   let healed = 0;
   for (const candidate of candidates) {
-    if (!candidate.reviewerId || seen.has(candidate.taskId)) continue;
+    if (seen.has(candidate.taskId)) continue;
     seen.add(candidate.taskId);
     try {
       // decision-time re-read: an owner move (its `status:` record) or a fresh round can
@@ -2110,7 +2109,7 @@ async function dispatchAiReviewTurnsUnlocked(
  * the verdict (one response per turn, owner ruling 2026-10-29) */
 async function logVerdict(
   taskId: string,
-  reviewerId: string,
+  reviewerId: string | null,
   note: string,
   meta: Record<string, unknown>,
   source: 'human' | 'ai',
@@ -2312,11 +2311,14 @@ async function flipTaskAndSweep(
  * task. Returns false when the task is not waiting_answer (normal settle). */
 async function holdVerdictForWaitingAnswer(
   taskId: string,
-  reviewerId: string,
+  reviewerId: string | null,
   verdict: ReviewVerdict,
   source: 'human' | 'ai',
   round: number,
 ): Promise<boolean> {
+  // a DELETED reviewer (FK-nulled row) can never owe their vote again — the hold's
+  // revert/obligation arms address a live reviewer; the removal heals own that shape.
+  if (!reviewerId) return false;
   const cur = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!cur) return false;
   const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
@@ -2490,7 +2492,7 @@ export async function recordVerdict(
  * still owed. Settles only on the LAST verdict; flips ride the #260 CAS. */
 async function settleRound(
   taskId: string,
-  reviewerId: string,
+  reviewerId: string | null,
   verdict: ReviewVerdict,
   note: string,
   source: 'human' | 'ai',

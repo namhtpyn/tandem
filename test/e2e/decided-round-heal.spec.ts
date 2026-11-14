@@ -16,12 +16,12 @@ const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
 async function seedDecidedTask(
   sql: SQL,
   id: string,
-  reviewerId: string,
+  reviewerId: string | null,
   opts: { writtenMinutes: number; decidedSeconds: number; ownerMoveMinutes?: number; source?: string },
 ) {
   await sql.unsafe(
     `insert into tasks (id, title, status, created_at, updated_at)
-     values ($1, $1, $2, now() - interval '30 minutes', now() - ($3::int * interval '1 minute'))`,
+     values ($1, $1, $2, now(), now() - ($3::int * interval '1 minute'))`,
     [id, IN_REVIEW, opts.writtenMinutes],
   );
   await sql.unsafe(
@@ -68,12 +68,18 @@ test.describe('decided-round heal (#472)', () => {
       const heal = `e2e-decided-heal-${tag}`; // machine shape: verdict 5 min old, no owner move
       const legal = `e2e-decided-legal-${tag}`; // #430 legal re-queue: the owner move is newer than the verdict
       const fresh = `e2e-decided-fresh-${tag}`; // inside the 60s grace: a settle could still be landing
+      const removed = `e2e-decided-removed-${tag}`; // the deciding reviewer was deleted after the crash (FK-nulled row)
 
       await seedDecidedTask(sql, heal, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, legal, adminId, { writtenMinutes: 10, decidedSeconds: 300, ownerMoveMinutes: 1 });
       await seedDecidedTask(sql, fresh, adminId, { writtenMinutes: 10, decidedSeconds: 10 });
+      await seedDecidedTask(sql, removed, null, { writtenMinutes: 10, decidedSeconds: 300 });
 
       expect(await waitForStatus(sql, heal, DONE, 20_000), 'the tick must replay the lost settle to DONE').toBe(true);
+      expect(
+        await waitForStatus(sql, removed, DONE, 20_000),
+        'a decided round whose reviewer was deleted (FK-nulled row) still settles',
+      ).toBe(true);
 
       // the replay is the SAME settle: its verdict note landed exactly once
       const notes = await sql.unsafe(
