@@ -1,3 +1,11 @@
+## [2.78.33](https://github.com/namhtpyn/tandem/compare/v2.78.32...v2.78.33) (2026-11-14)
+
+
+### Bug Fixes
+
+* **release:** breaking-header scope parity — fix(a+b)!: is major, never patch/minor (Fixes [#461](https://github.com/namhtpyn/tandem/issues/461)) ([fd32116](https://github.com/namhtpyn/tandem/commit/fd3211632d5c3784af186e4d203c614722c4c33e))
+* **test:** scope-class extraction regex + oxfmt ([bbecd6a](https://github.com/namhtpyn/tandem/commit/bbecd6aee493b590b995d5f0c40556e10a6fd64b))
+
 ## [2.78.32](https://github.com/namhtpyn/tandem/compare/v2.78.31...v2.78.32) (2026-11-14)
 
 
