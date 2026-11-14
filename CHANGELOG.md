@@ -1,3 +1,16 @@
+## [2.78.36](https://github.com/namhtpyn/tandem/compare/v2.78.35...v2.78.36) (2026-11-14)
+
+
+### Bug Fixes
+
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r1 — settle a decided round whose reviewer was deleted; keep the probe fixtures inside the heal's grace ([4b65bc4](https://github.com/namhtpyn/tandem/commit/4b65bc41400922f4baf41a3ba74b950d4f6c8c76))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r2 — pin the replay flip to the re-read's task stamp, single-flight the sweep, cover the rejected/change arms ([093186e](https://github.com/namhtpyn/tandem/commit/093186e62596acf925533b412c8236eaa2255269))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r3 — the replay never re-opens a vote; pin the stale-settle term and the round binding in tests ([1794326](https://github.com/namhtpyn/tandem/commit/1794326e08c18baa8e4d80cc6db75b3dc220da9b))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r4 — the approved arm honors the replay flag; the pin carries the task status; the grace fixture is time-bounded ([39aec49](https://github.com/namhtpyn/tandem/commit/39aec499d171e1e220c754584f398c3a4d1bba94))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r5 — deterministic verdict tie-break, live-author guard, pin the status term ([581f308](https://github.com/namhtpyn/tandem/commit/581f308731bd9315b19cb6ed8d12e73c9014d2c0))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) r6 — never replay a round carrying a referral; same-instant owner records exclude the heal ([d069534](https://github.com/namhtpyn/tandem/commit/d06953499915f59cbd98b828009fd3c4b6a59a19))
+* **review:** [#472](https://github.com/namhtpyn/tandem/issues/472) replay a decided round's lost settle from its committed verdicts ([c137d03](https://github.com/namhtpyn/tandem/commit/c137d03280d626500391271d9fdcbefbc3ab6e9d))
+
 ## [2.78.35](https://github.com/namhtpyn/tandem/compare/v2.78.34...v2.78.35) (2026-11-14)
 
 
