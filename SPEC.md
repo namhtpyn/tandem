@@ -1074,7 +1074,12 @@ non-positive deltas render no duration.
   carries its move NEWER than the verdict (for every move made since the activity
   store existed), while machine status writes (the gating
   auto-block and auto-unblock, a park, the settle flip) log their own bodies and
-  can never borrow a manual move's shape; a task-row write that is NOT an owner
+  can never borrow a manual move's shape; the manual-move surface rides the
+  employee tier DELIBERATELY — an agent or API-key credential that performs a
+  `tasks.setStatus` transition performs a REAL owner move and mints the same
+  record (any such write is the legal shape by design, so the tier is not
+  human-gated: a `humanProcedure` gate would break a future agent-driven
+  re-queue); a task-row write that is NOT an owner
   status write (the child-restore that lands the task back in review, a
   title/assignee edit) no longer masks the shape either. Free text cannot forge the
   row: the 1:1 activity payload must carry `kind = 'STATUS'` (a note or a human
@@ -1085,7 +1090,15 @@ non-positive deltas render no duration.
   decisive only where the server guarantees every landed move carries one, so an older
   image keeps the retired verdict-vs-write ordering (a crash before the pre-floor
   writer's log could lose the row — maskable, but never a false alarm) and only a
-  2.78.24+ image is judged by the owner record. The body, not
+  2.78.24+ image is judged by the owner record. The floor gates the WRITER's
+  atomicity, not the image for its own sake: if a future release ever changes
+  `tasks.setStatus`'s record placement (the row no longer commits in the same
+  transaction), the floor must be RE-DERIVED for that release, never assumed. A
+  per-row boundary (a deploy stamp recorded on the task row) was considered and
+  rejected (#438, 2026-11-14): the pre-floor era is verified closed — the emitted arm
+  returned `none` on prod under BOTH the 2.78.24 and the 2.78.23 SQL at the
+  discriminator's merge — so the image floor stays the operative gate and the schema
+  cost buys nothing. The body, not
   the author, is the key: `author_id` is ON DELETE SET NULL, so a deleted mover's
   row would read as a machine write. The
   verdict ROW still commits before the flip's conditional task write, so a lost
