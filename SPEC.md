@@ -1165,11 +1165,18 @@ non-positive deltas render no duration.
   last write. That also excludes the flip→supersede window shape (#467: a second
   reviewer's verdict CAS landing between the first verdict's flip and the supersede
   sweep — the late row carries a decided_at past the re-block write while the
-  applied verdict predates it), which a max() test would misread as a re-key. The flip then refuses on
-  the terminal home, the round closes on the verdict row with NO task write, and the
-  task stays blocked — the wedge's in_review branch cannot see it (the origin resolves outside
-  in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown heals
-  read the row as owner-settled. A DIRECT owner settle is excluded by construction:
+  applied verdict predates it), which a max() test would misread as a re-key. The settle flip's write gate takes
+  only an in_review-category status or a paused block whose recorded origin
+  (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
+  terminal home fails every branch, the round closes on the verdict row with NO
+  task write, and the task stays blocked — the wedge's in_review branch cannot see
+  it (the origin resolves outside in_review) and the ORPHAN-HOME arm cannot (the
+  home exists). Why no sweep reaches it: the PRE-block half is read as
+  owner-settled by the teardown heals (`settledByOwner`: a paused row whose
+  `pre_block_status` resolves terminal), and the PARK half is excluded from every
+  review sweep by the park term in the flow-ownership predicate
+  (`park_from_status IS NULL`) — the parked round's heals fire only through a park
+  restore, which resolves the still-EXISTING terminal row and never a review path. A DIRECT owner settle is excluded by construction:
   `setStatus` moves the task out of the paused category and clears both machine
   origins in the same statement, so it leaves no origin behind; the residual
   owner-settle shape is the machine #423 re-block above, excluded by the MIN
@@ -1178,13 +1185,18 @@ non-positive deltas render no duration.
   under a blocked task). The current-round clause (no PENDING row in `max(round)`,
   at least one verdict row) and the MIN ordering above apply as specified; below
   the `2.78.24` record floor the WEDGE falls back to its legacy test (#430) — this
-  arm keeps the simpler test everywhere, with the mask tracked as #466. The resolve test is PER COLUMN, VERSION-independent like the
+  arm keeps the simpler test everywhere, with the mask tracked as #466. A
+  DECLARED BOUNDARY of the MIN ordering: a MULTI-REVIEWER round split across the
+  block write (one vote before it, the settling vote after) has min(verdict) older
+  than the write and is OUT of this arm — the split-timing class needs a
+  between-writes record discriminator (same infra as #466) and is tracked as #468.
+  The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
   a stale origin on a NON-paused row is the EGRESS-ORIGIN arm's shape (#427), never
-  this one's. The live pass carries the arm's emit + previous-pass presence confirm
-  - id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped file: a SQL
-    arm with no pass consumer is a detector that never runs).
+  this one's. The live pass carries the arm's emit + previous-pass presence
+  confirm + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped
+  file: a SQL arm with no pass consumer is a detector that never runs).
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),

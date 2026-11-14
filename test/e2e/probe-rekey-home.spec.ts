@@ -17,14 +17,16 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
 // ORPHAN-HOME arm cannot (the home exists), and the teardown heals read it as
 // owner-settled. A terminal-by-owner shape is excluded BY CONSTRUCTION, not by a category
-// term — a legal owner settle leaves the paused category and clears both origins in the
-// same statement, so a row still carrying an origin cannot be owner-settled — which is why
-// the arm fires on a resolved done/cancelled home too (that IS the counterexample:
-// in_review -> done under a blocked task). Neither origin may resolve into review (a
-// resolvable in-review home still lets the flip land: the orphan arm's exclusion,
-// mirrored), and the wedge's current-round clause plus the verdict-vs-write ordering (the
-// newest verdict of max(round) NEWER than the task's last write) apply as everywhere
-// else. The arm is VERSION-independent (no image floor — a pre-guard image produces the
+// term — a DIRECT owner settle leaves the paused category and clears both origins in the
+// same statement; the residual owner-settle shape is the machine #423 re-block, excluded
+// by the ordering. That is why the arm fires on a resolved done/cancelled home when no
+// verdict predates the block write (the counterexample: in_review -> done under a blocked
+// task). Neither origin may resolve into review (a resolvable in-review home still lets
+// the flip land: the orphan arm's exclusion, mirrored), and the wedge's current-round
+// clause plus a MIN ordering — EVERY verdict of max(round) NEWER than the task's last
+// write, not just the newest — apply: the MIN test excludes the #423 re-block and the
+// #467 flip->supersede window a max() test misreads, and it is the reason the lateVerdict
+// seed below must stay silent. The arm is VERSION-independent (no image floor — a pre-guard image produces the
 // strand too) but COLUMN-gated exactly like the orphan arm: it reads BOTH origin columns,
 // and on a one-column image it would kill the whole UNION, so it must vanish there. It is
 // pinned on the SQL that ships: the probe emits it (--strand-sql) and this spec executes

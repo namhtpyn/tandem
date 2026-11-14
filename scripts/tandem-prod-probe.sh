@@ -226,9 +226,12 @@ strand_sql() {
   # flip->supersede window shape (a late reviewer CAS landing after the re-block, #467),
   # which a MAX test would misread as a re-key. A direct owner settle clears both
   # origins in the same statement, so the residual owner-settle shape is that machine
-  # re-block, excluded by the MIN ordering. Current-round clause + verdict-vs-write
-  # ordering mirrored from the orphan arm (the wedge's owner-status discriminator is
-  # #430's; this arm keeps the simpler test, mask #466). Per-column resolve,
+  # re-block, excluded by the MIN ordering. The current-round clause is mirrored from
+  # the orphan arm; the ordering is STRONGER than the orphan's max() (min > write) for
+  # the reasons above — a multi-reviewer round split across the block write (min < write)
+  # is a DECLARED boundary of this arm, tracked as #468. Mask below the addressable
+  # fix: #466 (the wedge's owner-status discriminator is #430's; this arm keeps the
+  # simpler stamp test). Per-column resolve,
   # VERSION-independent (a pre-guard image produces the strand too), COLUMN-gated like
   # every arm that reads park_from_status (#325).
   rekey=""
@@ -367,6 +370,8 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$REKEY_ON" | grep -qF "(t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))" || { echo "selfcheck fail: rekey resolve clause (per column)"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status))" || { echo "selfcheck fail: rekey in-review-resolver exclusion"; exit 1; }
   [ "$(printf '%s' "$REKEY_ON" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey write discriminator"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: rekey ordering is not the MIN test"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "max(coalesce(r.decided_at" && { echo "selfcheck fail: rekey ordering fell back to max"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" || { echo "selfcheck fail: rekey verdict scope"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "r.status = 'PENDING' and r.round = (select max(r3.round)" || { echo "selfcheck fail: rekey live-round clause"; exit 1; }
   # the rekey arm rides the same gates as the orphan arm: present at the pre-guard
