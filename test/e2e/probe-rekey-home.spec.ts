@@ -47,15 +47,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
     expect(strandSql).toContain("select 'rekeyhome'");
     const oneColumn = await $`bash ${script} --strand-sql 2.78.19 1`.nothrow().quiet();
     expect(oneColumn.exitCode, oneColumn.stderr.toString()).toBe(0);
-    expect(oneColumn.stdout.toString(), 'the arm must vanish without the park column').not.toContain(
-      'rekeyhome',
-    );
+    expect(oneColumn.stdout.toString(), 'the arm must vanish without the park column').not.toContain('rekeyhome');
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
-      const adminId = String(
-        (await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '',
-      );
+      const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
       expect(adminId, 'the e2e boot admin must exist for a live-reviewer seed').not.toBe('');
 
       // seeded homes must exist (the re-key test is a RESOLVE, never a dangle — the
@@ -146,12 +142,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(arm, 'the emitted SQL must carry the re-keyed-home arm').toBeTruthy();
       const fired = new Set(String(arm?.[1] ?? 'none').split(','));
 
-      expect(fired, 'a block home re-keyed in_review -> done over a decided round is the strand').toContain(
-        rekeyDone,
-      );
-      expect(fired, 'a park home re-keyed to a working category strands the same way').toContain(
-        rekeyDoing,
-      );
+      expect(fired, 'a block home re-keyed in_review -> done over a decided round is the strand').toContain(rekeyDone);
+      expect(fired, 'a park home re-keyed to a working category strands the same way').toContain(rekeyDoing);
       expect(
         fired,
         'a cancelled-category home is the same wedge: no legal owner settle can leave an origin behind',
@@ -167,10 +159,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         fired,
         'a verdict OLDER than the last write is a gating block over an already-decided round — legal',
       ).not.toContain(legalRequeue);
-      expect(
-        fired,
-        'a legal owner re-queue leaves the paused category over the decided round',
-      ).not.toContain(requeueReview);
+      expect(fired, 'a legal owner re-queue leaves the paused category over the decided round').not.toContain(
+        requeueReview,
+      );
       expect(fired, 'a PENDING row keeps the round open').not.toContain(liveRound);
       expect(fired, 'no verdict row means no decided round').not.toContain(tornDown);
       expect(fired, 'a hand-made block writes no origin').not.toContain(manualBlock);
