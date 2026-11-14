@@ -23,7 +23,7 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 }));
 vi.mock('../../server/domains/kernel/kernel', () => ({ publishChange: async () => {} }));
 
-const { decidedRoundScan, DECIDED_ROUND_GRACE_MS, DECIDED_ROUND_SCAN_LIMIT } =
+const { decidedRoundScan, staleSettlePin, DECIDED_ROUND_GRACE_MS, DECIDED_ROUND_SCAN_LIMIT } =
   await import('../../server/domains/tasks/review.service');
 
 async function emitted() {
@@ -74,6 +74,32 @@ describe('decidedRoundScan (#472 SQL discriminators)', () => {
     expect(text).toContain("a.payload->>'kind' = 'status'");
     expect(text).toContain('m.created_at >');
     expect(text).toContain('task_message_activities');
+  });
+
+  it('projects the task stamp the replay flip is pinned to', async () => {
+    const { text } = await emitted();
+    expect(text).toContain('"tasks"."updated_at"');
+  });
+
+  it('renders the #292-r2 stale-settle pin at millisecond precision, and none without a pin', async () => {
+    const { SQL } = await import('bun');
+    const { drizzle } = await import('drizzle-orm/bun-sql');
+    const { tasks } = await import('../../server/db/schema');
+    const client = new SQL('postgresql://probe:***@127.0.0.1:1/probe');
+    const d = drizzle(client as never) as never as {
+      select: (p: unknown) => {
+        from: (t: unknown) => { where: (w: unknown) => { toSQL: () => { sql: string; params: unknown[] } } };
+      };
+    };
+    const at = new Date('2026-11-14T12:00:00.123Z');
+    const q = d
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(staleSettlePin({ updatedAt: at }))
+      .toSQL();
+    expect(q.sql.toLowerCase()).toContain("date_trunc('milliseconds'");
+    expect(q.params.some((p) => p instanceof Date && p.getTime() === at.getTime())).toBe(true);
+    expect(staleSettlePin()).toBeUndefined();
   });
 
   it('scopes a re-read to one task when pinned (the decision-time re-check)', async () => {

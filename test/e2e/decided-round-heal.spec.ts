@@ -15,6 +15,19 @@ const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
 const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
 const CANCELLED = '01a14743-43f5-759d-a00e-b0f2a5a04f4c';
 
+async function seedOwnerMove(sql: SQL, taskId: string, authorId: string, minutesAgo: number) {
+  const messageId = `msg-${taskId}`;
+  await sql.unsafe(
+    `insert into task_messages (id, task_id, author_id, body, created_at)
+     values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))`,
+    [messageId, taskId, authorId, 'status: doing → in-review', minutesAgo],
+  );
+  await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+    messageId,
+    { kind: 'STATUS' },
+  ]);
+}
+
 async function seedDecidedTask(
   sql: SQL,
   id: string,
@@ -37,17 +50,8 @@ async function seedDecidedTask(
      values ($1, $2, $3, 1, $6, 'looks good', $5, now() - interval '30 minutes', now() - ($4::int * interval '1 second'))`,
     [`rev-${id}`, id, reviewerId, opts.decidedSeconds, opts.source ?? 'human', opts.verdict ?? 'APPROVED'],
   );
-  if (opts.ownerMoveMinutes !== undefined) {
-    const messageId = `msg-${id}`;
-    await sql.unsafe(
-      `insert into task_messages (id, task_id, author_id, body, created_at)
-       values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))`,
-      [messageId, id, reviewerId, 'status: doing → in-review', opts.ownerMoveMinutes],
-    );
-    await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
-      messageId,
-      { kind: 'STATUS' },
-    ]);
+  if (opts.ownerMoveMinutes !== undefined && reviewerId) {
+    await seedOwnerMove(sql, id, reviewerId, opts.ownerMoveMinutes);
   }
 }
 
@@ -79,12 +83,23 @@ test.describe('decided-round heal (#472)', () => {
       const removed = `e2e-decided-removed-${tag}`; // the deciding reviewer was deleted after the crash (FK-nulled row)
       const rejected = `e2e-decided-rejected-${tag}`; // the all-rejected matrix arm -> cancelled
       const changes = `e2e-decided-changes-${tag}`; // the request-change matrix arm -> back to ready
+      const stale = `e2e-decided-stale-${tag}`; // legal: the owner move outranks the CURRENT round's verdict even when an older round holds a later one
 
       await seedDecidedTask(sql, heal, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, legal, adminId, { writtenMinutes: 10, decidedSeconds: 300, ownerMoveMinutes: 1 });
       await seedDecidedTask(sql, fresh, adminId, { writtenMinutes: 10, decidedSeconds: 10 });
       await seedDecidedTask(sql, removed, null, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, rejected, adminId, { writtenMinutes: 10, decidedSeconds: 300, verdict: 'REJECTED' });
+      // round 1 is the OLD round (verdict 60s ago); round 2 is CURRENT (verdict 300s ago);
+      // the owner move (120s ago) is newer than the current round's verdict but OLDER than
+      // the old round's — only the current-round term in the #430 clause keeps this legal.
+      await seedDecidedTask(sql, stale, adminId, { writtenMinutes: 10, decidedSeconds: 60 });
+      await sql.unsafe(
+        `insert into task_reviews (id, task_id, reviewer_id, round, status, note, source, created_at, decided_at)
+         values ($1, $2, $3, 2, 'APPROVED', 'round two', 'human', now() - interval '30 minutes', now() - interval '300 seconds')`,
+        [`rev2-${stale}`, stale, adminId],
+      );
+      await seedOwnerMove(sql, stale, adminId, 2);
       await seedDecidedTask(sql, changes, adminId, {
         writtenMinutes: 10,
         decidedSeconds: 300,
@@ -120,6 +135,10 @@ test.describe('decided-round heal (#472)', () => {
       expect(await statusOf(sql, legal), 'a legal manual re-queue over a decided round is not a machine wedge').toBe(
         IN_REVIEW,
       );
+      expect(
+        await statusOf(sql, stale),
+        "the owner record is judged against the CURRENT round verdict — an older round's later verdict cannot unmask a legal move",
+      ).toBe(IN_REVIEW);
       expect(await statusOf(sql, fresh), 'a verdict inside the 60s grace may still be settling — never replayed').toBe(
         IN_REVIEW,
       );

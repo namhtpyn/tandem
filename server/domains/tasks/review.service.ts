@@ -1714,9 +1714,12 @@ async function sweepDecidedRoundSettlesInner(): Promise<number> {
         candidate.note ?? '',
         candidate.source === 'ai' ? 'ai' : 'human',
         candidate.round,
-        // STALE-SETTLE PIN (#292 r2): the flip must miss if ANY task write landed after
-        // the re-read — a manual re-queue inside that window wins, the heal retries next tick.
+        // STALE-SETTLE PIN (#292 r2): the flip must miss if any STAMPED task write landed
+        // after the re-read — a manual re-queue inside that window wins, the heal retries
+        // next tick. REPLAY: this must never re-open or re-mint a vote on a task the owner
+        // moved (the waiting-answer hold is a fresh-verdict behavior, not a replay one).
         { updatedAt: row.updatedAt },
+        true,
       );
       if (outcome === 'done' || outcome === 'returned' || outcome === 'cancelled') {
         healed += 1;
@@ -2158,6 +2161,14 @@ async function flipScopeIds(d: DbExecutor = db): Promise<{ inReview: string[]; p
  * (terminal, waiting_answer and a plain re-queue/block alike); its verdict becomes a
  * recorded-but-superseded audit row (returns false). #288: the refused waiting_answer flip is re-checked by the hold
  * arm below, which parks instead of superseding. */
+/** #292-r2 STALE-SETTLE PIN: the flip's CAS must miss when the task row was stamped
+ *  after the read that decided the flip. MILLISECOND PRECISION: Postgres stores µs and a
+ *  JS Date does not, so a raw equality misses every row written by SQL `now()` (the pin
+ *  would be a permanent no-op there) — truncate the column to the Date's precision. */
+export function staleSettlePin(pin?: { updatedAt: Date }) {
+  return pin ? sql`date_trunc('milliseconds', ${tasks.updatedAt}) = ${pin.updatedAt}` : undefined;
+}
+
 async function flipTaskRow(d: typeof db, taskId: string, status: string, pin?: { updatedAt: Date }): Promise<boolean> {
   // the machine-block carve-out must prove the ROUND's home: the recorded origin has to
   // RESOLVE to an in-review-category id (a bare non-null origin is not enough — gating
@@ -2190,10 +2201,8 @@ async function flipTaskRow(d: typeof db, taskId: string, status: string, pin?: {
         // STALE-SETTLE PIN: the replay runs after a read, and the degraded retry after an
         // UNKNOWN tx outcome, so a status-only CAS could re-settle a task the owner
         // legally reopened in the meantime (#292 r2). Pinning updatedAt makes that write
-        // miss. MILLISECOND-PRECISION: Postgres timestamps carry µs, a JS Date does not,
-        // so a raw equality misses every row written by SQL `now()` (the pin would be a
-        // permanent no-op there) — truncate the column to the Date's precision.
-        pin ? sql`date_trunc('milliseconds', ${tasks.updatedAt}) = ${pin.updatedAt}` : undefined,
+        // miss (see staleSettlePin for the precision term).
+        staleSettlePin(pin),
         or(
           inArray(tasks.status, inReview),
           and(
@@ -2509,6 +2518,23 @@ export async function recordVerdict(
   return settleRound(taskId, reviewerId, verdict, note, source, round);
 }
 
+/** a settle's CAS miss: a FRESH verdict parks on waiting_answer (the answer owns the
+ *  flow and the reviewer owes their vote again); a REPLAY never re-opens or re-mints a
+ *  vote — the task moved, so the newer shape wins and the round stays closed. */
+async function settleMissed(
+  taskId: string,
+  reviewerId: string | null,
+  verdict: ReviewVerdict,
+  source: 'human' | 'ai',
+  round: number,
+  replay?: boolean,
+): Promise<{ outcome: 'parked' | 'superseded' }> {
+  if (replay) return { outcome: 'superseded' };
+  return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
+    ? { outcome: 'parked' }
+    : { outcome: 'superseded' };
+}
+
 /** END-OF-ROUND MATRIX (recordVerdict's tail): read the round fresh — the verdict
  * already landed, so any PENDING row here belongs to another reviewer whose turn is
  * still owed. Settles only on the LAST verdict; flips ride the #260 CAS. */
@@ -2520,6 +2546,9 @@ async function settleRound(
   source: 'human' | 'ai',
   round: number,
   pin?: { updatedAt: Date },
+  /** REPLAY (#472): skip the waiting-answer hold — a replayed verdict must never re-open
+   *  or re-mint a vote; a task the owner moved out of review is simply superseded. */
+  replay?: boolean,
 ): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' | 'parked' }> {
   const roundRows = await db
     .select()
@@ -2566,7 +2595,8 @@ async function settleRound(
   // WAITING-ANSWER HOLD (#288): waiting_answer owns the flow — a settling verdict
   // parks the round instead of flipping the task (obligation intact, status stays
   // waiting_answer; the answer's unblock re-fires the held reviewer)
-  if (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round)) return { outcome: 'parked' };
+  if (!replay && (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round)))
+    return { outcome: 'parked' };
 
   if (allRejected) {
     // #467: sweep + flip + approval cancel are ONE transaction, sweep first — a
@@ -2579,9 +2609,7 @@ async function settleRound(
         pin,
       ))
     )
-      return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
-        ? { outcome: 'parked' }
-        : { outcome: 'superseded' };
+      return settleMissed(taskId, reviewerId, verdict, source, round, replay);
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
@@ -2612,9 +2640,7 @@ async function settleRound(
   // any request_change — or a split approve/reject — bounces the task to the
   // assignee; the verdict notes already sit on the thread and ride the next brief
   if (!(await flipTask(taskId, TODO_STATUS, pin)))
-    return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
-      ? { outcome: 'parked' }
-      : { outcome: 'superseded' };
+    return settleMissed(taskId, reviewerId, verdict, source, round, replay);
   await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await logVerdict(taskId, reviewerId, note || 'changes requested', { changeRequested: true, round }, source);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
