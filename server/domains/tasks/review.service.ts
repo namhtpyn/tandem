@@ -565,8 +565,9 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   if (rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null)) return false; // a live voter owns the round
   // REFERRAL OWED (#474): the removal matrix must not judge unanimity while the round
   // owes a recorded referral's vote — the handoff heal mints the target within its grace
-  // and the round then decides WITH it. A deleted ESCALATOR is removal debris (the
-  // user-delete FK nulls the reviewer) and never owed, so a removal still settles.
+  // and the round then decides WITH it. A deleted ESCALATOR does NOT waive it either: the
+  // FK nulls only the reviewer id, the recorded target still owes the vote (the heal
+  // re-fires with a NULL author), so this arm waits too.
   if (referralOwesVote(rows)) return false;
   const live = rows.filter(
     (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
