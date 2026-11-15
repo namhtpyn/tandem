@@ -41,7 +41,9 @@ describe('escalationHandoffScan (#474 SQL discriminators)', () => {
     expect(text).toContain(`"task_reviews"."status" =`);
     expect(params).toContain(REVIEW_STATUS.ESCALATED);
     expect(text).toContain('"task_reviews"."referral_target_id" is not null');
-    expect(text).toContain('"task_reviews"."reviewer_id" is not null');
+    // a FK-nulled reviewer (user delete) is still a candidate: the recorded target owes
+    // the vote and the replay logs a NULL author
+    expect(text).not.toContain('"task_reviews"."reviewer_id" is not null');
     // current round only — an old round's escalation can never be re-fired
     expect(text).toContain('select max(r3.round) from task_reviews r3 where r3.task_id = "tasks"."id"');
     expect(text).toContain('"task_reviews"."round" =');
@@ -94,10 +96,12 @@ describe('referralOwesVote (#474 satisfaction predicate)', () => {
     expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null)])).toBe(false);
   });
 
-  it('a deleted escalator (FK-nulled reviewer) is removal debris, not an owed referral', () => {
-    // the user delete nulls the reviewer; the referral is un-attributable/un-re-fireable
-    // and the removal contract makes it a non-vote — it must never block a settle
-    expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null, 'b')])).toBe(false);
+  it('a deleted escalator (FK-nulled reviewer) still owes the RECORDED target its vote', () => {
+    // the user delete nulls the escalator's reviewer id; the referral's intent survives,
+    // so the round still owes the target's vote (the replay logs with a NULL author)
+    expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null, 'b')])).toBe(true);
+    // ... and it is satisfied once that target has a row
+    expect(referralOwesVote([row(REVIEW_STATUS.ESCALATED, null, 'b'), row(REVIEW_STATUS.PENDING, 'b')])).toBe(false);
   });
 
   it('a normal round owes nothing', () => {

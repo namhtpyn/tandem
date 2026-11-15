@@ -1682,7 +1682,7 @@ export function decidedRoundScan(ex: DbExecutor, cutoff: Date, taskId?: string) 
           // unanimity without it. The term keys on the RECORDED target: a tombstone (no
           // target recorded — pre-#474 data or a deleted target — or the target's row
           // present) is a non-vote audit row and never blocks the heal.
-          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED' and e.reviewer_id is not null and e.referral_target_id is not null and not exists (select 1 from task_reviews t2 where t2.task_id = e.task_id and t2.round = e.round and t2.reviewer_id = e.referral_target_id))`,
+          sql`not exists (select 1 from task_reviews e where e.task_id = ${tasks.id} and e.round = ${taskReviews.round} and e.status = 'ESCALATED' and e.referral_target_id is not null and not exists (select 1 from task_reviews t2 where t2.task_id = e.task_id and t2.round = e.round and t2.reviewer_id = e.referral_target_id))`,
           // the #430 owner record: an OWNER status write newer than the round's newest verdict
           sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= (select max(coalesce(r5.decided_at, r5.created_at)) from task_reviews r5 where r5.task_id = ${tasks.id} and r5.status in ${verdicts} and r5.round = ${taskReviews.round}))`,
         ),
@@ -1769,15 +1769,11 @@ export function referralOwesVote(
   rows: Array<{ status: string; reviewerId: string | null; referralTargetId?: string | null }>,
 ): boolean {
   const onRound = new Set(rows.map((r) => r.reviewerId).filter((id): id is string => id !== null));
-  // a NULL reviewer is the user-delete signature: the escalator is gone, so the referral
-  // is un-attributable and un-re-fireable — the removal contract makes it a non-vote
-  // (blocking the round forever would judge it owner-only recovery for a legal delete)
+  // the escalator's reviewer may be FK-nulled by a user delete: the referral is STILL
+  // owed (the recorded target never voted) and the heal re-fires it with a NULL author —
+  // a deleted escalator never silently waives the target's vote
   return rows.some(
-    (r) =>
-      r.status === REVIEW_STATUS.ESCALATED &&
-      r.reviewerId !== null &&
-      r.referralTargetId != null &&
-      !onRound.has(r.referralTargetId),
+    (r) => r.status === REVIEW_STATUS.ESCALATED && r.referralTargetId != null && !onRound.has(r.referralTargetId),
   );
 }
 
@@ -1817,8 +1813,10 @@ export type EscalationHandoffCandidate = {
  *  Discriminators:
  *  - review-flow-owned (same predicate as every other review sweep: in_review category
  *    or a paused gating auto-block whose recorded origin resolves to in_review, #419);
- *  - CURRENT round only, ESCALATED, reviewer + recorded target non-NULL (a NULL
- *    reviewer is removal debris; a NULL target proves nothing — pre-#474 data);
+ *  - CURRENT round only, ESCALATED, recorded target non-NULL (a NULL target proves
+ *    nothing — pre-#474 data or a deleted target); a FK-nulled reviewer (user delete) is
+ *    still a candidate — the recorded target owes the vote and the replay logs with a
+ *    NULL author;
  *  - the escalation is older than ESCALATION_HANDOFF_GRACE_MS (a live handoff lands in
  *    milliseconds, so the grace never races the request that is still writing);
  *  - NO OWNER STATUS WRITE newer than the escalation (#430): the `status: …` activity
@@ -1849,7 +1847,6 @@ export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: str
         taskId ? eq(tasks.id, taskId) : undefined,
         eq(taskReviews.status, REVIEW_STATUS.ESCALATED),
         isNotNull(taskReviews.referralTargetId),
-        isNotNull(taskReviews.reviewerId),
         sql`${taskReviews.round} = ${currentRound}`,
         lt(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`, cutoff),
         // UNREDEEMED: the recorded target has no row in the round (the round×reviewer
@@ -1889,9 +1886,10 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
   let healed = 0;
   for (const candidate of candidates) {
     // one referral per task per pass: the newest unredeemed escalation is the only one
-    // a healthy round can carry (an older referral's target has its own row). The scan
-    // guarantees both ids (SQL NOT NULL terms); narrow them for the replay.
-    if (!candidate.reviewerId || !candidate.referralTargetId) continue;
+    // a healthy round can carry (an older referral's target has its own row). The target
+    // is always recorded (SQL NOT NULL); the escalator may be FK-nulled by a user delete
+    // — the referral is still owed and is re-fired with a NULL audit author.
+    if (!candidate.referralTargetId) continue;
     if (attempted.has(candidate.taskId)) continue;
     attempted.add(candidate.taskId);
     try {
@@ -1901,7 +1899,6 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       const fresh = (await escalationHandoffScan(db, cutoff, candidate.taskId))[0];
       if (
         !fresh ||
-        !fresh.reviewerId ||
         !fresh.referralTargetId ||
         fresh.round !== candidate.round ||
         fresh.reviewerId !== candidate.reviewerId ||
@@ -1917,12 +1914,7 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       if (!target) continue;
       const task = (
         await db
-          .select({
-            reviewers: tasks.reviewers,
-            assigneeId: tasks.assigneeId,
-            status: tasks.status,
-            updatedAt: tasks.updatedAt,
-          })
+          .select({ reviewers: tasks.reviewers, assigneeId: tasks.assigneeId })
           .from(tasks)
           .where(eq(tasks.id, fresh.taskId))
       )[0];
@@ -1935,18 +1927,35 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
         continue;
       }
       const nextRoster = [...new Set([...task.reviewers.filter((r) => r !== escalatorId), targetId])];
-      // ONE transaction, roster FIRST: the update takes the task row lock, so a concurrent
-      // status move serializes AFTER this mint (its own teardown then applies) and the
-      // stamp+status CAS makes any task write that already landed WIN — a miss skips the
-      // whole mint and the next tick re-reads. The insert commits atomically with the
-      // handover: never a roster that moved without the vote row.
+      const { why } = parseEscalationNote(fresh.note ?? '');
+      const body = `review escalated to ${target.name}${why ? ` — ${why}` : ''}`;
+      // ONE transaction: the roster handover, the obligation move, the audit activity and
+      // the replacement row commit together or not at all. The update takes the task row
+      // lock (a concurrent status move serializes AFTER this mint) and the CAS is pinned to
+      // the SCAN's stamp + status — a task write that landed after that read WINS (the
+      // scan re-runs next tick), so a post-scan manual move is never adopted as consent.
       const minted = await db.transaction(async (tx) => {
         const won = await tx
           .update(tasks)
           .set({ reviewers: nextRoster, updatedAt: new Date() })
-          .where(and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: task.updatedAt, status: task.status })))
+          .where(
+            and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: fresh.updatedAt, status: fresh.taskStatus })),
+          )
           .returning({ id: tasks.id });
         if (won.length === 0) return false;
+        // a deleted escalator's approval obligations were already DROPPED by the removal
+        // path (never cancelled) — nothing to resolve, and resolved_by would dangle
+        if (escalatorId) await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId, tx);
+        await spawnObligationTracked(fresh.taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date(), tx);
+        await logActivity(
+          fresh.taskId,
+          ACTIVITY_KIND.STATUS,
+          escalatorId,
+          body,
+          { escalated: true, from: escalatorId, to: targetId, round: fresh.round, recovered: true },
+          tx,
+          { publish: false },
+        );
         await tx.insert(taskReviews).values({
           id: uuidv7(),
           taskId: fresh.taskId,
@@ -1957,16 +1966,6 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
         return true;
       });
       if (!minted) continue;
-      const { why } = parseEscalationNote(fresh.note ?? '');
-      await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId).catch(() => {});
-      await spawnObligation(fresh.taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date());
-      await logActivity(
-        fresh.taskId,
-        ACTIVITY_KIND.STATUS,
-        escalatorId,
-        `review escalated to ${target.name}${why ? ` — ${why}` : ''}`,
-        { escalated: true, from: escalatorId, to: targetId, round: fresh.round, recovered: true },
-      );
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       // a settle that landed inside this replay window owns the task: tear the mint down
       // (never dispatch into a terminal task) — the same self-heal the live path runs

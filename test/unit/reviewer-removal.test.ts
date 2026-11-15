@@ -408,7 +408,7 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.cancelledAll).toEqual([]);
   });
 
-  it('a deleted escalator (FK-nulled reviewer) is debris — the removal matrix still settles (#474)', async () => {
+  it('a deleted escalator does NOT waive the recorded referral — the removal matrix waits (#474)', async () => {
     h.reviewReads = [
       [
         { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
@@ -416,8 +416,10 @@ describe('settleExtinguishedRound (#365)', () => {
         { status: REVIEW_STATUS.PENDING, reviewerId: null },
       ],
     ];
-    expect(await settleExtinguishedRound('task-1')).toBe(true);
-    expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.done);
+    // the escalator is gone, but the target never voted: the removal matrix must not
+    // settle without it — the handoff heal re-fires the recorded target
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.updates.filter((u) => u.table === 'tasks' && u.set.status)).toEqual([]);
   });
 
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {

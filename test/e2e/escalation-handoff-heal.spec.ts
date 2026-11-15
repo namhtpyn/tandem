@@ -181,6 +181,48 @@ test.describe('escalation-handoff heal (#474)', () => {
     }
   });
 
+  test('a deleted escalator never waives the referral — the target is still minted (NULL author)', async () => {
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const assignee = crypto.randomUUID();
+      const target = crypto.randomUUID();
+      await seedUser(sql, assignee, `E2E Assignee ${tag}`);
+      await seedUser(sql, target, `E2E Target ${tag}`);
+
+      const taskId = `e2e-handoff-orphan-${tag}`;
+      await seedReviewTask(sql, taskId, { reviewers: [], assigneeId: assignee });
+      await seedRow(sql, {
+        taskId,
+        reviewerId: null, // the escalator was deleted: the FK nulled the row's reviewer
+        status: 'ESCALATED',
+        referralTargetId: target,
+        note: 'escalate to E2E Target for reviewing — wrong domain',
+        createdAtSeconds: 1800,
+        decidedAtSeconds: 300,
+      });
+
+      const end = Date.now() + 20_000;
+      while (Date.now() < end && (await targetRowCount(sql, taskId, target)) === 0) await Bun.sleep(500);
+      expect(await targetRowCount(sql, taskId, target), 'the recorded target still gets its vote').toBe(1);
+      const acts = await sql.unsafe(
+        `select a.payload->>'to' as target, m.author_id as author
+         from task_message_activities a join task_messages m on m.id = a.message_id
+         where m.task_id = $1 and a.payload->>'escalated' = 'true'`,
+        [taskId],
+      );
+      expect(acts.length, 'the recovery activity is logged exactly once').toBe(1);
+      expect((acts[0] as { target?: string }).target).toBe(target);
+      expect(
+        (acts[0] as { author?: string | null }).author ?? null,
+        'a departed escalator logs a NULL audit author',
+      ).toBeNull();
+      expect(await statusOf(sql, taskId), 'the re-fired referral never settles the round').toBe(IN_REVIEW);
+    } finally {
+      await sql.end();
+    }
+  });
+
   test('a referral owed blocks the matrix — the verdict stands, the round waits', async ({ page }) => {
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
