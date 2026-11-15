@@ -35,63 +35,65 @@ vi.mock('../../server/db/index', async () => {
       catch: (onR: (e: unknown) => unknown) => p().catch(onR),
     };
   };
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: (table: unknown) => {
-          // self-chaining thenable builder: where/orderBy/limit return the builder,
-          // awaiting it pops the table's FIFO (verdict-cas pattern, join-capable)
-          const rows = () => queueFor(table).shift() ?? [];
-          const p = () => Promise.resolve(rows());
-          const self: Record<string, unknown> = {
-            where: () => self,
-            innerJoin: () => self,
-            orderBy: () => self,
-            limit: () => self,
-            then: (onF?: (v: Array<Record<string, unknown>>) => unknown, onR?: (e: unknown) => unknown) =>
-              p().then(onF, onR),
-            catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+  const dbMock: Record<string, unknown> = {
+    select: () => ({
+      from: (table: unknown) => {
+        // self-chaining thenable builder: where/orderBy/limit return the builder,
+        // awaiting it pops the table's FIFO (verdict-cas pattern, join-capable)
+        const rows = () => queueFor(table).shift() ?? [];
+        const p = () => Promise.resolve(rows());
+        const self: Record<string, unknown> = {
+          where: () => self,
+          innerJoin: () => self,
+          orderBy: () => self,
+          limit: () => self,
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown, onR?: (e: unknown) => unknown) =>
+            p().then(onF, onR),
+          catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+        };
+        return self;
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (cond: unknown) => {
+          const applied = () => {
+            h.updates.push({ table: nameOf(table), set, pred: cond != null });
+            return h.casMiss ? [] : [{ id: 'x-1' }];
           };
-          return self;
+          return {
+            ...thenable(applied),
+            returning: async () => applied(),
+          };
         },
       }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: nameOf(table), set, pred: cond != null });
-              return h.casMiss ? [] : [{ id: 'x-1' }];
-            };
-            return {
-              ...thenable(applied),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
-      insert: (table: unknown) => ({
-        values: async (v: Record<string, unknown>) => {
-          h.inserts.push({ table: nameOf(table), values: v });
-        },
-      }),
-      query: {
-        user: {
-          findMany: async () => h.users,
-          findFirst: async () => (h.reviewerExists ? { id: 'rev-1' } : null),
-        },
-        employeeSupervisors: { findMany: async () => h.edges },
-        taskStatuses: {
-          // honor the caller's predicate (DB-mock predicate law): a mis-wired where
-          // must FAIL the test, never be masked by an unfiltered mock
-          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
-            const id = args?.where?.id?.eq;
-            return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
-          },
+    }),
+    insert: (table: unknown) => ({
+      values: async (v: Record<string, unknown>) => {
+        h.inserts.push({ table: nameOf(table), values: v });
+      },
+    }),
+    query: {
+      user: {
+        findMany: async () => h.users,
+        findFirst: async () => (h.reviewerExists ? { id: 'rev-1' } : null),
+      },
+      employeeSupervisors: { findMany: async () => h.edges },
+      taskStatuses: {
+        // honor the caller's predicate (DB-mock predicate law): a mis-wired where
+        // must FAIL the test, never be masked by an unfiltered mock
+        findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+          const id = args?.where?.id?.eq;
+          return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
         },
       },
     },
   };
+  // #466: parkRound's flip + flow record run inside db.transaction; this suite asserts
+  // the surrounding behavior, so the double runs the callback on the same handle
+  // (atomicity itself is pinned in review-park-guard, TXN-DOUBLE)
+  dbMock.transaction = async (fn: (h: unknown) => Promise<unknown>) => fn(dbMock);
+  return { asDb: (x: unknown) => x, db: dbMock };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {

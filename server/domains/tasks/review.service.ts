@@ -3279,51 +3279,68 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     rearmable && attempts <= PARK_REARM_LADDER_MS.length
       ? new Date(Date.now() + nonNull(PARK_REARM_LADDER_MS[attempts - 1]))
       : null;
-  const parkedRows = await db
-    .update(tasks)
-    // park-origin memory (#202): the BLOCKED flip carries the round's in-review home —
-    // the parent-gating unblock restores this, never a stale pre_block_status
-    .set({
-      status: BLOCKED_STATUS,
-      parkFromStatus: parkOrigin,
-      // PARK-SUPERSESSION (#419): the park names the round's home itself — a stale
-      // pre_block_status must not survive beside it (both machine origins on one row
-      // make the park discriminator (park_from_status IS NULL) lie for every reader)
-      preBlockStatus: null,
-      updatedAt: new Date(),
-      parkRearmAttempts: attempts,
-      parkRearmAfter: rearmAfter,
-    })
-    // atomic re-check: a settle/status change between read and write wins — the
-    // predicate pins the status id this call READ (CATEGORY-GATE LAW #336), so a
-    // custom in-review status parks and a concurrent move still beats the park.
-    // PARK-ONCE (#419): the block branch reads and writes the SAME blocked status, so
-    // the status term alone cannot arbitrate two failure arms parking one round (each
-    // would land a park and burn a ladder rung) — the unwritten park memory is that
-    // branch's arbiter. It is scoped to the block branch on purpose: an in-review task
-    // can legally carry a stale park origin (a resubmit of a task whose block/park memory
-    // an egress left behind — #427 covers the two non-settle egresses), and refusing
-    // there would wedge every later park of that round.
-    .where(
-      and(
-        eq(tasks.id, taskId),
-        eq(tasks.status, task.status),
-        taskCategory === CATEGORY.PAUSED
-          ? // the block branch must also pin the ORIGIN it read: the status term is the
-            // same id on both sides and a re-block inside the read→write window would
-            // otherwise let the park persist a stale home (#419)
-            and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(task.preBlockStatus)))
-          : undefined,
-      ),
-    )
-    .returning({ id: tasks.id });
-  if (parkedRows.length === 0) return false;
-  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {
-    reviewParked: true,
-    why,
-    fromStatus: task.status,
-    ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
+  // BLOCK-PARK RECORD FLOOR (#466): the park flip and its flow record commit in ONE
+  // transaction — the probe's paused-row arms order the round's verdict against this
+  // note instead of the maskable tasks.updated_at, so a landed park must never exist
+  // without it. Change events publish only after commit.
+  const parked = await db.transaction(async (ex: DbExecutor) => {
+    const parkedRows = await asDb(ex)
+      .update(tasks)
+      // park-origin memory (#202): the BLOCKED flip carries the round's in-review home —
+      // the parent-gating unblock restores this, never a stale pre_block_status
+      .set({
+        status: BLOCKED_STATUS,
+        parkFromStatus: parkOrigin,
+        // PARK-SUPERSESSION (#419): the park names the round's home itself — a stale
+        // pre_block_status must not survive beside it (both machine origins on one row
+        // make the park discriminator (park_from_status IS NULL) lie for every reader)
+        preBlockStatus: null,
+        updatedAt: new Date(),
+        parkRearmAttempts: attempts,
+        parkRearmAfter: rearmAfter,
+      })
+      // atomic re-check: a settle/status change between read and write wins — the
+      // predicate pins the status id this call READ (CATEGORY-GATE LAW #336), so a
+      // custom in-review status parks and a concurrent move still beats the park.
+      // PARK-ONCE (#419): the block branch reads and writes the SAME blocked status, so
+      // the status term alone cannot arbitrate two failure arms parking one round (each
+      // would land a park and burn a ladder rung) — the unwritten park memory is that
+      // branch's arbiter. It is scoped to the block branch on purpose: an in-review task
+      // can legally carry a stale park origin (a resubmit of a task whose block/park memory
+      // an egress left behind — #427 covers the two non-settle egresses), and refusing
+      // there would wedge every later park of that round.
+      .where(
+        and(
+          eq(tasks.id, taskId),
+          eq(tasks.status, task.status),
+          taskCategory === CATEGORY.PAUSED
+            ? // the block branch must also pin the ORIGIN it read: the status term is the
+              // same id on both sides and a re-block inside the read→write window would
+              // otherwise let the park persist a stale home (#419)
+              and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(task.preBlockStatus)))
+            : undefined,
+        ),
+      )
+      .returning({ id: tasks.id });
+    if (parkedRows.length === 0) return false;
+    await logActivity(
+      taskId,
+      ACTIVITY_KIND.STATUS,
+      null,
+      `review parked — ${why}`,
+      {
+        reviewParked: true,
+        why,
+        fromStatus: task.status,
+        ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
+      },
+      ex,
+      { publish: false },
+    );
+    return true;
   });
+  if (!parked) return false;
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return true;
 }

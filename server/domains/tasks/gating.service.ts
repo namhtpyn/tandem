@@ -8,12 +8,13 @@
 import { consola } from 'consola';
 import { and, asc, eq, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm';
 
-import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY, CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
+import { publishChange } from '../kernel/change-bus';
 import {
   logActivity as publishActivity,
   dispatchAiReviewTurns,
@@ -61,9 +62,18 @@ async function resumeRestoredRound(taskId: string, resumeTurn: boolean, restoreC
 
 const log = consola.withTag('tandem');
 
-// activity rows are notification state, not gating state — they ride the pool db even mid-tx
-async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
-  await publishActivity(taskId, ACTIVITY_KIND.STATUS, null, body, meta);
+// activity rows are notification state, not gating state — they ride the pool db even
+// mid-tx — EXCEPT the FLOW RECORDS the probe orders verdicts against (#466): the
+// auto-block note is read back as the block's own timestamp, so the block arm hands it
+// the SAME executor as its status write and defers the change events to post-commit.
+async function logActivity(
+  taskId: string,
+  body: string,
+  meta: Record<string, unknown> = {},
+  ex: DbExecutor = db,
+  opts: { publish?: boolean } = {},
+) {
+  await publishActivity(taskId, ACTIVITY_KIND.STATUS, null, body, meta, ex, opts);
 }
 
 /** status ids whose category is terminal (done | cancelled) */
@@ -206,20 +216,35 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       // the task to a category it no longer belongs to. (The arm never fires on BLOCKED,
       // so the recorded home can never be BLOCKED itself.)
       const pre = cur.status;
+      const gateId = cur.id;
       // GUARDED GATING WRITE (#208): one conditional flip — a row that flipped BLOCKED
       // between the read and this write (a park, another gate) wins; zero rows = the
       // concurrent writer owns the outcome and its own thread note
-      const gated = await d
-        .update(tasks)
-        // PARK-MEMORY SUPERSESSION (#419): the gate records the round home in
-        // pre_block_status and CLEARS any stale park origin — a parked row can never
-        // look like a gated one (both machine origins on one row make the park
-        // discriminator (park_from_status IS NULL) lie for every reader)
-        .set({ status: BLOCKED_STATUS, preBlockStatus: pre, parkFromStatus: null, updatedAt: new Date() })
-        .where(and(eq(tasks.id, cur.id), ne(tasks.status, BLOCKED_STATUS)))
-        .returning({ id: tasks.id });
-      if (gated.length > 0) {
-        await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
+      // BLOCK-PARK RECORD FLOOR (#466): the flip and its flow record commit in ONE
+      // transaction — the probe's paused-row arms order the round's verdict against
+      // this note instead of the maskable tasks.updated_at, so a landed block must
+      // never exist without it. A caller's open transaction is ridden, never nested;
+      // a pool call opens its own. Change events publish only after commit.
+      const flipAndRecord = async (exec: DbExecutor) => {
+        const rows = await asDb(exec)
+          .update(tasks)
+          // PARK-MEMORY SUPERSESSION (#419): the gate records the round home in
+          // pre_block_status and CLEARS any stale park origin — a parked row can never
+          // look like a gated one (both machine origins on one row make the park
+          // discriminator (park_from_status IS NULL) lie for every reader)
+          .set({ status: BLOCKED_STATUS, preBlockStatus: pre, parkFromStatus: null, updatedAt: new Date() })
+          .where(and(eq(tasks.id, gateId), ne(tasks.status, BLOCKED_STATUS)))
+          .returning({ id: tasks.id });
+        if (rows.length === 0) return false;
+        await logActivity(gateId, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open }, exec, {
+          publish: false,
+        });
+        return true;
+      };
+      const gated = ex === db ? await db.transaction(flipAndRecord) : await flipAndRecord(ex);
+      if (gated) {
+        await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+        await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       }
     } else if (open === 0 && cur.status === BLOCKED_STATUS && (cur.preBlockStatus || cur.parkFromStatus)) {
       // the unblock arm (leaf helper): a 'lost' CAS means a concurrent writer owns the

@@ -30,10 +30,31 @@ const h = vi.hoisted(() => ({
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
+  notes: [] as Array<{ taskId: string; body: string; meta: Record<string, unknown>; via: string; publish?: boolean }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
+  // TXN-DOUBLE LAW (#467 r4): the transaction hands a DISTINCT handle whose write
+  // methods are STAMPED with that handle — an in-callback boolean cannot tell a write
+  // routed to the POOL from one routed to the transaction, so a mutation swapping the
+  // executor would stay green. #466 pins the block flip + its flow record to ONE handle.
+  const mkUpdate = (via: 'pool' | 'tx') => (table: unknown) => ({
+    set: (set: Record<string, unknown>) => ({
+      where: (cond: unknown) => ({
+        // the guarded write: rows come back ONLY when the predicate matched —
+        // a lost race writes nothing (applied=false never reaches h.updates)
+        returning: async () => {
+          const lost = h.lossPlan.shift() === true;
+          const applied = !lost;
+          if (table === tasks) h.writeLog.push({ set, cond, hasPredicate: cond != null, applied, via });
+          if (table === tasks && applied) h.updates.push({ set, hasPredicate: cond != null });
+          return applied ? [{ id: 'applied' }] : [];
+        },
+      }),
+    }),
+  });
+  const tx = { __tx: true, update: mkUpdate('tx') };
   return {
     asDb: (x: unknown) => x,
     db: {
@@ -75,21 +96,10 @@ vi.mock('../../server/db/index', async () => {
           },
         },
       },
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => ({
-            // the guarded write: rows come back ONLY when the predicate matched —
-            // a lost race writes nothing (applied=false never reaches h.updates)
-            returning: async () => {
-              const lost = h.lossPlan.shift() === true;
-              const applied = !lost;
-              if (table === tasks) h.writeLog.push({ set, cond, hasPredicate: cond != null, applied });
-              if (table === tasks && applied) h.updates.push({ set, hasPredicate: cond != null });
-              return applied ? [{ id: 'applied' }] : [];
-            },
-          }),
-        }),
-      }),
+      update: mkUpdate('pool'),
+      // #466: the pool call opens a transaction; the block arm's flip + flow record must
+      // ride THIS handle (stamped 'tx'), never the pool surface
+      transaction: async (fn: (h: unknown) => Promise<unknown>) => fn(tx),
     },
   };
 });
@@ -98,7 +108,17 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
   return {
     ...mod,
-    logActivity: async () => {},
+    logActivity: async (
+      taskId: string,
+      _kind: unknown,
+      _authorId: unknown,
+      body: string,
+      meta: Record<string, unknown>,
+      ex: { __tx?: boolean } | undefined,
+      opts: { publish?: boolean } | undefined,
+    ) => {
+      h.notes.push({ taskId, body, meta, via: ex?.__tx === true ? 'tx' : 'pool', publish: opts?.publish });
+    },
     // #365: a restored round replays only when it is LIVE; an extinguished one settles
     openRoundLive: async () => h.roundLive,
     settleExtinguishedRound: async (taskId: string) => {
@@ -156,6 +176,7 @@ beforeEach(() => {
   h.replayed = [];
   h.settled = [];
   h.answerHealed = [];
+  h.notes = [];
   h.roundLive = true;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
@@ -499,6 +520,24 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(h.writeLog).toHaveLength(1);
     expect(h.writeLog[0]?.hasPredicate).toBe(true);
     expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+  });
+
+  it('the auto-block flip and its flow record commit in ONE transaction (#466)', async () => {
+    row('p', { status: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.doing }]);
+    await refreshParentGating('p');
+    expect(h.writeLog).toHaveLength(1);
+    // TXN-DOUBLE: the guarded flip carries the TX handle, never the pool — a mutation
+    // routing the flip back to the pool turns this red
+    expect(h.writeLog[0]?.via).toBe('tx');
+    // the FLOW RECORD (#466) rides the SAME handle and defers its events to post-commit;
+    // probe arms order verdicts against this row, so a landed block without it is a
+    // detector blind spot
+    const note = h.notes.find((n) => n.body.startsWith('auto-blocked:'));
+    expect(note).toBeDefined();
+    expect(note?.via).toBe('tx');
+    expect(note?.publish).toBe(false);
+    expect(note?.meta).toMatchObject({ autoBlocked: true, open: 1 });
   });
 
   it('a park winning the block-arm race keeps its park-origin memory — no stomp', async () => {
