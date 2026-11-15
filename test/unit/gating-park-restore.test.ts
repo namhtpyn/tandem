@@ -693,6 +693,29 @@ describe('borrowed-restore deferral (#479)', () => {
     expect(await afterCommit.drain()).toBe(0); // a second drain is a no-op — never a replay
   });
 
+  it('a stalled resume leaves the remaining work queued, never spliced away', async () => {
+    const afterCommit = new AfterCommitQueue();
+    const ran: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    afterCommit.defer(async () => {
+      await gate;
+      ran.push('first');
+    });
+    afterCommit.defer(async () => {
+      ran.push('second');
+    });
+    const draining = afterCommit.drain();
+    await Promise.resolve(); // let the first closure start and stall
+    expect(ran).toEqual([]);
+    expect(afterCommit.pending).toBe(1); // the work behind the stall stays queued
+    release();
+    expect(await draining).toBe(2);
+    expect(ran).toEqual(['first', 'second']);
+  });
+
   it('own-pool restores keep the immediate order, collector or not', async () => {
     row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);

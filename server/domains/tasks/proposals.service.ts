@@ -15,8 +15,9 @@ import { nonNull } from '#shared/utils/non-null';
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
+import { AfterCommitQueue } from './after-commit';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
-import { AfterCommitQueue, refreshParentGating } from './gating.service';
+import { refreshParentGating } from './gating.service';
 import { logActivity as publishActivity } from './review.service';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };

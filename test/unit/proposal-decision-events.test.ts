@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   publishedAfterResume: [] as boolean[],
   txRef: null as unknown,
   failNote: false,
+  failResume: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -85,23 +86,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
-  // the real branded queue (gating.service is mocked wholesale here, but proposals
-  // constructs the queue itself — a plain mock array would not exercise the same shape)
-  AfterCommitQueue: class {
-    #work: Array<() => Promise<void>> = [];
-    defer(work: () => Promise<void>) {
-      this.#work.push(work);
-    }
-    async drain() {
-      const work = this.#work.splice(0);
-      for (const job of work) await job();
-      return work.length;
-    }
-    get pending() {
-      return this.#work.length;
-    }
-  },
-  // #479: a riding gating restore never runs its resume work itself — it defers it on
+  // #479: proposals constructs the REAL AfterCommitQueue (own module, not mocked here);
+  // only the gating refresh itself is stubbed, so drain's failure isolation is exercised
+  // for real — a hand-written queue double would bless a drain that stops on a throw.
+  // A riding gating restore never runs its resume work itself — it defers it on
   // the caller's queue, and the caller drains it post-commit. The executor is recorded:
   // handing the pool `db` instead of `tx` is the exact regression this suite must catch.
   refreshParentGating: async (_taskId: string, ex: unknown, queue?: { defer: (w: () => Promise<void>) => void }) => {
@@ -111,6 +99,7 @@ vi.mock('../../server/domains/tasks/gating.service', () => ({
       // a real resume awaits I/O: the drain must be awaited, not fire-and-forget
       await Promise.resolve();
       h.resumedAt.push(h.txDone);
+      if (h.failResume) throw new Error('resume boom');
       h.resumedDone = true;
     });
   },
@@ -145,6 +134,7 @@ beforeEach(() => {
   h.resumedDone = false;
   h.publishedAfterResume = [];
   h.failNote = false;
+  h.failResume = false;
 });
 
 describe('proposal decision events (#466)', () => {
@@ -180,6 +170,15 @@ describe('borrowed-restore deferral wiring (#479)', () => {
     // the drain is awaited: both publishes follow the finished resume (a fire-and-forget
     // drain would publish first and leave resumedDone false here)
     expect(h.publishedAfterResume).toEqual([true, true]);
+  });
+
+  it('confirm: a THROWING resume never suppresses the caller post-commit publish', async () => {
+    h.failResume = true;
+    await expect(confirmProposal('proposal-1', 'user-1')).resolves.toEqual({ ok: true, events: [] });
+    expect(h.resumedAt).toEqual([true]);
+    expect(h.resumedDone).toBe(false); // the closure threw...
+    expect(h.publishedAfterResume).toEqual([false, false]); // ...but BOTH publishes still ran
+    expect(h.published.sort()).toEqual(['TASKS', 'TASK_ACTIVITY']);
   });
 
   it('confirm: a rollback after the gating call discards the resume work', async () => {
