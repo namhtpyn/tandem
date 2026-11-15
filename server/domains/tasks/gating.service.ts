@@ -192,11 +192,17 @@ async function restoreUnblocked(
   // settle a restore that lands in-review with no live voter (leaf helper).
   // BORROWED-RESTORE DEFERRAL (#479): these side effects are NOT transactional, so on a
   // borrowed executor they must not fire before the caller commits — a rollback would
-  // leave a settle/dispatch no restore row backs. The own-pool path has already
-  // committed its guarded write, so it keeps the immediate order.
+  // leave a settle/dispatch no restore row backs. Classification is keyed on the
+  // EXECUTOR, never on the collector's presence: an own-pool call that happens to pass a
+  // collector still keeps the immediate order (its guarded write already committed).
   const resume = () => resumeRestoredRound(cur.id, ladderOwns, known.get(restore));
-  if (afterCommit) afterCommit.push(resume);
-  else await resume();
+  if (ex === db) await resume();
+  else {
+    // the entry guard already refused a collector-less borrow; kept explicit so the
+    // deferral can never silently fall back to running pre-commit
+    if (!afterCommit) throw new Error('restoreUnblocked: borrowed restore without a collector (#479)');
+    afterCommit.push(resume);
+  }
   return 'restored';
 }
 
@@ -209,7 +215,8 @@ async function restoreUnblocked(
  * commits. An unblock restore hands its non-transactional resume work back through it
  * instead of running pre-commit, so a rollback can never leave a settle or a dispatch
  * behind. Own-pool calls (no `ex`) keep the immediate order; a borrowed call without a
- * collector is a contract error, refused before any read or write.
+ * collector is a contract error, refused before any read or write. The collector is a
+ * caller obligation: drain every closure after commit (confirmProposal does).
  */
 export async function refreshParentGating(taskId: string, ex: DbExecutor = db, afterCommit?: AfterCommit[]) {
   if (ex !== db && !afterCommit) {
