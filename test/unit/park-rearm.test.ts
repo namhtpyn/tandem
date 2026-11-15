@@ -30,83 +30,84 @@ const h = vi.hoisted(() => ({
 vi.mock('../../server/db/index', async () => {
   const { tasks, taskStatuses } = await import('../../server/db/schema');
   const projKey = (cols: Record<string, unknown> | undefined) => (cols ? Object.keys(cols).sort().join(',') : '');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: (cols?: Record<string, unknown>) => ({
-        from: (table: unknown) => {
-          const rows = (): Array<Record<string, unknown>> => {
-            if (table === taskStatuses) return h.statusRows; // bare await: statusCategoryMap
-            const key = projKey(cols);
-            if (key === 'id') return h.dueRows as Array<Record<string, unknown>>; // the re-arm scan
-            if (key === 'status') return (h.childrenPlan.shift() ?? []) as Array<Record<string, unknown>>;
-            if (key === 'ownerId,parkFromStatus,preBlockStatus,rearmAttempts,status')
-              return h.parkRow ? [h.parkRow] : [];
-            return [];
-          };
-          // the where-path MUST honor predicates (DB-mock predicate law): the only
-          // taskStatuses .where() caller is terminalStatusIds (category in done|cancelled)
-          const whereRows = (): Array<Record<string, unknown>> => {
-            if (table === taskStatuses)
-              return h.statusRows.filter((r) => r.category === 'done' || r.category === 'cancelled');
-            return rows();
-          };
-          const tail = () => ({
-            then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
-              Promise.resolve().then(() => onFulfilled?.(whereRows())),
-          });
-          return {
-            then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
-              Promise.resolve().then(() => onFulfilled?.(rows())),
-            where: (cond: unknown) => {
-              if (projKey(cols) === 'id') h.dueScanWhereCalls += 1;
-              void cond;
-              return {
-                ...tail(),
-                orderBy: () => ({
-                  limit: (n: number) => {
-                    h.scanLimit = n;
-                    return tail();
-                  },
-                }),
-              };
-            },
-          };
-        },
-      }),
-      query: {
-        taskStatuses: {
-          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
-            const id = args?.where?.id?.eq;
-            return id ? h.statusRows.filter((s: { id: string }) => s.id === id) : h.statusRows;
+  const dbMock: Record<string, unknown> = {
+    select: (cols?: Record<string, unknown>) => ({
+      from: (table: unknown) => {
+        const rows = (): Array<Record<string, unknown>> => {
+          if (table === taskStatuses) return h.statusRows; // bare await: statusCategoryMap
+          const key = projKey(cols);
+          if (key === 'id') return h.dueRows as Array<Record<string, unknown>>; // the re-arm scan
+          if (key === 'status') return (h.childrenPlan.shift() ?? []) as Array<Record<string, unknown>>;
+          if (key === 'ownerId,parkFromStatus,preBlockStatus,rearmAttempts,status') return h.parkRow ? [h.parkRow] : [];
+          return [];
+        };
+        // the where-path MUST honor predicates (DB-mock predicate law): the only
+        // taskStatuses .where() caller is terminalStatusIds (category in done|cancelled)
+        const whereRows = (): Array<Record<string, unknown>> => {
+          if (table === taskStatuses)
+            return h.statusRows.filter((r) => r.category === 'done' || r.category === 'cancelled');
+          return rows();
+        };
+        const tail = () => ({
+          then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
+            Promise.resolve().then(() => onFulfilled?.(whereRows())),
+        });
+        return {
+          then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
+            Promise.resolve().then(() => onFulfilled?.(rows())),
+          where: (cond: unknown) => {
+            if (projKey(cols) === 'id') h.dueScanWhereCalls += 1;
+            void cond;
+            return {
+              ...tail(),
+              orderBy: () => ({
+                limit: (n: number) => {
+                  h.scanLimit = n;
+                  return tail();
+                },
+              }),
+            };
           },
-        },
-        tasks: {
-          findFirst: async (args: { where: { id: { eq: string } } }) => h.taskRows.get(args.where.id.eq) ?? null,
-          findMany: async (args: { where: { parentTaskId: { eq: string } } }) =>
-            (h.childrenByParent.get(args.where.parentTaskId.eq) ?? []) as Array<Record<string, unknown>>,
+        };
+      },
+    }),
+    query: {
+      taskStatuses: {
+        findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+          const id = args?.where?.id?.eq;
+          return id ? h.statusRows.filter((s: { id: string }) => s.id === id) : h.statusRows;
         },
       },
-      update: () => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const apply = () => {
-              h.updates.push({ set, hasPredicate: cond != null });
-              return [{ id: 'applied' }];
-            };
-            return {
-              then: <R>(onFulfilled?: (v: undefined) => R) =>
-                Promise.resolve(undefined).then((v) => {
-                  apply();
-                  return onFulfilled?.(v);
-                }),
-              returning: async () => apply(),
-            };
-          },
-        }),
-      }),
+      tasks: {
+        findFirst: async (args: { where: { id: { eq: string } } }) => h.taskRows.get(args.where.id.eq) ?? null,
+        findMany: async (args: { where: { parentTaskId: { eq: string } } }) =>
+          (h.childrenByParent.get(args.where.parentTaskId.eq) ?? []) as Array<Record<string, unknown>>,
+      },
     },
+    update: () => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (cond: unknown) => {
+          const apply = () => {
+            h.updates.push({ set, hasPredicate: cond != null });
+            return [{ id: 'applied' }];
+          };
+          return {
+            then: <R>(onFulfilled?: (v: undefined) => R) =>
+              Promise.resolve(undefined).then((v) => {
+                apply();
+                return onFulfilled?.(v);
+              }),
+            returning: async () => apply(),
+          };
+        },
+      }),
+    }),
   };
+  // #466: parkRound's flip + flow record run inside db.transaction; this suite asserts
+  // the flip payloads, so the double just runs the callback on the same handle
+  // (atomicity itself is pinned in review-park-guard, TXN-DOUBLE)
+  dbMock.transaction = async (fn: (h: unknown) => Promise<unknown>) => fn(dbMock);
+  return { asDb: (x: unknown) => x, db: dbMock };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {

@@ -77,22 +77,24 @@ vi.mock('../../server/db/index', () => {
     self.catch = (onR: (e: unknown) => unknown) => settle(undefined, onR);
     return self;
   };
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: (projection?: Record<string, unknown>) => builder(projection),
-      query: { taskStatuses: { findMany: async () => h.statusRows } },
-      update: () => ({
-        set: (values: Record<string, unknown>) => {
-          h.taskUpdates.push(values);
-          return { where: () => ({ returning: async () => [{ id: 't' }], then: async () => [] }) };
-        },
-      }),
-      insert: () => ({
-        values: () => ({ returning: async () => [{ id: 'msg-1' }], then: async () => [] }),
-      }),
-    },
+  const dbMock: Record<string, unknown> = {
+    select: (projection?: Record<string, unknown>) => builder(projection),
+    query: { taskStatuses: { findMany: async () => h.statusRows } },
+    update: () => ({
+      set: (values: Record<string, unknown>) => {
+        h.taskUpdates.push(values);
+        return { where: () => ({ returning: async () => [{ id: 't' }], then: async () => [] }) };
+      },
+    }),
+    insert: () => ({
+      values: () => ({ returning: async () => [{ id: 'msg-1' }], then: async () => [] }),
+    }),
   };
+  // #466: parkRound's flip + flow record run inside db.transaction; this suite asserts
+  // the surrounding behavior, so the double runs the callback on the same handle
+  // (atomicity itself is pinned in review-park-guard, TXN-DOUBLE)
+  dbMock.transaction = async (fn: (h: unknown) => Promise<unknown>) => fn(dbMock);
+  return { asDb: (x: unknown) => x, db: dbMock };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {

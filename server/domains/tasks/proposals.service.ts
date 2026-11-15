@@ -79,7 +79,12 @@ async function logActivity(
   meta: Record<string, unknown> = {},
   ex: DbExecutor = db,
 ) {
-  await publishActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, meta, ex);
+  // #397/#466: a note written INSIDE a caller's transaction defers its change events to
+  // that caller's post-commit publish (confirmProposal publishes the set, including the
+  // gating record a subtask-spawned auto-block lands); the pool path publishes at once.
+  const riding = ex !== db;
+  await publishActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, meta, ex, { publish: !riding });
+  if (riding) return;
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -270,7 +275,11 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
       .where(eq(taskProposals.id, proposalId));
     return { ok: true, events };
   });
-  // publish after commit so live readers never re-query mid-transaction
+  // publish after commit so live readers never re-query mid-transaction. A subtask
+  // proposal can auto-block the parent inside this transaction (#466): the block's flow
+  // record (and its thread note) land with the claim, so the activity event belongs to
+  // this post-commit set — the riding gating flip publishes nothing itself.
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;
 }
@@ -300,6 +309,8 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
     );
     return { ok: true };
   });
+  // the terminal decision note defers its events here (#466 deferral): publish BOTH
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;
 }
