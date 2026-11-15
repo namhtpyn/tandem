@@ -1225,17 +1225,20 @@ non-positive deltas render no duration.
   this one's. The live pass carries the arm's emit + previous-pass presence
   confirm + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped
   file: a SQL arm with no pass consumer is a detector that never runs).
-- The FINAL-PARK arm (#431) reads the parked round that CLOSED with its settle flip
-  lost: a PAUSED row carrying `park_from_status` that RESOLVES to an in-review-category
-  status, `park_rearm_after IS NULL` with `park_rearm_attempts = 0` (the DECISION-class
-  park — a ladder-owned park is resumed by the re-arm sweep, `park_rearm_after IS NOT
-  NULL`, and an exhausted ladder always carries `park_rearm_attempts = 5`, which is the
-  5b ladder arm's shape), the CURRENT round (`max(round)`) holding NO PENDING row and at
-  least one VERDICT row, and the write-vs-verdict discriminator in its MAX form: the
-  round's NEWEST verdict NEWER than the park's own gating FLOW RECORD (the BLOCK-PARK
-  RECORD FLOOR at 2.78.38; the retired `updated_at` stamp below the floor and for a
-  record-less row, the same declared residual). The park is the round's OWN stop, so the
-  owner's approval is the resolution — `settleRound` → `flipTask` accepts a paused row
+- The DECISION-PARK arm (#431, label `parkclosed`) reads the parked round that CLOSED
+  with its settle flip lost: a PAUSED row carrying `park_from_status` that RESOLVES to an
+  in-review-category status, `park_rearm_after IS NULL` with `park_rearm_attempts = 0`
+  (the DECISION-class park — a ladder-owned park is resumed by the re-arm sweep,
+  `park_rearm_after IS NOT NULL`, and an exhausted ladder always carries
+  `park_rearm_attempts = 5`, which is the 5b ladder arm's shape; both are OUT of this arm
+  by declaration), the CURRENT round (`max(round)`) holding NO PENDING row and at least
+  one VERDICT row, and the write-vs-verdict discriminator in its MAX form: the round's
+  NEWEST verdict NEWER than the PARK'S OWN flow record (the `review parked …` note plus
+  its 1:1 `kind='STATUS'` payload — never the task-wide newest gating note, which a
+  stale `auto-blocked:` note could satisfy on a row whose park note never landed; the
+  BLOCK-PARK RECORD FLOOR is 2.78.38, with the retired `updated_at` stamp below the floor
+  and for a record-less row, the declared residual). The park is the round's OWN stop, so
+  the owner's approval is the resolution — `settleRound` → `flipTask` accepts a paused row
   whose park origin resolves into review — and a crash between the verdict row and the
   flip strands the task with nothing reading it: `stallrv` / `lostsettle` require a
   PENDING row, `settleExtinguishedRound` refuses a decided round, the re-arm scan filters
@@ -1246,10 +1249,10 @@ non-positive deltas render no duration.
   multi-reviewer round split across the park write (a vote before it, the closing vote
   after) is this same owed-flip shape, and the re-key arm's late-row class has no
   analogue here (a park whose home resolves into review can always land its flip).
-  VERSION-independent as an arm but COLUMN-gated at the two-column gate plus the
-  pre-2.62.6 re-arm-column floor (a missing column would kill the whole UNION, #325) and
-  PAUSED-scoped; the live pass carries its emit + previous-pass presence confirm +
-  id-set dedupe wiring, pinned by `--selfcheck`.
+  VERSION-independent as an arm above its column floor but COLUMN-gated at the two-column
+  gate plus the 2.63.0 re-arm-column floor (a missing column would kill the whole UNION,
+  #325) and PAUSED-scoped; the live pass carries its emit + previous-pass presence
+  confirm + id-set dedupe wiring, pinned by `--selfcheck`.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),

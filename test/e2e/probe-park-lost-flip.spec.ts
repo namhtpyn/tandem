@@ -3,23 +3,23 @@ import { $, SQL } from 'bun';
 import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 
-// Contract: SPEC.md "Probe versioning" — the FINAL-PARK arm (#431) reads the lost-flip
-// sibling of the parked round: a DECISION-class park (park_rearm_after IS NULL with
-// park_rearm_attempts = 0) whose CURRENT round CLOSED after the park write. The park is
-// the round's own stop: the owner resolves it by approving, `settleRound` -> `flipTask`
-// accepts a paused row whose park_from_status resolves in-review, and a crash between the
-// verdict row and the flip leaves the task BLOCKED with the park standing and a closed
-// round. Nothing else reads it: stallrv/lostsettle require a PENDING row,
+// Contract: SPEC.md "Probe versioning" — the DECISION-PARK arm (#431, label `parkclosed`)
+// reads the parked round that CLOSED with its settle flip lost: a DECISION-class park
+// (park_rearm_after IS NULL with park_rearm_attempts = 0) whose CURRENT round holds no
+// PENDING row and at least one VERDICT row, with the round's newest verdict NEWER than the
+// PARK's OWN flow record (`review parked …` + kind='STATUS'), the retired `updated_at`
+// stamp below the 2.78.38 record floor and for a record-less row.
+//
+// Nothing else reads the shape: stallrv/lostsettle require a PENDING row,
 // settleExtinguishedRound refuses a decided round, the re-arm scan filters
 // park_rearm_after IS NOT NULL, restoreUnblocked withholds a FINAL park, and the wedge
-// arm excludes every parked row. The arm is version-independent as an ARM but
-// COLUMN-gated (both origin columns plus the pre-2.62.6 re-arm columns) and its ORDERING
-// term is the #466 record-vs-verdict discriminator at 2.78.38, the retired stamp below.
-// MAX, not MIN: a multi-reviewer round split across the park write (a vote before, the
-// closing vote after) is the same owed-flip shape, and unlike the re-key arm there is no
-// late-row class (a park whose home resolves in-review can always land its flip).
+// arm excludes every parked row. MAX, not MIN: a multi-reviewer round split across the
+// park write is the same owed-flip shape, and the re-key arm's late-row class has no
+// analogue here (a park whose home resolves in-review can always land its flip).
+//
 // Pinned on the SQL that ships: `--strand-sql` emits it and this spec executes exactly
-// those bytes against the e2e database.
+// those bytes against the e2e database, including per-guard mutation proofs — every guard
+// is removed once and the row it protects must flip, or the pin pins nothing.
 
 const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pathname;
 
@@ -32,10 +32,10 @@ const CANCELLED = '01a14743-43f5-759d-a00e-b0f2a5a04f4c';
 /** a canonical uuid that names no task_statuses row — a DELETED home, the orphan arm's shape */
 const DANGLING = '01a14743-dead-7e57-8000-000000000001';
 
-test.describe('prod probe final-park arm (#431)', () => {
-  test('fires on a final park whose round closed with the flip lost, silent on every legal shape', async () => {
-    // 2.78.38 = the shipped image; the arm emits at/above the pre-2.62.6 re-arm floor and
-    // only with BOTH origin columns present (one missing column kills the whole UNION)
+test.describe('prod probe decision-park arm (#431)', () => {
+  test('fires on a decision park whose round closed with the flip lost, silent on every legal shape', async () => {
+    // 2.78.38 = the shipped image; the arm emits at/above its 2.63.0 re-arm-column floor
+    // and only with BOTH origin columns present (a missing column kills the whole UNION)
     const emitted = await $`bash ${script} --strand-sql 2.78.38 2`.nothrow().quiet();
     expect(emitted.exitCode, emitted.stderr.toString()).toBe(0);
     const strandSql = emitted.stdout.toString().trim();
@@ -43,7 +43,7 @@ test.describe('prod probe final-park arm (#431)', () => {
     const oneColumn = await $`bash ${script} --strand-sql 2.78.38 1`.nothrow().quiet();
     expect(oneColumn.exitCode, oneColumn.stderr.toString()).toBe(0);
     expect(oneColumn.stdout.toString(), 'the arm must vanish without the origin columns').not.toContain('parkclosed');
-    const oldImage = await $`bash ${script} --strand-sql 2.62.5 2`.nothrow().quiet();
+    const oldImage = await $`bash ${script} --strand-sql 2.62.9 2`.nothrow().quiet();
     expect(oldImage.exitCode, oldImage.stderr.toString()).toBe(0);
     expect(oldImage.stdout.toString(), 'the arm must vanish without the re-arm columns').not.toContain('parkclosed');
 
@@ -59,10 +59,16 @@ test.describe('prod probe final-park arm (#431)', () => {
 
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
       const tag = crypto.randomUUID();
-      const parkLost = `probe-park-lost-${tag}`; // fires: THE counterexample — decision park, round closed after it
-      const parkSplit = `probe-park-split-${tag}`; // fires: a multi-reviewer round split across the park write
+      const parkLost = `probe-park-lost-${tag}`; // fires: THE counterexample (no record — the stamp fallback)
+      const parkMasked = `probe-park-masked-${tag}`; // fires: a benign edit after the verdict cannot mask it (record term)
+      const parkSplit = `probe-park-split-${tag}`; // fires: a multi-reviewer round split across the park write (MAX)
+      const parkRoundScope = `probe-park-round-${tag}`; // fires: the OLDER round's PENDING row does not mean an open round
+      const parkKind = `probe-park-kind-${tag}`; // fires: a `review parked` NOTE row is not a flow record (kind gate)
+      const parkStaleBlock = `probe-park-staleblock-${tag}`; // fires: an older auto-blocked note must not order this park
       const parkLive = `probe-park-live-${tag}`; // silent: a PENDING row in the current round keeps the round suspended
       const parkVerdictOld = `probe-park-verdictold-${tag}`; // silent: the park landed AFTER the round closed
+      const parkRecordNewer = `probe-park-recordnewer-${tag}`; // silent: the park record is newer than every verdict
+      const parkRecordEqual = `probe-park-recordequal-${tag}`; // silent: strictly newer, an equal stamp proves nothing
       const parkRearmOwned = `probe-park-rearm-${tag}`; // silent: a ladder-owned park is the re-arm sweep's shape
       const parkExhausted = `probe-park-exhausted-${tag}`; // silent: exhausted parks are the 5b ladder arm's shape
       const parkRekeyed = `probe-park-rekey-${tag}`; // silent: a terminal home is the RE-KEYED-HOME arm's shape
@@ -90,8 +96,7 @@ test.describe('prod probe final-park arm (#431)', () => {
         );
       };
 
-      // decidedMinutesAgo = null seeds a still-PENDING row (a live round); createdMinutesAgo
-      // places the round's rows relative to the task's last write
+      // decidedMinutesAgo = null seeds a still-PENDING row (a live round)
       const seedReview = async (
         taskId: string,
         status: string,
@@ -101,16 +106,34 @@ test.describe('prod probe final-park arm (#431)', () => {
       ) => {
         await sql.unsafe(
           `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
-           values ($1, $2, $3, $4, $5, now() - interval '10 minutes',
+           values ($1, $2, $3, $4, $5, now() - interval '30 minutes',
                    case when $6::int is null then null else now() - ($6::int * interval '1 minute') end)`,
           [`rev-${crypto.randomUUID()}`, taskId, round, status, reviewerId, decidedMinutesAgo],
         );
       };
 
+      // a flow note + its 1:1 activity payload
+      const seedNote = async (taskId: string, body: string, kind: string, atMinutes: number) => {
+        const id = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, body, created_at)
+           values ($1, $2, $3, now() - ($4::int * interval '1 minute'))`,
+          [id, taskId, body, atMinutes],
+        );
+        await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [id, { kind }]);
+      };
+      const parkedNote = (min: number) => `review parked — review turn failed to dispatch (${min}m)`;
+
       await seedTask({ id: parkLost, status: BLOCKED, park: IN_REVIEW, written: 10 });
+      await seedTask({ id: parkMasked, status: BLOCKED, park: IN_REVIEW, written: 1 });
       await seedTask({ id: parkSplit, status: BLOCKED, park: IN_REVIEW, written: 5 });
+      await seedTask({ id: parkRoundScope, status: BLOCKED, park: IN_REVIEW, written: 30 });
+      await seedTask({ id: parkKind, status: BLOCKED, park: IN_REVIEW, written: 20 });
+      await seedTask({ id: parkStaleBlock, status: BLOCKED, park: IN_REVIEW, written: 30 });
       await seedTask({ id: parkLive, status: BLOCKED, park: IN_REVIEW, written: 10 });
       await seedTask({ id: parkVerdictOld, status: BLOCKED, park: IN_REVIEW, written: 1 });
+      await seedTask({ id: parkRecordNewer, status: BLOCKED, park: IN_REVIEW, written: 20 });
+      await seedTask({ id: parkRecordEqual, status: BLOCKED, park: IN_REVIEW, written: 30 });
       await seedTask({
         id: parkRearmOwned,
         status: BLOCKED,
@@ -128,15 +151,44 @@ test.describe('prod probe final-park arm (#431)', () => {
 
       // the counterexample: a single-reviewer decision park closed by its approval, 1m ago
       await seedReview(parkLost, 'APPROVED', 1);
+      // the MASK case: the park record is 20m old, the verdict 5m, but a benign task edit
+      // landed 1m ago — the record term still sees the verdict, the retired stamp does not
+      await seedNote(parkMasked, parkedNote(20), 'STATUS', 20);
+      await seedReview(parkMasked, 'APPROVED', 5);
       // the split round: reviewer A voted before the park write, reviewer B's vote closed it
       // AFTER — the MAX ordering is what sees the owed flip (a MIN test would call this legal)
       await seedReview(parkSplit, 'APPROVED', 10);
       await seedReview(parkSplit, 'APPROVED', 1);
+      // an OLDER round's PENDING row must not read as an open round: round 2 is clean
+      await seedReview(parkRoundScope, 'PENDING', null, adminId, 1);
+      await seedReview(parkRoundScope, 'APPROVED', 1, adminId, 2);
+      // a free-text body that merely starts `review parked` is NOT a flow record: the 1:1
+      // payload must carry kind='STATUS' (its NOTE kind leaves the stamp fallback in force)
+      await seedNote(parkKind, parkedNote(1), 'NOTE', 1);
+      await seedReview(parkKind, 'APPROVED', 10);
+      // an older auto-blocked note must never order this park: the arm reads the PARK note
+      await seedNote(parkStaleBlock, 'auto-blocked: open children (seeded)', 'STATUS', 10);
+      await seedReview(parkStaleBlock, 'APPROVED', 15);
       // a legal parked round is SUSPENDED, not closed: a PENDING voter keeps the arm silent
       await seedReview(parkLive, 'APPROVED', 1);
       await seedReview(parkLive, 'PENDING', null, adminId);
       // the legal "park after settle" shape: the park write is newer than every verdict
       await seedReview(parkVerdictOld, 'APPROVED', 10);
+      // the park record is NEWER than the verdict: the park landed after the round closed
+      await seedNote(parkRecordNewer, parkedNote(1), 'STATUS', 1);
+      await seedReview(parkRecordNewer, 'APPROVED', 10);
+      // EQUAL stamps prove nothing (strict `>`): the note copies the verdict's exact stamp
+      await seedReview(parkRecordEqual, 'APPROVED', 10);
+      const equalNote = `msg-${crypto.randomUUID()}`;
+      await sql.unsafe(
+        `insert into task_messages (id, task_id, body, created_at)
+         select $1, $2, $3, decided_at from task_reviews where task_id = $2`,
+        [equalNote, parkRecordEqual, parkedNote(10)],
+      );
+      await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+        equalNote,
+        { kind: 'STATUS' },
+      ]);
       await seedReview(parkRearmOwned, 'APPROVED', 1);
       await seedReview(parkExhausted, 'APPROVED', 1);
       await seedReview(parkRekeyed, 'APPROVED', 1);
@@ -152,22 +204,22 @@ test.describe('prod probe final-park arm (#431)', () => {
       const runArm = async (query: string) => {
         const rows = (await OUT.unsafe(query)) as Record<string, string>[];
         const row = rows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'parkclosed');
-        return String(row?.[1] ?? 'none');
-      };
-      const fires = async () => {
-        const ids = (await runArm(armSql)).split(',').filter(Boolean);
-        return new Set(ids);
+        return new Set(
+          String(row?.[1] ?? 'none')
+            .split(',')
+            .filter(Boolean),
+        );
       };
 
-      // the counterexample FIRES
-      let ids = await fires();
-      expect(ids.has(parkLost), 'a decision park closed after the park write must fire').toBe(true);
-      // the multi-reviewer split FIRES (MAX ordering): the round closed after the park
-      expect(ids.has(parkSplit), 'a round split across the park write must fire').toBe(true);
-      // and every legal / other-arm shape stays silent
+      const ids = await runArm(armSql);
+      for (const fires of [parkLost, parkMasked, parkSplit, parkRoundScope, parkKind, parkStaleBlock]) {
+        expect(ids.has(fires), `${fires} must fire`).toBe(true);
+      }
       for (const silent of [
         parkLive,
         parkVerdictOld,
+        parkRecordNewer,
+        parkRecordEqual,
         parkRearmOwned,
         parkExhausted,
         parkRekeyed,
@@ -179,55 +231,84 @@ test.describe('prod probe final-park arm (#431)', () => {
         expect(ids.has(silent), `${silent} must stay silent`).toBe(false);
       }
 
-      // MUTATION PROOFS — each guard removal must turn the counterexample red, or the pin
-      // pins nothing: (1) drop the closed-round (PENDING) clause -> the live park fires;
-      // (2) drop the re-arm exclusivity -> the ladder-owned park fires;
-      // (3) drop the in-review home resolution -> the terminal/dangling parks fire;
-      // (4) flip MAX to MIN -> the split round disappears.
-      const mutants: [string, string, string][] = [
-        [
-          'live-round clause',
-          armSql,
-          armSql.replace(
-            "and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at))",
-            'and (select max(coalesce(r.decided_at, r.created_at))',
+      // MUTATION PROOFS — each guard removed once; the rows that guard protects must flip
+      // (a mutant that only re-fires a row already firing pins nothing)
+      const mutants: { name: string; sql: string; fire: string[]; silent: string[] }[] = [
+        {
+          name: 'live-round clause',
+          sql: armSql.replace(
+            "and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and ",
+            'and ',
           ),
-        ],
-        [
-          're-arm exclusivity',
-          armSql,
-          armSql.replace('and t.park_rearm_after is null and t.park_rearm_attempts = 0', ''),
-        ],
-        [
-          'in-review home resolution',
-          armSql,
-          armSql.replace(
+          fire: [parkLive],
+          silent: [],
+        },
+        {
+          name: 'round binding',
+          sql: armSql.replace(
+            "r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)",
+            "r.status = 'PENDING'",
+          ),
+          fire: [],
+          silent: [parkRoundScope],
+        },
+        {
+          name: 're-arm exclusivity',
+          sql: armSql.replace('and t.park_rearm_after is null and t.park_rearm_attempts = 0', ''),
+          fire: [parkRearmOwned, parkExhausted],
+          silent: [],
+        },
+        {
+          name: 'in-review home resolution',
+          sql: armSql.replace(
             "and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category = 'in_review')",
             '',
           ),
-        ],
-        [
-          'MAX ordering',
-          armSql,
-          armSql.replace('max(coalesce(r.decided_at, r.created_at))', 'min(coalesce(r.decided_at, r.created_at))'),
-        ],
+          fire: [parkRekeyed, parkDangling],
+          silent: [],
+        },
+        {
+          name: 'MAX ordering',
+          sql: armSql.replace('max(coalesce(r.decided_at, r.created_at))', 'min(coalesce(r.decided_at, r.created_at))'),
+          fire: [parkLost],
+          silent: [parkSplit],
+        },
+        {
+          name: 'record term',
+          sql: armSql.replace(
+            /coalesce\(\(select max\(m\.created_at\) from task_messages m where m\.task_id = t\.id and m\.body like 'review parked %' and exists \(select 1 from task_message_activities a where a\.message_id = m\.id and a\.payload->>'kind' = 'STATUS'\)\), t\.updated_at\)/,
+            't.updated_at',
+          ),
+          fire: [],
+          silent: [parkMasked],
+        },
+        {
+          name: 'kind gate',
+          sql: armSql.replace(" and a.payload->>'kind' = 'STATUS'", ''),
+          fire: [],
+          silent: [parkKind],
+        },
+        {
+          name: 'strict ordering',
+          sql: armSql.replace(') > coalesce((select max(m.created_at)', ') >= coalesce((select max(m.created_at)'),
+          fire: [parkRecordEqual],
+          silent: [],
+        },
+        {
+          name: 'park-only record',
+          sql: armSql.replace(
+            "m.body like 'review parked %'",
+            "(m.body like 'auto-blocked:%' or m.body like 'review parked %')",
+          ),
+          fire: [],
+          silent: [parkStaleBlock],
+        },
       ];
-      for (const [name, before, after] of mutants) {
-        expect(after, `the ${name} mutation must actually change the shipped SQL`).not.toBe(before);
-        const mutantIds = new Set(
-          String(
-            (((await OUT.unsafe(after)) as Record<string, string>[])
-              .map((r) => Object.values(r) as string[])
-              .find((v) => v[0] === 'parkclosed') ?? [undefined, 'none'])[1],
-          )
-            .split(',')
-            .filter(Boolean),
-        );
-        if (name === 'MAX ordering') {
-          expect(mutantIds.has(parkSplit), 'MIN must lose the split round — the reason MAX ships').toBe(false);
-        } else {
-          expect(mutantIds.has(parkLost), `removing the ${name} must fire the counterexample`).toBe(true);
-        }
+      for (const m of mutants) {
+        expect(m.sql, `the ${m.name} mutation must actually change the shipped SQL`).not.toBe(armSql);
+        const mutant = await runArm(m.sql);
+        for (const id of m.fire) expect(mutant.has(id), `removing the ${m.name} must fire ${id}`).toBe(true);
+        for (const id of m.silent) expect(mutant.has(id), `removing the ${m.name} must lose ${id}`).toBe(false);
       }
     } finally {
       await sql.close();

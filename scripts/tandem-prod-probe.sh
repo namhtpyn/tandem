@@ -69,7 +69,7 @@ own_predicate() {
 # A lost settle flip has the block write first and the killing verdict after it (the
 # verdict ROW is written before the flip's task write).
 # A park carries park_from_status and owns its round — a parked round that closed is the
-# same lost-flip shape, read by the FINAL-PARK arm (parkclosed, appended last): a
+# same lost-flip shape, read by the DECISION-PARK arm (parkclosed, appended last): a
 # ladder-owned park is resumed by the re-arm sweep and an exhausted one by the 5b ladder
 # arm, so only the DECISION park (park_rearm_after null, attempts 0) needs a reader here.
 # The two non-settle
@@ -158,6 +158,23 @@ paused_order() {
   case "${1:-}" in max|min) ;; *) return 1 ;; esac
   if flow_floor_met "${2:-}"; then
     printf "%s > coalesce(%s, t.updated_at)" "$(verdict_ts "$1")" "$(flow_record_ts)"
+  else
+    printf "%s > t.updated_at" "$(verdict_ts "$1")"
+  fi
+}
+# PARK RECORD (the park's OWN flow note): the arm orders its verdict against the note the
+# park write itself produced. Unlike flow_record_ts (the task-wide newest gating note,
+# which an older auto-blocked note can satisfy on a parked row whose park note never
+# landed), this reads only the single-writer park body plus its 1:1 kind='STATUS' payload.
+park_record_ts() {
+  printf "%s" "(select max(m.created_at) from task_messages m where m.task_id = t.id and m.body like 'review parked %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS'))"
+}
+# park-row ordering (#466): verdict vs the park's own record at/above the floor, the
+# retired verdict-vs-write stamp below it. $1 = max|min, $2 = prod version.
+park_order() {
+  case "${1:-}" in max|min) ;; *) return 1 ;; esac
+  if flow_floor_met "${2:-}"; then
+    printf "%s > coalesce(%s, t.updated_at)" "$(verdict_ts "$1")" "$(park_record_ts)"
   else
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
@@ -286,7 +303,7 @@ strand_sql() {
   if [ "${2:-}" = "2" ]; then
     rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order min "${1:-}")) x), 'none')"
   fi
-  # FINAL-PARK arm (#431): a DECISION-class park (park_rearm_after IS NULL with
+  # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
   # 5b arm's shape, a ladder-owned park is resumed by the re-arm sweep) whose current
   # round CLOSED after the park write and whose settle flip never landed. The park is the
@@ -300,16 +317,20 @@ strand_sql() {
   # legal park keeps a PENDING row in its current round (the round is suspended, not
   # closed) — the same current-round clause as every sibling arm. The origin must RESOLVE
   # into review (a terminal home is the RE-KEYED-HOME arm, a dangling one ORPHAN-HOME) and
-  # the ordering is the write-vs-verdict discriminator against the park's own FLOW RECORD
-  # at the #466 floor (retired `updated_at` stamp below it, record-less fallback): MAX, not
+  # the ordering is the write-vs-verdict discriminator against the PARK's OWN flow record
+  # at the #466 floor (the park-only note, not the task-wide helper: a stale auto-blocked
+  # note on a parked row whose park note never landed would order against the wrong flow;
+  # the retired `updated_at` stamp below the floor and for a record-less row): MAX, not
   # MIN — a multi-reviewer round split across the park write (a vote before, the closing
   # vote after) is this same owed-flip shape, and a park whose home resolves in-review can
   # always land its flip, so the re-key arm's late-row MIN case has no analogue here. The
   # alert names the park as the owner's own resolution: the verdict is already recorded, so
   # the repair is a status move, never a re-arm.
+  # COLUMN FLOOR 2.63.0: park_rearm_after / park_rearm_attempts ship there (the origins are
+  # older); an image without them would kill the WHOLE union (#325), so the arm vanishes.
   parkclosed=""
-  if [ "${2:-}" = "2" ] && [ "$(at_least 2.62.6 "${1:-}")" = "1" ]; then
-    parkclosed=" union all select 'parkclosed', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and t.park_from_status is not null and t.park_rearm_after is null and t.park_rearm_attempts = 0 and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category = 'in_review') and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order max "${1:-}")) x), 'none')"
+  if [ "${2:-}" = "2" ] && [ "$(at_least 2.63.0 "${1:-}")" = "1" ]; then
+    parkclosed=" union all select 'parkclosed', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and t.park_from_status is not null and t.park_rearm_after is null and t.park_rearm_attempts = 0 and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category = 'in_review') and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(park_order max "${1:-}")) x), 'none')"
   fi
   printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $rule${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${ready}${orphan}${rekey}${parkclosed}"
 }
@@ -594,10 +615,14 @@ if [ "${1:-}" = "--selfcheck" ]; then
   PCA_ON=$(strand_parkclosed_arm 2.78.38 2)
   [ -n "$PCA_ON" ] || { echo "selfcheck fail: parkclosed arm missing"; exit 1; }
   [ "$(printf '%s' "$PCA_ON" | grep -oF "select 'parkclosed'" | wc -l)" = "1" ] || { echo "selfcheck fail: parkclosed emission"; exit 1; }
-  for term in "s.category = 'paused'" "t.park_from_status is not null" "t.park_rearm_after is null" "t.park_rearm_attempts = 0" "o.category = 'in_review'" "r.status = 'PENDING'" "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" "max(coalesce(r.decided_at, r.created_at))" "m.body like 'review parked %'"; do
+  for term in "s.category = 'paused'" "t.park_from_status is not null" "t.park_rearm_after is null" "t.park_rearm_attempts = 0" "o.category = 'in_review'" "r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)" "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" "max(coalesce(r.decided_at, r.created_at))" "m.body like 'review parked %'" "a.payload->>'kind' = 'STATUS'" ") > coalesce((select max(m.created_at)"; do
     printf '%s' "$PCA_ON" | grep -qF "$term" || { echo "selfcheck fail: parkclosed term ($term)"; exit 1; }
   done
-  [ -z "$(strand_parkclosed_arm 2.62.5 2)" ] || { echo "selfcheck fail: parkclosed rearm-column floor"; exit 1; }
+  # the arm orders against the PARK's own note only: the task-wide helper's block body must
+  # never ride this slice (a stale auto-blocked note would order against the wrong flow)
+  printf '%s' "$PCA_ON" | grep -qF "auto-blocked:" && { echo "selfcheck fail: parkclosed borrows the task-wide record"; exit 1; }
+  [ -z "$(strand_parkclosed_arm 2.62.9 2)" ] || { echo "selfcheck fail: parkclosed rearm-column floor"; exit 1; }
+  [ -n "$(strand_parkclosed_arm 2.63.0 2)" ] || { echo "selfcheck fail: parkclosed rearm-column floor release"; exit 1; }
   [ -n "$(strand_parkclosed_arm 2.78.19 2)" ] || { echo "selfcheck fail: parkclosed pre-record emission"; exit 1; }
   printf '%s' "$(strand_parkclosed_arm 2.78.19 2)" | grep -qF ") > t.updated_at" || { echo "selfcheck fail: parkclosed retired ordering below the floor"; exit 1; }
   [ -z "$(strand_parkclosed_arm 2.78.38 1)" ] || { echo "selfcheck fail: parkclosed column gate"; exit 1; }
@@ -1114,7 +1139,7 @@ elif [ "$STRCOL" = "1" ]; then
       fi
       printf '%s\n' "${READYROUND:-none}" > "$PROBE_STATE/readyround.prev"
     fi
-    # (h) FINAL-parked round that CLOSED after the park with its flip lost (#431): the
+    # (h) DECISION-parked round that CLOSED after the park with its flip lost (#431): the
     # owner resolved the park (the verdict is recorded) and the settle flip never landed,
     # so the task sits BLOCKED with the park standing and a closed round. No sweep reaches
     # it by contract — `restoreUnblocked` withholds a FINAL park, the re-arm scan filters
@@ -1124,7 +1149,7 @@ elif [ "$STRCOL" = "1" ]; then
     PARKCLOSED=$(echo "$STROUT" | awk -F'|' '/^parkclosed/{print $2}')
     if [ -n "${PARKCLOSED:-}" ] && [ "$PARKCLOSED" != "none" ] && [ "$(cat "$PROBE_STATE/parkclosed.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/parkclosed.alerted" 2>/dev/null || echo none)" != "$PARKCLOSED" ]; then
-        anom+=("park_lost_flip: final-parked task whose round closed after the park and the settle flip never landed [$PARKCLOSED] — the park owns its own resolution: move the task (the verdict is already recorded)")
+        anom+=("park_lost_flip: decision-parked task whose round closed after the park and the settle flip never landed [$PARKCLOSED] — the park owns its own resolution: move the task (the verdict is already recorded)")
         echo "$PARKCLOSED" > "$PROBE_STATE/parkclosed.alerted"
       fi
     else
