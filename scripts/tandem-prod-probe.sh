@@ -136,8 +136,8 @@ flow_floor_met() {
 }
 # the newest gating FLOW RECORD for the task: the block/park note bodies are single-writer
 # machine strings (`auto-blocked: N subtask(s) open` #419, `review parked — <why>` #202)
-# and the 1:1 activity payload must carry kind='STATUS'. That payload is not free text:
-# each record body has exactly ONE writer (the gating block arm, parkRound), both mint
+# and the 1:1 activity payload must carry kind='STATUS'. The record is unforgeable by
+# free text: each record body has exactly ONE writer (the gating block arm, parkRound), both mint
 # kind='STATUS' and a fixed machine PREFIX ('auto-blocked:' / 'review parked — ') no
 # other body produces; the park's <why> tail IS free text but sits AFTER the matched
 # prefix, so it cannot mint a record — the same WRITER-SET argument as #430's owner
