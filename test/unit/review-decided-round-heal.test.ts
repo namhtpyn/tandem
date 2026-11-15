@@ -111,10 +111,15 @@ describe('decidedRoundScan (#472 SQL discriminators)', () => {
     expect(staleSettlePin()).toBeUndefined();
   });
 
-  it('never treats a round carrying a referral as decided (#472 r6)', async () => {
+  it('never treats a round carrying a referral as decided (#472 r6, refined #474)', async () => {
     const { text } = await emitted();
     expect(text).toContain("e.status = 'escalated'");
     expect(text).toContain('e.round = ' + '"task_reviews"."round"');
+    // #474: the block keys on the RECORDED target's missing row — a tombstone (no
+    // recorded target) or a satisfied referral never blocks the heal
+    expect(text).toContain('e.referral_target_id is not null');
+    expect(text).toContain('not exists (select 1 from task_reviews t2');
+    expect(text).toContain('t2.reviewer_id = e.referral_target_id');
   });
 
   it('excludes an owner record written in the same instant (conservative direction)', async () => {

@@ -84,7 +84,23 @@ test.describe('decided-round heal (#472)', () => {
       const rejected = `e2e-decided-rejected-${tag}`; // the all-rejected matrix arm -> cancelled
       const changes = `e2e-decided-changes-${tag}`; // the request-change matrix arm -> back to ready
       const stale = `e2e-decided-stale-${tag}`; // legal: the owner move outranks the CURRENT round's verdict even when an older round holds a later one
-      const escalated = `e2e-decided-escalated-${tag}`; // legal: a referral in flight still owes the target's vote
+      const escalated = `e2e-decided-escalated-${tag}`; // OWED referral (recorded target, no row): never a decided round
+      const tombstone = `e2e-decided-tombstone-${tag}`; // escalated with NO recorded target: a non-vote, settles
+
+      // the owed-referral pair: an escalator with its own row and a live target with none
+      const referralTarget = crypto.randomUUID();
+      const referralEscalator = crypto.randomUUID();
+      await sql.unsafe(
+        'insert into "user" (id, name, email, created_at, updated_at) values ($1, $2, $3, now(), now()), ($4, $5, $6, now(), now())',
+        [
+          referralTarget,
+          `E2E Referral Target ${tag}`,
+          `${referralTarget}@tandem.local`,
+          referralEscalator,
+          `E2E Referral Escalator ${tag}`,
+          `${referralEscalator}@tandem.local`,
+        ],
+      );
 
       await seedDecidedTask(sql, heal, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await seedDecidedTask(sql, legal, adminId, { writtenMinutes: 10, decidedSeconds: 300, ownerMoveMinutes: 1 });
@@ -101,14 +117,23 @@ test.describe('decided-round heal (#472)', () => {
         [`rev2-${stale}`, stale, adminId],
       );
       await seedOwnerMove(sql, stale, adminId, 2);
-      // a round carrying an ESCALATED row is NOT decided: the referral's replacement row
-      // may never have landed, so the round still owes a vote — the heal must never settle
-      // unanimity over the remaining (non-vote) rows.
+      // an OWED referral is NOT a decided round: the recorded target has no row, so the
+      // round still owes that vote — the heal must never settle unanimity without it.
+      // The escalation is 10s old (inside the handoff heal's 60s grace), so ONLY the
+      // decided-round scan's referral term can keep the tick off this task.
       await seedDecidedTask(sql, escalated, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
+      await sql.unsafe(
+        `insert into task_reviews (id, task_id, reviewer_id, round, status, note, source, referral_target_id, created_at, decided_at)
+         values ($1, $2, $3, 1, 'ESCALATED', 'escalated to the lead', 'ai', $4, now() - interval '30 minutes', now() - interval '10 seconds')`,
+        [`rev-esc-${escalated}`, escalated, referralEscalator, referralTarget],
+      );
+      // a TOMBSTONE (escalated with no recorded target — pre-#474 data or a deleted
+      // target) is a non-vote audit row: it never blocks the decided-round heal
+      await seedDecidedTask(sql, tombstone, adminId, { writtenMinutes: 10, decidedSeconds: 300 });
       await sql.unsafe(
         `insert into task_reviews (id, task_id, reviewer_id, round, status, note, source, created_at, decided_at)
          values ($1, $2, null, 1, 'ESCALATED', 'escalated to the lead', 'ai', now() - interval '30 minutes', now() - interval '240 seconds')`,
-        [`rev-esc-${escalated}`, escalated],
+        [`rev-tomb-${tombstone}`, tombstone],
       );
       await seedDecidedTask(sql, changes, adminId, {
         writtenMinutes: 10,
@@ -123,6 +148,19 @@ test.describe('decided-round heal (#472)', () => {
       expect(await statusOf(sql, fresh), 'a verdict inside the 60s grace may still be settling — never replayed').toBe(
         IN_REVIEW,
       );
+      expect(
+        await statusOf(sql, escalated),
+        'an OWED referral (recorded target, no row) is never a decided round — the heal must not settle unanimity without the target',
+      ).toBe(IN_REVIEW);
+      const escNotes = await sql.unsafe(
+        `select count(*)::int as n from task_message_activities a join task_messages m on m.id = a.message_id
+         where m.task_id = $1 and a.payload->>'kind' = 'VERDICT'`,
+        [escalated],
+      );
+      expect(
+        Number((escNotes[0] as { n?: number } | undefined)?.n ?? 0),
+        'the owed referral is never REPLAYED either — no verdict note spam per tick',
+      ).toBe(0);
 
       expect(await waitForStatus(sql, heal, DONE, 20_000), 'the tick must replay the lost settle to DONE').toBe(true);
       expect(
@@ -136,6 +174,10 @@ test.describe('decided-round heal (#472)', () => {
       expect(
         await waitForStatus(sql, changes, TODO, 20_000),
         'the request-change matrix arm replays back to ready',
+      ).toBe(true);
+      expect(
+        await waitForStatus(sql, tombstone, DONE, 20_000),
+        'a referral TOMBSTONE (no recorded target) never blocks the decided-round heal',
       ).toBe(true);
 
       // the replay is the SAME settle: its verdict note landed exactly once

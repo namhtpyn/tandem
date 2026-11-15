@@ -65,6 +65,8 @@ const h = vi.hoisted(() => ({
   priorBrief: '',
   currentRound: 0,
   pendingRows: [] as Array<{ status: string }>,
+  /** #474: the requeue refuses while the current round owes a recorded referral */
+  owesReferral: false,
   torndownThrows: false,
   parkThrows: false,
   pendingWhere: [] as unknown[][],
@@ -143,6 +145,7 @@ vi.mock('../../server/db/index', () => ({
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => (h.liveQueue.length > 0 ? (h.liveQueue.shift() as boolean) : h.live),
   currentRound: async () => h.currentRound,
+  currentRoundOwesReferral: async () => h.owesReferral,
   roundResultBody: async () => h.priorBrief,
   dispatchAiReviewTurns: async (taskId: string) => {
     if (h.dispatchThrows) throw new Error('dispatch boom');
@@ -305,6 +308,18 @@ describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
 });
 
 describe('requeue heal — a move into review over a round that cannot decide (#440)', () => {
+  it('an OWED referral blocks the requeue — the debt is never buried under a fresh round (#474)', async () => {
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    h.live = false;
+    h.task = { id: 'task-1', status: 'st-custom-review', updatedAt: T0, reviewers: [U1] };
+    h.liveIds = [U1];
+    h.owesReferral = true;
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
+    expect(h.opened).toEqual([]); // no fresh round on the stale roster
+    expect(h.dispatched).toEqual([]);
+    h.owesReferral = false;
+  });
+
   it('a DECIDED round requeued into review heals — fresh round on the stored roster, owner status kept', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;

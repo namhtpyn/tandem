@@ -1,0 +1,90 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2d3b1da5-a460-45cd-843a-c1c9f3e37d15",
+  "prevIds": [
+    "436f80e9-1784-4083-b2ef-486222f733ba"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "task_reviews",
+        "referral_target_id"
+      ],
+      "writes": [
+        "s|col|public.task_reviews.referral_target_id",
+        "n|col|public.task_reviews.referral_target_id",
+        "e|col|public.task_reviews.referral_target_id"
+      ],
+      "reads": [
+        "n|tbl|public.task_reviews",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_reviews"
+      ],
+      "writes": [
+        "s|fk|public.task_reviews.task_reviews_referral_target_id_user_id_fkey",
+        "n|fk|public.task_reviews.task_reviews_referral_target_id_user_id_fkey",
+        "e|fk|public.task_reviews.task_reviews_referral_target_id_user_id_fkey",
+        "n|con|public.task_reviews.task_reviews_referral_target_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.task_reviews",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.task_reviews.referral_target_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_reviews",
+        "name": "referral_target_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_reviews",
+        "name": "task_reviews_referral_target_id_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "referral_target_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    }
+  ]
+}

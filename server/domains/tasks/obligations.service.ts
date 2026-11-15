@@ -66,8 +66,9 @@ export async function resolveObligation(
   employeeId: string,
   role: ObligationRole,
   resolvedBy: string | null,
+  ex: DbExecutor = db,
 ) {
-  await db
+  await asDb(ex)
     .update(taskObligations)
     .set({ status: OBLIGATION_STATUS.FULFILLED, resolvedAt: new Date(), resolvedBy })
     .where(
