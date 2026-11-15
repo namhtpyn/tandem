@@ -1,3 +1,10 @@
+## [2.78.38](https://github.com/namhtpyn/tandem/compare/v2.78.37...v2.78.38) (2026-11-15)
+
+
+### Bug Fixes
+
+* [#466](https://github.com/namhtpyn/tandem/issues/466) — block/park flow records commit atomically; paused-row arms order verdicts against the record ([#478](https://github.com/namhtpyn/tandem/issues/478)) ([5b69697](https://github.com/namhtpyn/tandem/commit/5b6969732ef0c228bc4772bd7130c808866cc734))
+
 ## [2.78.37](https://github.com/namhtpyn/tandem/compare/v2.78.36...v2.78.37) (2026-11-15)
 
 
