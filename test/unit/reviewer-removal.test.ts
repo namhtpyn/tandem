@@ -393,6 +393,35 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(flip?.set.parkRearmAfter).toBeNull();
   });
 
+  it('an OWED referral blocks the removal matrix — the round still owes the target (#474)', async () => {
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.ESCALATED, reviewerId: 'rev-2', referralTargetId: 'rev-9' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+      ],
+    ];
+    // a void row is present (the removal signature) but the referral's recorded target
+    // never voted: the removal matrix must not settle unanimity without it
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.updates.filter((u) => u.table === 'tasks' && u.set.status)).toEqual([]);
+    expect(h.cancelledAll).toEqual([]);
+  });
+
+  it('a deleted escalator does NOT waive the recorded referral — the removal matrix waits (#474)', async () => {
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.ESCALATED, reviewerId: null, referralTargetId: 'rev-9' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+      ],
+    ];
+    // the escalator is gone, but the target never voted: the removal matrix must not
+    // settle without it — the handoff heal re-fires the recorded target
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.updates.filter((u) => u.table === 'tasks' && u.set.status)).toEqual([]);
+  });
+
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
     h.reviewReads = [
       [

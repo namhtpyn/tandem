@@ -711,9 +711,14 @@ export async function touchDispatcherRedisOk() {
  *  never rejects, like every other tick arm. */
 async function sweepStalledReviewsTick() {
   try {
-    const { sweepStalledReviewTurns, sweepLostReviewSettles, sweepDecidedRoundSettles } =
+    const { sweepStalledReviewTurns, sweepLostReviewSettles, sweepDecidedRoundSettles, sweepEscalationHandoffs } =
       await import('./review.service');
-    // SETTLE-REPLAY SWEEP (#402) RUNS FIRST: a crashed settle must be replayed before the
+    // ESCALATION-HANDOFF HEAL (#474) RUNS FIRST: a referral the handoff crashed on must
+    // mint its replacement row before the other arms judge the round — the row makes the
+    // round not-decided (the decided-round scan skips it) and the mint sweep then fires
+    // the target's turn. Never settles.
+    await sweepEscalationHandoffs();
+    // SETTLE-REPLAY SWEEP (#402) RUNS NEXT: a crashed settle must be replayed before the
     // #397 sweep mints the NEXT reviewer's turn — the round is sequential, and a mint
     // here would mask the replay (that turn's verdict opens a later run for the crashed
     // reviewer). The #397 scan also excludes the lost-settle shape, so the order is
