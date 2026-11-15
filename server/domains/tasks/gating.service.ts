@@ -241,10 +241,18 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         });
         return true;
       };
-      const gated = ex === db ? await db.transaction(flipAndRecord) : await flipAndRecord(ex);
-      if (gated) {
-        await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-        await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      if (ex === db) {
+        // own transaction: the events fire AFTER its commit (#397)
+        if (await db.transaction(flipAndRecord)) {
+          await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+          await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+        }
+      } else {
+        // RIDING a caller's open transaction: the flip + record join it, but events must
+        // wait for ITS commit — an event must never announce rows a rollback erases, and
+        // a publish must never run under a held row lock (#397). The caller publishes its
+        // own change set post-commit (confirmProposal does).
+        await flipAndRecord(ex);
       }
     } else if (open === 0 && cur.status === BLOCKED_STATUS && (cur.preBlockStatus || cur.parkFromStatus)) {
       // the unblock arm (leaf helper): a 'lost' CAS means a concurrent writer owns the

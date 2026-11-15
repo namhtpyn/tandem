@@ -270,7 +270,11 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
       .where(eq(taskProposals.id, proposalId));
     return { ok: true, events };
   });
-  // publish after commit so live readers never re-query mid-transaction
+  // publish after commit so live readers never re-query mid-transaction. A subtask
+  // proposal can auto-block the parent inside this transaction (#466): the block's flow
+  // record (and its thread note) land with the claim, so the activity event belongs to
+  // this post-commit set — the riding gating flip publishes nothing itself.
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;
 }

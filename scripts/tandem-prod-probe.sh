@@ -125,9 +125,11 @@ legacy_rule() {
 # flow record. The paused-row arms order a round's verdict against that record instead of
 # `tasks.updated_at` — the stamp is MASKABLE: any later task write (a title/description/
 # assignee edit) stamps past the verdict and a real strand reads as legal forever. A
-# record-less row (a block written before the floor) falls back to the stamp, so the
-# pre-floor era stays covered until it drains. RE-DERIVE the floor for the release that
-# actually ships the atomic writer — never assume it.
+# row with NO block/park note at all (pre-note-era state or a direct-SQL write) falls
+# back to the stamp, so those rows stay covered until they drain. The notes predate the
+# floor — what it adds is ATOMICITY: a pre-floor block whose note was lost to a crash is
+# a DECLARED era-bounded residual (an older record can order that row). RE-DERIVE the
+# floor for the release that actually ships the atomic writer — never assume it.
 FLOW_FLOOR=2.78.38
 flow_floor_met() {
   [ "$(at_least "$FLOW_FLOOR" "${1:-}")" = "1" ]
@@ -235,8 +237,10 @@ strand_sql() {
   # regression, or the ghost-task window the law declares (a task moved into the status
   # while it was being deleted). The arm also requires NEITHER origin to resolve to an
   # in-review home: the flip can still land through a resolvable park origin, so such a
-  # row is not this shape (the wedge's park exclusion, mirrored). VERSION-INDEPENDENT on purpose (a pre-guard image still produces
-  # the strand, so no image floor), but COLUMN-GATED like the block branch: the arm reads
+  # row is not this shape (the wedge's park exclusion, mirrored). VERSION-INDEPENDENT as
+  # an ARM on purpose (a pre-guard image still produces the strand, so no image floor on
+  # emission — only its ORDERING term is floor-gated, #466), but COLUMN-GATED like the
+  # block branch: the arm reads
   # park_from_status, and an origin column absent on the running image would kill the
   # WHOLE UNION (probe law #5 / #325) and blind every arm.
   orphan=""

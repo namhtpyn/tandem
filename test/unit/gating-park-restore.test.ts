@@ -31,6 +31,9 @@ const h = vi.hoisted(() => ({
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
   notes: [] as Array<{ taskId: string; body: string; meta: Record<string, unknown>; via: string; publish?: boolean }>,
+  transactionCalls: 0,
+  publishCount: 0,
+  txHandle: null as unknown,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -54,55 +57,65 @@ vi.mock('../../server/db/index', async () => {
       }),
     }),
   });
-  const tx = { __tx: true, update: mkUpdate('tx') };
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: () => {
-          // statusCategoryMap awaits .from() bare (all rows); terminalStatusIds chains
-          // .where(category in done|cancelled) — the mock must honor that predicate
-          const terminalRows = () => h.statusRows.filter((r) => r.category === 'done' || r.category === 'cancelled');
-          const q = {
-            then: (onFulfilled: (v: Array<{ id: string; category: string }>) => unknown) => {
-              // one-shot interleave hook: fires inside the statusCategoryMap await —
-              // the exact window a concurrent owner move can land in (#208)
-              const run = () => {
-                const hook = h.onStatusMapQuery;
-                h.onStatusMapQuery = null;
-                hook?.();
-                return h.statusRows;
-              };
-              return Promise.resolve().then(run).then(onFulfilled);
-            },
-            where: async () => terminalRows(),
-          };
-          return q;
+  const dbMock: Record<string, unknown> = {
+    select: () => ({
+      from: () => {
+        // statusCategoryMap awaits .from() bare (all rows); terminalStatusIds chains
+        // .where(category in done|cancelled) — the mock must honor that predicate
+        const terminalRows = () => h.statusRows.filter((r) => r.category === 'done' || r.category === 'cancelled');
+        const q = {
+          then: (onFulfilled: (v: Array<{ id: string; category: string }>) => unknown) => {
+            // one-shot interleave hook: fires inside the statusCategoryMap await —
+            // the exact window a concurrent owner move can land in (#208)
+            const run = () => {
+              const hook = h.onStatusMapQuery;
+              h.onStatusMapQuery = null;
+              hook?.();
+              return h.statusRows;
+            };
+            return Promise.resolve().then(run).then(onFulfilled);
+          },
+          where: async () => terminalRows(),
+        };
+        return q;
+      },
+    }),
+    query: {
+      tasks: {
+        findFirst: async (args: { where: { id: { eq: string } }; columns?: Record<string, unknown> }) => {
+          if (args.columns) h.readCols.push(args.columns);
+          return h.taskRows.get(args.where.id.eq) ?? null;
         },
-      }),
-      query: {
-        tasks: {
-          findFirst: async (args: { where: { id: { eq: string } }; columns?: Record<string, unknown> }) => {
-            if (args.columns) h.readCols.push(args.columns);
-            return h.taskRows.get(args.where.id.eq) ?? null;
-          },
-          findMany: async (args: { where: { parentTaskId: { eq: string } } }) => {
-            // one-shot interleave hook: fires at the children read — the block arm's
-            // read→write window (#208)
-            const hook = h.onChildrenQuery;
-            h.onChildrenQuery = null;
-            hook?.();
-            return h.childrenByParent.get(args.where.parentTaskId.eq) ?? [];
-          },
+        findMany: async (args: { where: { parentTaskId: { eq: string } } }) => {
+          // one-shot interleave hook: fires at the children read — the block arm's
+          // read→write window (#208)
+          const hook = h.onChildrenQuery;
+          h.onChildrenQuery = null;
+          hook?.();
+          return h.childrenByParent.get(args.where.parentTaskId.eq) ?? [];
         },
       },
-      update: mkUpdate('pool'),
-      // #466: the pool call opens a transaction; the block arm's flip + flow record must
-      // ride THIS handle (stamped 'tx'), never the pool surface
-      transaction: async (fn: (h: unknown) => Promise<unknown>) => fn(tx),
     },
+    update: mkUpdate('pool'),
+    // #466: the pool call opens a transaction; the block arm's flip + flow record must
+    // ride THIS handle (stamped 'tx'), never the pool surface
   };
+  const tx = { ...dbMock, __tx: true, update: mkUpdate('tx') };
+  h.txHandle = tx;
+  dbMock.transaction = async (fn: (h: unknown) => Promise<unknown>) => {
+    h.transactionCalls += 1;
+    return fn(tx);
+  };
+  return { asDb: (x: unknown) => x, db: dbMock };
 });
+
+// the change bus: count post-commit publishes (own transaction = 2; a borrowed one = 0 —
+// the caller owns its own post-commit publish, #397)
+vi.mock('../../server/domains/kernel/change-bus', () => ({
+  publishChange: async () => {
+    h.publishCount += 1;
+  },
+}));
 
 vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
@@ -177,6 +190,8 @@ beforeEach(() => {
   h.settled = [];
   h.answerHealed = [];
   h.notes = [];
+  h.transactionCalls = 0;
+  h.publishCount = 0;
   h.roundLive = true;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
@@ -538,6 +553,21 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(note?.via).toBe('tx');
     expect(note?.publish).toBe(false);
     expect(note?.meta).toMatchObject({ autoBlocked: true, open: 1 });
+    // own transaction: both change events fire after commit
+    expect(h.publishCount).toBe(2);
+  });
+
+  it('a caller transaction is RIDDEN, never nested; its events wait for the caller (#466)', async () => {
+    row('p', { status: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.doing }]);
+    await refreshParentGating('p', h.txHandle as never);
+    // never nested: the arm must not open a second transaction on top of the caller's
+    expect(h.transactionCalls).toBe(0);
+    // both writes join the caller's handle
+    expect(h.writeLog[0]?.via).toBe('tx');
+    expect(h.notes[0]?.via).toBe('tx');
+    // an event must never announce rows a caller's rollback erases (#397)
+    expect(h.publishCount).toBe(0);
   });
 
   it('a park winning the block-arm race keeps its park-origin memory — no stomp', async () => {
