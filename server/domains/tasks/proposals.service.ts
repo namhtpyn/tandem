@@ -79,7 +79,12 @@ async function logActivity(
   meta: Record<string, unknown> = {},
   ex: DbExecutor = db,
 ) {
-  await publishActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, meta, ex);
+  // #397/#466: a note written INSIDE a caller's transaction defers its change events to
+  // that caller's post-commit publish (confirmProposal publishes the set, including the
+  // gating record a subtask-spawned auto-block lands); the pool path publishes at once.
+  const riding = ex !== db;
+  await publishActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, meta, ex, { publish: !riding });
+  if (riding) return;
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }

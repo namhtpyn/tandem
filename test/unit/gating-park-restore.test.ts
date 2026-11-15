@@ -30,7 +30,14 @@ const h = vi.hoisted(() => ({
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
-  notes: [] as Array<{ taskId: string; body: string; meta: Record<string, unknown>; via: string; publish?: boolean }>,
+  notes: [] as Array<{
+    taskId: string;
+    body: string;
+    meta: Record<string, unknown>;
+    kind: string;
+    via: string;
+    publish?: boolean;
+  }>,
   transactionCalls: 0,
   publishCount: 0,
   txHandle: null as unknown,
@@ -123,14 +130,14 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     ...mod,
     logActivity: async (
       taskId: string,
-      _kind: unknown,
+      kind: string,
       _authorId: unknown,
       body: string,
       meta: Record<string, unknown>,
       ex: { __tx?: boolean } | undefined,
       opts: { publish?: boolean } | undefined,
     ) => {
-      h.notes.push({ taskId, body, meta, via: ex?.__tx === true ? 'tx' : 'pool', publish: opts?.publish });
+      h.notes.push({ taskId, body, meta, kind, via: ex?.__tx === true ? 'tx' : 'pool', publish: opts?.publish });
     },
     // #365: a restored round replays only when it is LIVE; an extinguished one settles
     openRoundLive: async () => h.roundLive,
@@ -553,8 +560,23 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(note?.via).toBe('tx');
     expect(note?.publish).toBe(false);
     expect(note?.meta).toMatchObject({ autoBlocked: true, open: 1 });
+    // WRITER→PROBE CONTRACT: the paused-row arms only count a record whose 1:1 payload
+    // carries kind='STATUS' — a NOTE kind here silently disables the ordering term
+    expect(note?.kind).toBe('STATUS');
     // own transaction: both change events fire after commit
     expect(h.publishCount).toBe(2);
+  });
+
+  it('the borrowed restore note rides the caller and defers its events (#466/#479 boundary)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p', h.txHandle as never);
+    const note = h.notes.find((n) => n.body.startsWith('unblocked:'));
+    expect(note, 'the restore arm must note the unblock').toBeDefined();
+    expect(note?.via).toBe('tx');
+    expect(note?.publish).toBe(false);
+    expect(note?.kind).toBe('STATUS');
+    expect(h.publishCount).toBe(0);
   });
 
   it('a caller transaction is RIDDEN, never nested; its events wait for the caller (#466)', async () => {

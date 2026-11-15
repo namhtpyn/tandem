@@ -146,6 +146,9 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+    // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
+    // carries kind='STATUS' — the park writer must keep minting it
+    expect(h.activities[0]?.payload.kind).toBe('STATUS');
   });
 
   it('the park flip and its flow record commit in ONE transaction (#466)', async () => {
@@ -158,6 +161,9 @@ describe('parkRound in-review guard (#199)', () => {
     // verdict against this row, so a landed park without it is a detector blind spot
     expect(h.activities[0]?.via).toBe('tx');
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+    // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
+    // carries kind='STATUS' — the park writer must keep minting it
+    expect(h.activities[0]?.payload.kind).toBe('STATUS');
   });
 
   it('a GATING auto-block from an in-review origin parks with the BLOCK origin (#419)', async () => {
