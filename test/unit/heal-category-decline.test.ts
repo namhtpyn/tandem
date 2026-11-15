@@ -138,6 +138,7 @@ vi.mock('../../server/db/index', () => ({
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => (h.liveQueue.length > 0 ? (h.liveQueue.shift() as boolean) : h.live),
   currentRound: async () => h.currentRound,
+  currentRoundOwesReferral: async () => false,
   roundResultBody: async () => h.priorBrief,
   dispatchAiReviewTurns: async (taskId: string) => {
     if (h.dispatchThrows) throw new Error('dispatch boom');

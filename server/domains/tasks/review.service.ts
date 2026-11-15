@@ -21,6 +21,7 @@ import {
   taskReviews,
   taskRuns,
   taskMessages,
+  taskMessageActivities,
   taskObligations,
   taskStatuses,
   aiEmployees,
@@ -515,6 +516,25 @@ export async function discardVoidRows(taskId: string) {
         isNull(taskReviews.reviewerId),
       ),
     );
+}
+
+/** does the CURRENT round still owe the vote of a recorded referral whose replacement
+ *  row never landed (#474)? An owner's move back to in-review must not be buried under a
+ *  FRESH round minted from the stale roster (the crashed handoff left the escalator on
+ *  it) — the 5s handoff heal completes the referral in the current round first, then the
+ *  requeue/settle proceeds. A NULL target (deleted) owes nothing. */
+export async function currentRoundOwesReferral(taskId: string): Promise<boolean> {
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select({
+      status: taskReviews.status,
+      reviewerId: taskReviews.reviewerId,
+      referralTargetId: taskReviews.referralTargetId,
+    })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
+  return referralOwesVote(rows);
 }
 
 /** settle a round left with NO live voter because its reviewer was deleted (#365):
@@ -1942,29 +1962,49 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       // skips ONLY the roster rewrite: the debt is real (the target never voted) and the
       // row must land, or a settle could never run again on this round.
       const minted = await db.transaction(async (tx) => {
-        if (!fresh.ownerMoved) {
-          const won = await tx
-            .update(tasks)
-            .set({ reviewers: nextRoster, updatedAt: new Date() })
-            .where(
-              and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: fresh.updatedAt, status: fresh.taskStatus })),
-            )
-            .returning({ id: tasks.id });
-          if (won.length === 0) return false;
-        }
+        // the task write runs in BOTH branches: it takes the task row lock and CASes the
+        // SCAN's stamp + status, so a concurrent status move serializes AFTER this mint (a
+        // move that already landed makes the CAS miss → next tick). Only the ownerMoved
+        // branch's SET differs: the roster stays the owner's, the stamp still bumps.
+        const won = await tx
+          .update(tasks)
+          .set(fresh.ownerMoved ? { updatedAt: new Date() } : { reviewers: nextRoster, updatedAt: new Date() })
+          .where(
+            and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: fresh.updatedAt, status: fresh.taskStatus })),
+          )
+          .returning({ id: tasks.id });
+        if (won.length === 0) return false;
         // a deleted escalator's approval obligations were already DROPPED by the removal
         // path (never cancelled) — nothing to resolve, and resolved_by would dangle
         if (escalatorId) await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId, tx);
         await spawnObligationTracked(fresh.taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date(), tx);
-        await logActivity(
-          fresh.taskId,
-          ACTIVITY_KIND.STATUS,
-          escalatorId,
-          body,
-          { escalated: true, from: escalatorId, to: targetId, round: fresh.round, recovered: true },
-          tx,
-          { publish: false },
-        );
+        // the live path writes the activity BEFORE the row (its completion marker), so a
+        // replay of that crash window must not stack a second escalation note
+        const activityAlready = (
+          await tx
+            .select({ id: taskMessages.id })
+            .from(taskMessages)
+            .innerJoin(taskMessageActivities, eq(taskMessageActivities.messageId, taskMessages.id))
+            .where(
+              and(
+                eq(taskMessages.taskId, fresh.taskId),
+                sql`${taskMessageActivities.payload}->>'escalated' = 'true'`,
+                sql`${taskMessageActivities.payload}->>'round' = ${String(fresh.round)}`,
+                sql`coalesce(${taskMessageActivities.payload}->>'from', '') = ${escalatorId ?? ''}`,
+              ),
+            )
+            .limit(1)
+        )[0];
+        if (!activityAlready)
+          await logActivity(
+            fresh.taskId,
+            ACTIVITY_KIND.STATUS,
+            escalatorId,
+            body,
+            { escalated: true, from: escalatorId, to: targetId, round: fresh.round, recovered: true },
+            tx,
+            { publish: false },
+          );
         await tx.insert(taskReviews).values({
           id: uuidv7(),
           taskId: fresh.taskId,
@@ -3126,9 +3166,6 @@ export async function escalateReview(
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, taskId));
-  await db
-    .insert(taskReviews)
-    .values({ id: uuidv7(), taskId, reviewerId: targetId, round, status: REVIEW_STATUS.PENDING });
   await resolveObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, reviewerId).catch(() => {});
   await spawnObligation(taskId, targetId, OBLIGATION_ROLE.APPROVAL, new Date());
   await logActivity(
@@ -3138,6 +3175,13 @@ export async function escalateReview(
     `review escalated to ${targetName2}${why ? ` — ${why}` : ''}`,
     { escalated: true, from: reviewerId, to: targetId, round },
   );
+  // ROW LAST (#474 r5): the replacement row is the handoff's COMPLETION MARKER — a crash
+  // anywhere before it leaves no row, so the 5s heal replays the whole handoff (its
+  // obligation spawn dedupes and its activity write checks for the record first); a crash
+  // after it leaves nothing owed (the stalled sweep re-fires the pending turn).
+  await db
+    .insert(taskReviews)
+    .values({ id: uuidv7(), taskId, reviewerId: targetId, round, status: REVIEW_STATUS.PENDING });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   if (await selfHealEscalationIfSettled(taskId, task.reviewers)) return { outcome: 'superseded' };
   // TARGETED (#397 r3): the replacement's row is the newest — a plain mint would hand the

@@ -24,6 +24,7 @@ import { hasOpenChildren, refreshParentGating } from './gating.service';
 import {
   canonicalStoredUuid,
   currentRound,
+  currentRoundOwesReferral,
   discardVoidRows,
   dispatchAiReviewTurns,
   liveReviewers,
@@ -178,6 +179,11 @@ async function healRequeueOnce(taskId: string): Promise<boolean> {
     // a VOID pending row belongs to the #365 settle (the matrix retries it) —
     // the heal never mints while one remains, even after a settle's lost CAS
     if (await voidPendingRoundRemains(taskId)) return false;
+    // REFERRAL DEBT (#474): the current round owes a recorded referral's vote — opening a
+    // fresh round from the stale roster would bury that debt forever (the crashed handoff
+    // left the escalator on the roster). The 5s handoff heal completes the referral in
+    // the current round; the round then lives and this requeue is unnecessary.
+    if (await currentRoundOwesReferral(taskId)) return false;
     if (await holdForOpenSubtasks(taskId)) return false;
     const roster = task.reviewers ?? [];
     const reviewers = await liveReviewers(roster);
