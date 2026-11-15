@@ -309,6 +309,8 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
     );
     return { ok: true };
   });
+  // the terminal decision note defers its events here (#466 deferral): publish BOTH
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;
 }
