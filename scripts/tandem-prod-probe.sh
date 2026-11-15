@@ -137,11 +137,10 @@ flow_floor_met() {
 # the newest gating FLOW RECORD for the task: the block/park note bodies are single-writer
 # machine strings (`auto-blocked: N subtask(s) open` #419, `review parked — <why>` #202)
 # and the 1:1 activity payload must carry kind='STATUS'. That payload is not free text:
-# every STATUS-kind payload writer uses a FIXED machine body, the note surface mints
-# NOTE, and no caller passes a `kind` in meta (the payload spreads caller meta over the
-# machine kind, so the guarantee is the writer set) — the same WRITER-SET argument as
-# #430's owner record. NULL for a row with no such note: callers coalesce to
-# tasks.updated_at.
+# each record body has exactly ONE writer (the gating block arm, parkRound), both mint
+# kind='STATUS' with a machine-composed body no user-supplied text reaches — the same
+# WRITER-SET argument as #430's owner record. NULL for a row with no such note: callers
+# coalesce to tasks.updated_at.
 flow_record_ts() {
   printf "%s" "(select max(m.created_at) from task_messages m where m.task_id = t.id and (m.body like 'auto-blocked:%' or m.body like 'review parked %') and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS'))"
 }

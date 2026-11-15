@@ -102,9 +102,6 @@ vi.mock('../../server/db/index', async () => {
         },
       }),
     }),
-    // #466: parkRound's flip + flow record run inside db.transaction; this suite
-    // asserts the flip payloads, so the double just runs the callback on the same
-    // handle (atomicity is pinned in review-park-guard, TXN-DOUBLE)
   };
   // #466: parkRound's flip + flow record run inside db.transaction; this suite asserts
   // the flip payloads, so the double just runs the callback on the same handle
