@@ -1,3 +1,16 @@
+## [2.78.39](https://github.com/namhtpyn/tandem/compare/v2.78.38...v2.78.39) (2026-11-15)
+
+
+### Bug Fixes
+
+* [#431](https://github.com/namhtpyn/tandem/issues/431) read the final-park round that closed with its settle flip lost ([4e9a189](https://github.com/namhtpyn/tandem/commit/4e9a1896c7fd2ed545f98e6ace8bf03c36495b49))
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r1 — 2.63.0 column floor, park-only record term, record + split pins ([eab2f67](https://github.com/namhtpyn/tandem/commit/eab2f67ba54fffa27f11372a3ba612abfe3662b9))
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r2 — void PENDING rows are non-votes; accurate resolution story; wide pin set ([79ac390](https://github.com/namhtpyn/tandem/commit/79ac390cd29730189d1ff54a2efed602b54afe03))
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r3 — shape-only arm (both crash orders), referral-owed clause, floor pins ([f104667](https://github.com/namhtpyn/tandem/commit/f104667d37983b7d1d1ba816c727ccd8832c05d5)), closes [#474](https://github.com/namhtpyn/tandem/issues/474)
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r4 — revert to the ordering arm; referral-owed clause; 2.78.37 column floor ([b0212c6](https://github.com/namhtpyn/tandem/commit/b0212c6ae64d76448f790c1875e012135fefd7d1))
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r5 — referral fixtures asserted, waiver modelled, slice + round pins ([c35dd37](https://github.com/namhtpyn/tandem/commit/c35dd37b7bab3cdae223d3b611ef2a362fa88b44))
+* **review:** [#431](https://github.com/namhtpyn/tandem/issues/431) r6 — two-episode + null-target seeds, exact-delta mutant proof, SPEC boundaries ([3cf1801](https://github.com/namhtpyn/tandem/commit/3cf18019258610db708665deeae18b2aaf8b1c0c))
+
 ## [2.78.38](https://github.com/namhtpyn/tandem/compare/v2.78.37...v2.78.38) (2026-11-15)
 
 
