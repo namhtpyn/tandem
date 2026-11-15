@@ -83,6 +83,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
       const parkReferralMet = `probe-park-refmet-${tag}`; // fires: the referral's replacement row landed — no vote owed
       const parkWaiverLate = `probe-park-waiverlate-${tag}`; // fires: a waiver-row park with a LATE verdict is a real strand
       const parkReferralOldRound = `probe-park-refold-${tag}`; // fires: a PREVIOUS round's escalation owes nothing
+      const parkReferralNullTarget = `probe-park-refnull-${tag}`; // fires: an escalation with NO recorded target owes nothing
+      const parkTwoEpisodes = `probe-park-2ep-${tag}`; // silent: the NEWEST park note is the one that orders (a min() arm fires here)
       const parkVoid = `probe-park-void-${tag}`; // fires: a null-reviewer PENDING row is a NON-VOTE (settleRound's own filter)
       const parkOldRoundVerdict = `probe-park-oldround-${tag}`; // silent: a verdict in an OLDER round is not this round's
       const parkEscalatedOnly = `probe-park-escalated-${tag}`; // silent: ESCALATED is not a verdict
@@ -163,6 +165,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
       await seedTask({ id: parkReferralMet, status: BLOCKED, park: IN_REVIEW, written: 20 });
       await seedTask({ id: parkWaiverLate, status: BLOCKED, park: IN_REVIEW, written: 20 });
       await seedTask({ id: parkReferralOldRound, status: BLOCKED, park: IN_REVIEW, written: 30 });
+      await seedTask({ id: parkReferralNullTarget, status: BLOCKED, park: IN_REVIEW, written: 20 });
+      await seedTask({ id: parkTwoEpisodes, status: BLOCKED, park: IN_REVIEW, written: 60 });
       await seedTask({ id: parkVoid, status: BLOCKED, park: IN_REVIEW, written: 10 });
       await seedTask({ id: parkOldRoundVerdict, status: BLOCKED, park: IN_REVIEW, written: 30 });
       await seedTask({ id: parkEscalatedOnly, status: BLOCKED, park: IN_REVIEW, written: 30 });
@@ -224,6 +228,15 @@ test.describe('prod probe decision-park arm (#431)', () => {
       // a PREVIOUS round's escalation owes nothing to THIS round
       await seedReview(parkReferralOldRound, 'ESCALATED', 10, null, 1, adminId);
       await seedReview(parkReferralOldRound, 'APPROVED', 1, null, 2);
+      // an escalation with NO recorded target (pre-#474 row or a deleted target) owes nothing
+      await seedReview(parkReferralNullTarget, 'APPROVED', 1);
+      await seedReview(parkReferralNullTarget, 'ESCALATED', 20);
+      // TWO park episodes: episode-1's note is OLDER than the verdict, episode-2's is NEWER,
+      // and the row still stands — the NEWEST note is what orders, so this is silent (a
+      // min() arm would read episode-1 and fire on a legal row)
+      await seedNote(parkTwoEpisodes, 'review parked — first episode', 'STATUS', 70);
+      await seedReview(parkTwoEpisodes, 'APPROVED', 50);
+      await seedNote(parkTwoEpisodes, 'review parked — second episode', 'STATUS', 5);
       await seedReview(parkRearmOwned, 'APPROVED', 1);
       await seedReview(parkExhausted, 'APPROVED', 1);
       await seedReview(parkRekeyed, 'APPROVED', 1);
@@ -266,6 +279,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
         parkReferralMet,
         parkWaiverLate,
         parkReferralOldRound,
+        parkReferralNullTarget,
       ]) {
         expect(ids.has(fires), `${fires} must fire`).toBe(true);
       }
@@ -284,6 +298,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
         parkOldRoundVerdict,
         parkEscalatedOnly,
         parkReferral,
+        parkTwoEpisodes,
       ]) {
         expect(ids.has(silent), `${silent} must stay silent`).toBe(false);
       }
@@ -366,7 +381,9 @@ test.describe('prod probe decision-park arm (#431)', () => {
         {
           name: 'verdict status list',
           sql: armSql.replace("r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')", "r.status <> 'PENDING'"),
-          fire: [parkEscalatedOnly],
+          // every non-PENDING row counts as a verdict then (the older-round SUPERSEDED seed
+          // flips too — declared)
+          fire: [parkEscalatedOnly, parkOldRoundVerdict],
           silent: [],
         },
         {
@@ -387,7 +404,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
         {
           name: 'MAX ordering',
           sql: armSql.replace('max(coalesce(r.decided_at, r.created_at))', 'min(coalesce(r.decided_at, r.created_at))'),
-          fire: [parkLost],
+          fire: [],
           silent: [parkSplit],
         },
         {
@@ -396,8 +413,21 @@ test.describe('prod probe decision-park arm (#431)', () => {
             /coalesce\(\(select max\(m\.created_at\) from task_messages m where m\.task_id = t\.id and m\.body like 'review parked %' and exists \(select 1 from task_message_activities a where a\.message_id = m\.id and a\.payload->>'kind' = 'STATUS'\)\), t\.updated_at\)/,
             't.updated_at',
           ),
-          fire: [],
+          // the stamp fallback makes every record-dependent seed fire — declared
+          fire: [parkTwoEpisodes, parkRecordEqual, parkRecordNewer],
           silent: [parkMasked],
+        },
+        {
+          name: 'newest park note',
+          sql: armSql.replace('max(m.created_at)', 'min(m.created_at)'),
+          fire: [parkTwoEpisodes],
+          silent: [],
+        },
+        {
+          name: 'referral target term',
+          sql: armSql.replace(' and e.referral_target_id is not null', ''),
+          fire: [],
+          silent: [parkReferralNullTarget],
         },
         {
           name: 'kind gate',
@@ -426,6 +456,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
         const mutant = await runArm(m.sql);
         for (const id of m.fire) expect(mutant.has(id), `removing the ${m.name} must fire ${id}`).toBe(true);
         for (const id of m.silent) expect(mutant.has(id), `removing the ${m.name} must lose ${id}`).toBe(false);
+        const surprise = [...mutant].filter((id) => !ids.has(id) && !m.fire.includes(id));
+        expect(surprise, `removing the ${m.name} flipped undeclared rows`).toEqual([]);
       }
     } finally {
       await sql.close();
