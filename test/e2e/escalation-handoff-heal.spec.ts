@@ -30,10 +30,13 @@ async function seedReviewTask(
   id: string,
   opts: { reviewers: string[]; assigneeId: string; createdMinutes?: number },
 ) {
+  // pass the array as an explicit Postgres literal: a JS array binds differently across
+  // drivers (CI stringified it comma-joined and Postgres rejected the malformed literal)
+  const roster = `{${opts.reviewers.join(',')}}`;
   await sql.unsafe(
     `insert into tasks (id, title, status, assignee_id, reviewers, created_at, updated_at)
      values ($1, $1, $2, $3, $4::text[], now() - ($5::int * interval '1 minute'), now() - ($5::int * interval '1 minute'))`,
-    [id, IN_REVIEW, opts.assigneeId, opts.reviewers, opts.createdMinutes ?? 30],
+    [id, IN_REVIEW, opts.assigneeId, roster, opts.createdMinutes ?? 30],
   );
 }
 
