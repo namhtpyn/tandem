@@ -126,6 +126,40 @@ type GatingRow = {
  *  strand a settle/dispatch with no restore row behind it. */
 export type AfterCommit = () => Promise<void>;
 
+/**
+ * #479: the post-commit queue a borrowing caller drains after its transaction commits.
+ * A branded queue (not a bare array) so a borrowed call cannot be handed a throwaway
+ * `[]` and silently drop the resume work; `drain` is the single place that runs the
+ * closures and isolates their failures — a throwing resume must never skip the rest or
+ * suppress the caller's own post-commit work (its publish). Draining is at-most-once:
+ * the queue empties as it drains, so a second drain is a no-op.
+ */
+export class AfterCommitQueue {
+  readonly #work: AfterCommit[] = [];
+
+  public defer(work: AfterCommit): void {
+    this.#work.push(work);
+  }
+
+  /** run every queued closure in FIFO order; returns how many ran */
+  public async drain(): Promise<number> {
+    const work = this.#work.splice(0);
+    for (const job of work) {
+      try {
+        await job();
+      } catch (e) {
+        log.warn('gating: post-commit resume failed:', e instanceof Error ? e.message : e);
+      }
+    }
+    return work.length;
+  }
+
+  /** closures not yet drained (a rollback path leaves them unrun) */
+  public get pending(): number {
+    return this.#work.length;
+  }
+}
+
 /** the unblock arm (#208/#202/#365/#419): restore a row whose children all landed
  *  terminal. A park the LADDER does not own (a decision-class park, or a FINAL park
  *  past the ladder) is the round's own stop while its round is live — it is withheld
@@ -134,7 +168,7 @@ export type AfterCommit = () => Promise<void>;
 async function restoreUnblocked(
   cur: GatingRow,
   ex: DbExecutor,
-  afterCommit?: AfterCommit[],
+  afterCommit?: AfterCommitQueue,
 ): Promise<'restored' | 'lost' | 'withheld'> {
   const d = asDb(ex);
   // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
@@ -201,7 +235,7 @@ async function restoreUnblocked(
     // the entry guard already refused a collector-less borrow; kept explicit so the
     // deferral can never silently fall back to running pre-commit
     if (!afterCommit) throw new Error('restoreUnblocked: borrowed restore without a collector (#479)');
-    afterCommit.push(resume);
+    afterCommit.defer(resume);
   }
   return 'restored';
 }
@@ -218,7 +252,7 @@ async function restoreUnblocked(
  * collector is a contract error, refused before any read or write. The collector is a
  * caller obligation: drain every closure after commit (confirmProposal does).
  */
-export async function refreshParentGating(taskId: string, ex: DbExecutor = db, afterCommit?: AfterCommit[]) {
+export async function refreshParentGating(taskId: string, ex: DbExecutor = db, afterCommit?: AfterCommitQueue) {
   if (ex !== db && !afterCommit) {
     throw new Error('refreshParentGating: a borrowed executor requires an afterCommit collector (#479)');
   }

@@ -13,9 +13,13 @@ const h = vi.hoisted(() => ({
   published: [] as string[],
   txDone: false,
   publishedBeforeCommit: 0,
-  // #479: the gating restore hands its resume work back through the collector
+  // #479: the gating restore hands its resume work back through the queue
   gatingCalls: [] as number[],
+  executors: [] as string[],
   resumedAt: [] as boolean[],
+  resumedDone: false,
+  publishedAfterResume: [] as boolean[],
+  txRef: null as unknown,
   failNote: false,
 }));
 
@@ -39,6 +43,7 @@ vi.mock('../../server/db/index', async () => {
       },
     }),
   };
+  h.txRef = tx;
   return {
     asDb: (x: unknown) => x,
     db: {
@@ -80,12 +85,33 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
-  // #479: a riding gating restore never runs its resume work itself — it appends it to
-  // the caller's collector, and the caller drains it post-commit
-  refreshParentGating: async (_taskId: string, _ex: unknown, afterCommit?: Array<() => Promise<void>>) => {
-    h.gatingCalls.push(afterCommit?.length ?? -1);
-    afterCommit?.push(async () => {
+  // the real branded queue (gating.service is mocked wholesale here, but proposals
+  // constructs the queue itself — a plain mock array would not exercise the same shape)
+  AfterCommitQueue: class {
+    #work: Array<() => Promise<void>> = [];
+    defer(work: () => Promise<void>) {
+      this.#work.push(work);
+    }
+    async drain() {
+      const work = this.#work.splice(0);
+      for (const job of work) await job();
+      return work.length;
+    }
+    get pending() {
+      return this.#work.length;
+    }
+  },
+  // #479: a riding gating restore never runs its resume work itself — it defers it on
+  // the caller's queue, and the caller drains it post-commit. The executor is recorded:
+  // handing the pool `db` instead of `tx` is the exact regression this suite must catch.
+  refreshParentGating: async (_taskId: string, ex: unknown, queue?: { defer: (w: () => Promise<void>) => void }) => {
+    h.executors.push(ex === h.txRef ? 'tx' : 'other');
+    h.gatingCalls.push(queue ? 1 : 0);
+    queue?.defer(async () => {
+      // a real resume awaits I/O: the drain must be awaited, not fire-and-forget
+      await Promise.resolve();
       h.resumedAt.push(h.txDone);
+      h.resumedDone = true;
     });
   },
 }));
@@ -97,6 +123,8 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
     publishChange: async (resource: string) => {
       // an event announced inside the transaction would be erased by a rollback (#397)
       if (!h.txDone) h.publishedBeforeCommit += 1;
+      // ...and the caller's post-commit resume must have finished BEFORE its publish
+      h.publishedAfterResume.push(h.resumedDone);
       h.published.push(resource);
     },
   };
@@ -111,6 +139,12 @@ beforeEach(() => {
   h.published = [];
   h.txDone = false;
   h.publishedBeforeCommit = 0;
+  h.gatingCalls = [];
+  h.executors = [];
+  h.resumedAt = [];
+  h.resumedDone = false;
+  h.publishedAfterResume = [];
+  h.failNote = false;
 });
 
 describe('proposal decision events (#466)', () => {
@@ -139,15 +173,20 @@ describe('borrowed-restore deferral wiring (#479)', () => {
 
   it('confirm: the riding restore resume drains only after the commit', async () => {
     await confirmProposal('proposal-1', 'user-1');
-    expect(h.gatingCalls).toEqual([0]); // a fresh collector was handed down
+    expect(h.gatingCalls).toEqual([1]); // a queue was handed down
+    expect(h.executors).toEqual(['tx']); // ...on the CALLER's transaction, never the pool
     expect(h.resumedAt).toEqual([true]); // ran with txDone already true — post-commit
     expect(h.publishedBeforeCommit).toBe(0);
+    // the drain is awaited: both publishes follow the finished resume (a fire-and-forget
+    // drain would publish first and leave resumedDone false here)
+    expect(h.publishedAfterResume).toEqual([true, true]);
   });
 
   it('confirm: a rollback after the gating call discards the resume work', async () => {
     h.failNote = true;
     await expect(confirmProposal('proposal-1', 'user-1')).rejects.toThrow('decision note write failed');
-    expect(h.gatingCalls).toEqual([0]);
+    expect(h.gatingCalls).toEqual([1]);
     expect(h.resumedAt).toEqual([]); // never drained — no settle/dispatch outlives the rollback
+    expect(h.resumedDone).toBe(false);
   });
 });

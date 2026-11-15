@@ -16,7 +16,7 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
-import { refreshParentGating, type AfterCommit } from './gating.service';
+import { AfterCommitQueue, refreshParentGating } from './gating.service';
 import { logActivity as publishActivity } from './review.service';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
@@ -138,7 +138,7 @@ async function executeSubtasks(
   confirmedBy: string,
   events: string[],
   ex: DbExecutor,
-  afterCommit: AfterCommit[],
+  afterCommit: AfterCommitQueue,
 ) {
   for (const item of payload.items ?? []) {
     const { assigneeId, escalated } = await resolveAssignee(item, task, events, ex);
@@ -212,7 +212,7 @@ async function escalateReassignToSupervisor(
 export async function confirmProposal(proposalId: string, confirmedBy: string, note = '') {
   // #479: a riding gating restore hands its resume work back here — drained only after
   // the transaction commits, so a rollback can never strand a settle or a dispatch.
-  const afterCommit: AfterCommit[] = [];
+  const afterCommit = new AfterCommitQueue();
   const result = await db.transaction(async (tx) => {
     const rows = await tx.query.taskProposals.findMany({
       columns: { taskId: true, kind: true, payload: true, status: true },
@@ -287,7 +287,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
   // this post-commit set — the riding gating flip publishes nothing itself.
   // The riding gating restore's resume work drains first, still post-commit (#479):
   // only a COMMITTED restore may replay a park or settle an extinguished round.
-  for (const work of afterCommit) await work();
+  await afterCommit.drain();
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;

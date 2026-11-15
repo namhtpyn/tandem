@@ -163,7 +163,11 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 import { db as mockedDb } from '../../server/db/index';
-import { refreshParentGating, resolveParkRestoreTarget } from '../../server/domains/tasks/gating.service';
+import {
+  AfterCommitQueue,
+  refreshParentGating,
+  resolveParkRestoreTarget,
+} from '../../server/domains/tasks/gating.service';
 import { mockDb, tasks as dbTasks } from './helpers/mock-db';
 
 const SEED_STATUSES = [
@@ -578,7 +582,7 @@ describe('GUARDED GATING WRITE (#208)', () => {
     // to in-review replays nothing by #202 parity — the settle arm has its own pin)
     row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
-    const afterCommit: Array<() => Promise<void>> = [];
+    const afterCommit = new AfterCommitQueue();
     await refreshParentGating('p', h.txHandle as never, afterCommit);
     const note = h.notes.find((n) => n.body.startsWith('unblocked:'));
     expect(note, 'the restore arm must note the unblock').toBeDefined();
@@ -587,17 +591,17 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(note?.kind).toBe('STATUS');
     expect(h.publishCount).toBe(0);
     // #479: the resume work is handed to the caller, NOT run pre-commit
-    expect(afterCommit).toHaveLength(1);
+    expect(afterCommit.pending).toBe(1);
     expect(h.settled).toEqual([]);
     expect(h.replayed).toEqual([]);
-    await afterCommit[0]!();
+    expect(await afterCommit.drain()).toBe(1);
     expect(h.replayed).toEqual(['p']); // live round → the parked turn replays after commit
   });
 
   it('a caller transaction is RIDDEN, never nested; its events wait for the caller (#466)', async () => {
     row('p', { status: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.doing }]);
-    const afterCommit: Array<() => Promise<void>> = [];
+    const afterCommit = new AfterCommitQueue();
     await refreshParentGating('p', h.txHandle as never, afterCommit);
     // never nested: the arm must not open a second transaction on top of the caller's
     expect(h.transactionCalls).toBe(0);
@@ -607,7 +611,7 @@ describe('GUARDED GATING WRITE (#208)', () => {
     // an event must never announce rows a caller's rollback erases (#397)
     expect(h.publishCount).toBe(0);
     // a block-only walk queues no resume work; a caller drains what it is handed
-    expect(afterCommit).toEqual([]);
+    expect(afterCommit.pending).toBe(0);
   });
 
   it('a park winning the block-arm race keeps its park-origin memory — no stomp', async () => {
@@ -650,16 +654,43 @@ describe('borrowed-restore deferral (#479)', () => {
     row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     h.roundLive = false;
-    const afterCommit: Array<() => Promise<void>> = [];
+    const afterCommit = new AfterCommitQueue();
     await refreshParentGating('p', h.txHandle as never, afterCommit);
     // the restore write landed on the caller's handle, but the settle has NOT run
     expect(h.writeLog[0]?.via).toBe('tx');
-    expect(afterCommit).toHaveLength(1);
+    expect(afterCommit.pending).toBe(1);
     expect(h.settled).toEqual([]);
     // the caller's rollback path simply never drains the collector — nothing to undo.
     // Its commit path drains it here:
-    await afterCommit[0]!();
+    expect(await afterCommit.drain()).toBe(1);
     expect(h.settled).toEqual(['p']);
+  });
+
+  it('a borrowed QUESTION-flow restore defers its holder heal too (#369/#479)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.waitingAnswer });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    const afterCommit = new AfterCommitQueue();
+    await refreshParentGating('p', h.txHandle as never, afterCommit);
+    // the heal writes the holder's status on the pool — it must never run pre-commit
+    expect(h.answerHealed).toEqual([]);
+    expect(afterCommit.pending).toBe(1);
+    expect(await afterCommit.drain()).toBe(1);
+    expect(h.answerHealed).toEqual(['p']);
+  });
+
+  it('drain isolates a throwing resume, keeps draining, and is at-most-once', async () => {
+    const afterCommit = new AfterCommitQueue();
+    const ran: string[] = [];
+    afterCommit.defer(async () => {
+      throw new Error('boom');
+    });
+    afterCommit.defer(async () => {
+      ran.push('second');
+    });
+    expect(await afterCommit.drain()).toBe(2); // both ran; the throw did not skip the second
+    expect(ran).toEqual(['second']);
+    expect(afterCommit.pending).toBe(0);
+    expect(await afterCommit.drain()).toBe(0); // a second drain is a no-op — never a replay
   });
 
   it('own-pool restores keep the immediate order, collector or not', async () => {
@@ -672,9 +703,10 @@ describe('borrowed-restore deferral (#479)', () => {
     // the deferral keys on the EXECUTOR, never on the collector's presence: an own-pool
     // call that also passes a collector must still run inline and leave it empty
     h.settled = [];
-    const afterCommit: Array<() => Promise<void>> = [];
+    const afterCommit = new AfterCommitQueue();
     await refreshParentGating('p', mockedDb as never, afterCommit);
     expect(h.settled).toEqual(['p']);
-    expect(afterCommit).toEqual([]);
+    expect(afterCommit.pending).toBe(0);
+    expect(await afterCommit.drain()).toBe(0); // nothing was queued: the own path ran inline
   });
 });
