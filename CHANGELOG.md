@@ -1,3 +1,16 @@
+## [2.78.37](https://github.com/namhtpyn/tandem/compare/v2.78.36...v2.78.37) (2026-11-15)
+
+
+### Bug Fixes
+
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r1 — a deleted escalator is removal debris, never an owed referral ([690a6cd](https://github.com/namhtpyn/tandem/commit/690a6cd44509649934662966de3c8df954b9a9ff))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r2 — removal-matrix guard, assignee park, atomic CAS mint (blind review r1) ([8b75caa](https://github.com/namhtpyn/tandem/commit/8b75caad8183316f5282ae52ec1130b16a3417b3))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r3 — deleted escalators re-fire, scan-pinned CAS, atomic handoff (blind review r2) ([1cdf44c](https://github.com/namhtpyn/tandem/commit/1cdf44c018bdbfe6a95222167fd13caa11ec7a5c))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r4 — owner moves never waive the debt, activity event published (blind review r3) ([4d88e1f](https://github.com/namhtpyn/tandem/commit/4d88e1fa65f247dd0dc0aedaf82a5b8907939321))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r5 — row-last handoff, both-branch CAS, requeue referral gate (blind review r4) ([fbbe933](https://github.com/namhtpyn/tandem/commit/fbbe933176b754ec26786c224206273fb39763ac))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) r6 — impossible referrals are waived, not parked forever; spec aligns (blind review r6 cap) ([e57a7a8](https://github.com/namhtpyn/tandem/commit/e57a7a87fde5d69f97c6ad5408cefef1ae48f2ab))
+* **review:** [#474](https://github.com/namhtpyn/tandem/issues/474) re-fire a crashed referral handoff from its persisted target ([1890148](https://github.com/namhtpyn/tandem/commit/189014880953063659ffe0c1067dd92f874f7c63))
+
 ## [2.78.36](https://github.com/namhtpyn/tandem/compare/v2.78.35...v2.78.36) (2026-11-14)
 
 
