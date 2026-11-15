@@ -1796,10 +1796,12 @@ export type EscalationHandoffCandidate = {
   referralTargetId: string | null;
   note: string | null;
   decidedAt: Date | null;
-  /** the task row's stamp + status at scan time — the sweep pins nothing to them (it
-   *  never flips the task): the decision-time re-read repeats the scan instead */
+  /** the task row's stamp + status at scan time — the mint's CAS pins the roster write
+   *  to them (a task write after the scan WINS; the next tick re-reads) */
   updatedAt: Date;
   taskStatus: string;
+  /** an owner status write newer than the escalation: complete the row, skip the roster */
+  ownerMoved: boolean;
 };
 
 /** ESCALATION-HANDOFF HEAL (#474): the referral handoff writes the ESCALATED row, the
@@ -1819,10 +1821,10 @@ export type EscalationHandoffCandidate = {
  *    NULL author;
  *  - the escalation is older than ESCALATION_HANDOFF_GRACE_MS (a live handoff lands in
  *    milliseconds, so the grace never races the request that is still writing);
- *  - NO OWNER STATUS WRITE newer than the escalation (#430): the `status: …` activity
- *    body with its 1:1 STATUS payload — a manual move after the crash wins and excludes
- *    the heal. No legal manual write can REMOVE a review row, so the shape itself is
- *    machine-only.
+ *  - an OWNER STATUS WRITE newer than the escalation (#430 record) never waives the
+ *    debt: the recorded target still owes the vote, so the heal completes the ROW — only
+ *    the ROSTER rewrite is skipped (the owner's post-crash reviewer choice wins). No
+ *    legal manual write can REMOVE a review row, so the shape itself is machine-only.
  *  Newest escalation first, one task per loop: a chain A→B→C leaves A's target B with a
  *  row (A satisfied) and only the last handoff can be unredeemed. */
 export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: string) {
@@ -1837,6 +1839,11 @@ export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: str
       decidedAt: taskReviews.decidedAt,
       updatedAt: tasks.updatedAt,
       taskStatus: tasks.status,
+      // AN OWNER STATUS WRITE NEWER THAN THE ESCALATION (#430 record, relative to the
+      // escalation — a lost handoff may have no verdict at all): the round still owes the
+      // recorded vote, so the heal completes the ROW, but it must not rewrite the ROSTER
+      // against the owner's post-crash choice — the owner's reviewer edit wins.
+      ownerMoved: sql<boolean>`exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}))`,
     })
     .from(taskReviews)
     .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
@@ -1852,9 +1859,6 @@ export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: str
         // UNREDEEMED: the recorded target has no row in the round (the round×reviewer
         // unique index keeps a re-insert idempotent — a duplicate fails, never doubles)
         sql`not exists (select 1 from task_reviews t2 where t2.task_id = ${taskReviews.taskId} and t2.round = ${taskReviews.round} and t2.reviewer_id = ${taskReviews.referralTargetId})`,
-        // the #430 owner record, relative to the escalation (not the round's verdicts:
-        // a lost handoff may have no verdict at all)
-        sql`not exists (select 1 from task_messages m where m.task_id = ${tasks.id} and m.body like 'status: %' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS') and m.created_at >= coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt}))`,
       ),
     )
     .orderBy(desc(sql`coalesce(${taskReviews.decidedAt}, ${taskReviews.createdAt})`))
@@ -1929,20 +1933,25 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       const nextRoster = [...new Set([...task.reviewers.filter((r) => r !== escalatorId), targetId])];
       const { why } = parseEscalationNote(fresh.note ?? '');
       const body = `review escalated to ${target.name}${why ? ` — ${why}` : ''}`;
-      // ONE transaction: the roster handover, the obligation move, the audit activity and
-      // the replacement row commit together or not at all. The update takes the task row
-      // lock (a concurrent status move serializes AFTER this mint) and the CAS is pinned to
-      // the SCAN's stamp + status — a task write that landed after that read WINS (the
-      // scan re-runs next tick), so a post-scan manual move is never adopted as consent.
+      // ONE transaction: the roster handover (unless the owner moved the task), the
+      // obligation move, the audit activity and the replacement row commit together or
+      // not at all. The roster update takes the task row lock (a concurrent status move
+      // serializes AFTER this mint) and its CAS is pinned to the SCAN's stamp + status — a
+      // task write that landed after that read WINS (the scan re-runs next tick), so the
+      // mint never adopts a post-scan move as consent. An OWNER MOVE past the escalation
+      // skips ONLY the roster rewrite: the debt is real (the target never voted) and the
+      // row must land, or a settle could never run again on this round.
       const minted = await db.transaction(async (tx) => {
-        const won = await tx
-          .update(tasks)
-          .set({ reviewers: nextRoster, updatedAt: new Date() })
-          .where(
-            and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: fresh.updatedAt, status: fresh.taskStatus })),
-          )
-          .returning({ id: tasks.id });
-        if (won.length === 0) return false;
+        if (!fresh.ownerMoved) {
+          const won = await tx
+            .update(tasks)
+            .set({ reviewers: nextRoster, updatedAt: new Date() })
+            .where(
+              and(eq(tasks.id, fresh.taskId), staleSettlePin({ updatedAt: fresh.updatedAt, status: fresh.taskStatus })),
+            )
+            .returning({ id: tasks.id });
+          if (won.length === 0) return false;
+        }
         // a deleted escalator's approval obligations were already DROPPED by the removal
         // path (never cancelled) — nothing to resolve, and resolved_by would dangle
         if (escalatorId) await resolveObligation(fresh.taskId, escalatorId, OBLIGATION_ROLE.APPROVAL, escalatorId, tx);
@@ -1966,10 +1975,18 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
         return true;
       });
       if (!minted) continue;
+      // logActivity's publish:false contract defers BOTH events to this post-commit note:
+      // the thread + review checklist invalidate under TASK_ACTIVITY, the task under TASKS
+      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       // a settle that landed inside this replay window owns the task: tear the mint down
-      // (never dispatch into a terminal task) — the same self-heal the live path runs
-      if (await selfHealEscalationIfSettled(fresh.taskId, task.reviewers)) continue;
+      // (never dispatch into a terminal task) — the same self-heal the live path runs; the
+      // roster is reverted only when THIS pass wrote it (an owner move owns the roster)
+      if (await selfHealEscalationIfSettled(fresh.taskId, task.reviewers, { revertRoster: !fresh.ownerMoved }))
+        continue;
+      // never dispatch a review turn for a task the owner moved out of review: the row is
+      // declared debris and the next submit mints its own round
+      if (fresh.ownerMoved && !(await reviewTurnAllowed(fresh.taskId))) continue;
       await dispatchAiReviewTurns(fresh.taskId, undefined, { targetReviewerId: targetId });
       healed += 1;
       log.info(
@@ -2964,7 +2981,11 @@ export async function listReviews(taskId: string) {
  * in a done/cancelled CATEGORY (a BLOCKED round is still live — healing it would
  * strand the parked round); the standard teardown supersedes PENDING rows, cancels
  * approval obligations and the roster reverts. A vanished task heals nothing. */
-async function selfHealEscalationIfSettled(taskId: string, originalReviewers: string[]): Promise<boolean> {
+async function selfHealEscalationIfSettled(
+  taskId: string,
+  originalReviewers: string[],
+  opts: { revertRoster?: boolean } = {},
+): Promise<boolean> {
   const postGate = (
     await db
       .select({ status: tasks.status, preBlockStatus: tasks.preBlockStatus })
@@ -2975,7 +2996,10 @@ async function selfHealEscalationIfSettled(taskId: string, originalReviewers: st
   const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
   if (!settledByOwner(cats, postGate.status, postGate.preBlockStatus)) return false;
   await teardownOpenRound(taskId, 'escalation lost the race');
-  await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // a handoff heal that SKIPPED the roster write (an owner move owns the roster) must not
+  // revert to a stale roster: only the pass that wrote it restores it
+  if (opts.revertRoster !== false)
+    await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   return true;
 }
 

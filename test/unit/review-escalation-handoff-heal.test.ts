@@ -55,11 +55,15 @@ describe('escalationHandoffScan (#474 SQL discriminators)', () => {
     expect(ESCALATION_HANDOFF_GRACE_MS).toBe(60_000);
   });
 
-  it('keeps a legal manual move out (#430 owner record) and bounds the read', async () => {
+  it('detects an owner status move (#430 record) as a flag, never as a WHERE exclusion', async () => {
     const { text, params } = await emitted();
+    // the record is SELECTed (the sweep skips only the roster rewrite on it) ...
+    expect(text).toContain(`exists (select 1 from task_messages m`);
     expect(text).toContain(`m.body like 'status: %'`);
     expect(text).toContain(`a.payload->>'kind' = 'status'`);
     expect(text).toContain('m.created_at >=');
+    // ... never a WHERE term: an owner move must not deadlock the debt
+    expect(text).not.toContain('not exists (select 1 from task_messages m');
     expect(params).toContain(ESCALATION_HANDOFF_SCAN_LIMIT);
     expect(text).toContain('order by');
     expect(text).toContain('limit');

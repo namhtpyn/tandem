@@ -68,6 +68,19 @@ async function seedRow(
   );
 }
 
+async function seedOwnerMove(sql: SQL, taskId: string, authorId: string, minutesAgo: number) {
+  const messageId = `msg-${taskId}`;
+  await sql.unsafe(
+    `insert into task_messages (id, task_id, author_id, body, created_at)
+     values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))`,
+    [messageId, taskId, authorId, 'status: doing → in-review', minutesAgo],
+  );
+  await sql.unsafe('insert into task_message_activities (message_id, payload) values ($1, $2)', [
+    messageId,
+    { kind: 'STATUS' },
+  ]);
+}
+
 async function statusOf(sql: SQL, taskId: string): Promise<string> {
   const rows = await sql.unsafe('select status from tasks where id = $1', [taskId]);
   return String((rows[0] as { status?: string } | undefined)?.status ?? '');
@@ -218,6 +231,47 @@ test.describe('escalation-handoff heal (#474)', () => {
         'a departed escalator logs a NULL audit author',
       ).toBeNull();
       expect(await statusOf(sql, taskId), 'the re-fired referral never settles the round').toBe(IN_REVIEW);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  test("an owner move never waives the debt — the row lands and the roster stays the owner's", async () => {
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const assignee = crypto.randomUUID();
+      const escalator = crypto.randomUUID();
+      const target = crypto.randomUUID();
+      await seedUser(sql, assignee, `E2E Assignee ${tag}`);
+      await seedUser(sql, escalator, `E2E Escalator ${tag}`);
+      await seedUser(sql, target, `E2E Target ${tag}`);
+      const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
+      expect(adminId, 'the e2e boot admin must exist').not.toBe('');
+
+      const taskId = `e2e-handoff-owner-${tag}`;
+      await seedReviewTask(sql, taskId, { reviewers: [escalator], assigneeId: assignee });
+      await seedRow(sql, {
+        taskId,
+        reviewerId: escalator,
+        status: 'ESCALATED',
+        referralTargetId: target,
+        note: 'escalate to E2E Target for reviewing — wrong domain',
+        createdAtSeconds: 1800,
+        decidedAtSeconds: 300,
+      });
+      // the owner moves the task AFTER the crashed escalation: the debt must still be
+      // paid (the target's row), but the heal must not rewrite the owner's roster
+      await seedOwnerMove(sql, taskId, adminId, 1);
+
+      const end = Date.now() + 20_000;
+      while (Date.now() < end && (await targetRowCount(sql, taskId, target)) === 0) await Bun.sleep(500);
+      expect(await targetRowCount(sql, taskId, target), 'the recorded vote still lands').toBe(1);
+      const roster = (await sql.unsafe('select reviewers from tasks where id = $1', [taskId]))[0] as
+        | { reviewers?: string[] }
+        | undefined;
+      expect(roster?.reviewers, "the owner's roster choice is never rewritten").toEqual([escalator]);
+      expect(await statusOf(sql, taskId), "the heal never moves the owner's status").toBe(IN_REVIEW);
     } finally {
       await sql.end();
     }
