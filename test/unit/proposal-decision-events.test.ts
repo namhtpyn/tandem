@@ -13,17 +13,30 @@ const h = vi.hoisted(() => ({
   published: [] as string[],
   txDone: false,
   publishedBeforeCommit: 0,
+  // #479: the gating restore hands its resume work back through the collector
+  gatingCalls: [] as number[],
+  resumedAt: [] as boolean[],
+  failNote: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
   const { taskProposals } = await import('../../server/db/schema');
   const tx = {
     __tx: true,
-    query: { taskProposals: { findMany: async () => h.proposalRows } },
+    query: {
+      taskProposals: { findMany: async () => h.proposalRows },
+      // confirmProposal loads the proposal's task row before executing its kind
+      tasks: {
+        findMany: async () => [{ id: 'task-1', ownerId: 'owner-1', createdBy: 'owner-1', assigneeId: 'agent-1' }],
+      },
+    },
     update: (table: unknown) => ({
-      set: () => ({
-        where: () => ({ returning: async () => (table === taskProposals ? h.claimRows : []) }),
-      }),
+      set: (values: Record<string, unknown>) => {
+        // the rollback pin (#479): fail the decision note — a throw AFTER the gating
+        // call inside the transaction
+        if (h.failNote && 'decisionNote' in values) throw new Error('decision note write failed');
+        return { where: () => ({ returning: async () => (table === taskProposals ? h.claimRows : []) }) };
+      },
     }),
   };
   return {
@@ -66,6 +79,17 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   };
 });
 
+vi.mock('../../server/domains/tasks/gating.service', () => ({
+  // #479: a riding gating restore never runs its resume work itself — it appends it to
+  // the caller's collector, and the caller drains it post-commit
+  refreshParentGating: async (_taskId: string, _ex: unknown, afterCommit?: Array<() => Promise<void>>) => {
+    h.gatingCalls.push(afterCommit?.length ?? -1);
+    afterCommit?.push(async () => {
+      h.resumedAt.push(h.txDone);
+    });
+  },
+}));
+
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
   return {
@@ -78,7 +102,7 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   };
 });
 
-import { rejectProposal } from '../../server/domains/tasks/proposals.service';
+import { confirmProposal, rejectProposal } from '../../server/domains/tasks/proposals.service';
 
 beforeEach(() => {
   h.proposalRows = [{ taskId: 'task-1', kind: 'SUBTASKS' }];
@@ -101,5 +125,29 @@ describe('proposal decision events (#466)', () => {
     expect(h.published.sort()).toEqual(['TASKS', 'TASK_ACTIVITY']);
     // ...and only AFTER the transaction committed (#397)
     expect(h.publishedBeforeCommit).toBe(0);
+  });
+});
+
+// BORROWED-RESTORE DEFERRAL (#479): the riding gating refresh must hand its resume work
+// back to confirmProposal through the collector, and confirmProposal must drain it only
+// after db.transaction resolves. A rollback (any throw after the gating call) drops the
+// collector on the floor — no settle, no dispatch outlives an erased restore row.
+describe('borrowed-restore deferral wiring (#479)', () => {
+  beforeEach(() => {
+    h.proposalRows = [{ taskId: 'task-1', kind: 'SUBTASKS', status: 'PROPOSED', payload: { items: [] } }];
+  });
+
+  it('confirm: the riding restore resume drains only after the commit', async () => {
+    await confirmProposal('proposal-1', 'user-1');
+    expect(h.gatingCalls).toEqual([0]); // a fresh collector was handed down
+    expect(h.resumedAt).toEqual([true]); // ran with txDone already true — post-commit
+    expect(h.publishedBeforeCommit).toBe(0);
+  });
+
+  it('confirm: a rollback after the gating call discards the resume work', async () => {
+    h.failNote = true;
+    await expect(confirmProposal('proposal-1', 'user-1')).rejects.toThrow('decision note write failed');
+    expect(h.gatingCalls).toEqual([0]);
+    expect(h.resumedAt).toEqual([]); // never drained — no settle/dispatch outlives the rollback
   });
 });

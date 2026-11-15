@@ -567,22 +567,31 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(h.publishCount).toBe(2);
   });
 
-  it('the borrowed restore note rides the caller and defers its events (#466/#479 boundary)', async () => {
-    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+  it('the borrowed restore note rides the caller, defers its events AND its resume (#466/#479)', async () => {
+    // a LADDER park: the restore replays its parked turn (a plain non-parked restore
+    // to in-review replays nothing by #202 parity — the settle arm has its own pin)
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
-    await refreshParentGating('p', h.txHandle as never);
+    const afterCommit: Array<() => Promise<void>> = [];
+    await refreshParentGating('p', h.txHandle as never, afterCommit);
     const note = h.notes.find((n) => n.body.startsWith('unblocked:'));
     expect(note, 'the restore arm must note the unblock').toBeDefined();
     expect(note?.via).toBe('tx');
     expect(note?.publish).toBe(false);
     expect(note?.kind).toBe('STATUS');
     expect(h.publishCount).toBe(0);
+    // #479: the resume work is handed to the caller, NOT run pre-commit
+    expect(afterCommit).toHaveLength(1);
+    expect(h.settled).toEqual([]);
+    expect(h.replayed).toEqual([]);
+    await afterCommit[0]!();
+    expect(h.replayed).toEqual(['p']); // live round → the parked turn replays after commit
   });
 
   it('a caller transaction is RIDDEN, never nested; its events wait for the caller (#466)', async () => {
     row('p', { status: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.doing }]);
-    await refreshParentGating('p', h.txHandle as never);
+    await refreshParentGating('p', h.txHandle as never, []);
     // never nested: the arm must not open a second transaction on top of the caller's
     expect(h.transactionCalls).toBe(0);
     // both writes join the caller's handle
@@ -604,5 +613,48 @@ describe('GUARDED GATING WRITE (#208)', () => {
     await refreshParentGating('p');
     expect(h.updates).toHaveLength(0); // no auto-block write landed over the park
     expect(h.taskRows.get('p')?.parkFromStatus).toBe(STATUS.inReview); // origin survives
+  });
+});
+
+// BORROWED-RESTORE DEFERRAL (#479): the unblock arm's resume side effects (park replay,
+// extinguished-round settle, reviewer dispatch) are NOT transactional. A borrowed
+// executor hands them to the caller through the afterCommit collector and runs nothing
+// pre-commit — a caller rollback must leave no settle and no dispatch behind. A borrowed
+// call without a collector is a contract error (silently running them is the bug;
+// silently dropping them is worse), refused before the first read. Own-pool calls keep
+// the immediate order.
+describe('borrowed-restore deferral (#479)', () => {
+  it('a borrowed restore without a collector is refused before any read or write', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await expect(refreshParentGating('p', h.txHandle as never)).rejects.toThrow(/#479/);
+    expect(h.updates).toHaveLength(0);
+    expect(h.notes).toEqual([]);
+    expect(h.replayed).toEqual([]);
+    expect(h.settled).toEqual([]);
+  });
+
+  it('an extinguished-round settle waits for the borrow to commit', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.roundLive = false;
+    const afterCommit: Array<() => Promise<void>> = [];
+    await refreshParentGating('p', h.txHandle as never, afterCommit);
+    // the restore write landed on the caller's handle, but the settle has NOT run
+    expect(h.writeLog[0]?.via).toBe('tx');
+    expect(afterCommit).toHaveLength(1);
+    expect(h.settled).toEqual([]);
+    // the caller's rollback path simply never drains the collector — nothing to undo.
+    // Its commit path drains it here:
+    await afterCommit[0]!();
+    expect(h.settled).toEqual(['p']);
+  });
+
+  it('own-pool restores keep the immediate order', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.roundLive = false;
+    await refreshParentGating('p');
+    expect(h.settled).toEqual(['p']); // own path: the write is already committed
   });
 });

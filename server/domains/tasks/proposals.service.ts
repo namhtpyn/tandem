@@ -16,7 +16,7 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
-import { refreshParentGating } from './gating.service';
+import { refreshParentGating, type AfterCommit } from './gating.service';
 import { logActivity as publishActivity } from './review.service';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
@@ -129,13 +129,16 @@ async function createSubtask(
   return childId;
 }
 
-/** execute every [SUBTASKS] item, then refresh the parent's gating */
+/** execute every [SUBTASKS] item, then refresh the parent's gating. The gating
+ *  refresh may unblock the parent (every child already terminal, an empty item list):
+ *  its resume work is handed back through `afterCommit` (#479). */
 async function executeSubtasks(
   task: ConfirmTask,
   payload: { items?: SubtaskItem[] },
   confirmedBy: string,
   events: string[],
   ex: DbExecutor,
+  afterCommit: AfterCommit[],
 ) {
   for (const item of payload.items ?? []) {
     const { assigneeId, escalated } = await resolveAssignee(item, task, events, ex);
@@ -153,7 +156,7 @@ async function executeSubtasks(
       ex,
     );
   }
-  await refreshParentGating(task.id, ex);
+  await refreshParentGating(task.id, ex, afterCommit);
 }
 
 /** reassign through the ledger so the history stays truthful */
@@ -207,6 +210,9 @@ async function escalateReassignToSupervisor(
  * caller sees 'proposal already decided', so nothing executes twice.
  */
 export async function confirmProposal(proposalId: string, confirmedBy: string, note = '') {
+  // #479: a riding gating restore hands its resume work back here — drained only after
+  // the transaction commits, so a rollback can never strand a settle or a dispatch.
+  const afterCommit: AfterCommit[] = [];
   const result = await db.transaction(async (tx) => {
     const rows = await tx.query.taskProposals.findMany({
       columns: { taskId: true, kind: true, payload: true, status: true },
@@ -237,7 +243,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
     const events: string[] = [];
     let escalated = false;
     if (p.kind === PROPOSAL_KIND.SUBTASKS) {
-      await executeSubtasks(task, p.payload as { items?: SubtaskItem[] }, confirmedBy, events, tx);
+      await executeSubtasks(task, p.payload as { items?: SubtaskItem[] }, confirmedBy, events, tx, afterCommit);
     } else if (p.kind === PROPOSAL_KIND.REASSIGN) {
       // RUN LOCK (#264, r1 finding): the human confirm must not swap the assignee
       // under a live run — the confirm refuses (the transaction rolls back, the
@@ -279,6 +285,9 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
   // proposal can auto-block the parent inside this transaction (#466): the block's flow
   // record (and its thread note) land with the claim, so the activity event belongs to
   // this post-commit set — the riding gating flip publishes nothing itself.
+  // The riding gating restore's resume work drains first, still post-commit (#479):
+  // only a COMMITTED restore may replay a park or settle an extinguished round.
+  for (const work of afterCommit) await work();
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return result;
