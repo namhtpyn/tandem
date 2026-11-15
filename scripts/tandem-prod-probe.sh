@@ -636,12 +636,15 @@ if [ "${1:-}" = "--selfcheck" ]; then
   PCA_ON=$(strand_parkclosed_arm 2.78.38 2)
   [ -n "$PCA_ON" ] || { echo "selfcheck fail: parkclosed arm missing"; exit 1; }
   [ "$(printf '%s' "$PCA_ON" | grep -oF "select 'parkclosed'" | wc -l)" = "1" ] || { echo "selfcheck fail: parkclosed emission"; exit 1; }
-  for term in "s.category = 'paused'" "t.park_from_status is not null" "t.park_rearm_after is null" "t.park_rearm_attempts = 0" "o.category = 'in_review'" "r.status = 'PENDING' and r.reviewer_id is not null and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)" "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" "max(coalesce(r.decided_at, r.created_at))" "m.body like 'review parked %'" "a.payload->>'kind' = 'STATUS'" ") > coalesce((select max(m.created_at)" "e.status = 'ESCALATED' and e.referral_target_id is not null" "x.round = e.round and x.reviewer_id = e.referral_target_id"; do
+  for term in "s.category = 'paused'" "t.park_from_status is not null" "t.park_rearm_after is null" "t.park_rearm_attempts = 0" "o.category = 'in_review'" "r.status = 'PENDING' and r.reviewer_id is not null and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)" "r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')" "max(coalesce(r.decided_at, r.created_at))" "m.body like 'review parked %'" "a.payload->>'kind' = 'STATUS'" ") > coalesce((select max(m.created_at)" "e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED' and e.referral_target_id is not null" "x.round = e.round and x.reviewer_id = e.referral_target_id"; do
     printf '%s' "$PCA_ON" | grep -qF "$term" || { echo "selfcheck fail: parkclosed term ($term)"; exit 1; }
   done
   # the arm orders against the PARK's own note only: the task-wide helper's block body must
   # never ride this slice (a stale auto-blocked note would order against the wrong flow)
   printf '%s' "$PCA_ON" | grep -qF "auto-blocked:" && { echo "selfcheck fail: parkclosed borrows the task-wide record"; exit 1; }
+  # the REKEY slice must stop at the park arm: a cut regression would let its pins read
+  # foreign clauses (single-copy slices are only as good as their tail cut)
+  printf '%s' "$(strand_rekey_arm 2.78.38 2)" | grep -qF "parkclosed" && { echo "selfcheck fail: rekey slice carries the park arm"; exit 1; }
   [ -z "$(strand_parkclosed_arm 2.78.36 2)" ] || { echo "selfcheck fail: parkclosed column floor"; exit 1; }
   [ -n "$(strand_parkclosed_arm 2.78.37 2)" ] || { echo "selfcheck fail: parkclosed column floor release"; exit 1; }
   # ordering floor (2.78.38): the record above it, the retired stamp at the arm's own floor
@@ -1162,8 +1165,8 @@ elif [ "$STRCOL" = "1" ]; then
       fi
       printf '%s\n' "${READYROUND:-none}" > "$PROBE_STATE/readyround.prev"
     fi
-    # (h) DECISION-parked round that CLOSED after the park with its flip lost (#431): the
-    # owner resolved the park (the verdict is recorded) and the settle flip never landed,
+    # (h) DECISION-parked round that CLOSED after the park with its flip lost (#431): a
+    # LATE reviewer verdict landed on the parked task and the settle flip never followed,
     # so the task sits BLOCKED with the park standing and a closed round. No sweep reaches
     # it by contract — `restoreUnblocked` withholds a FINAL park, the re-arm scan filters
     # park_rearm_after IS NOT NULL, and the heals refuse a paused task — so the PARK OWNS

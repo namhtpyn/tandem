@@ -1266,12 +1266,14 @@ non-positive deltas render no duration.
   `--selfcheck`.
   DECLARED BOUNDARIES — two shapes are OUT, and each MUST stay out:
   (a) MIRROR ORDER, a decision park whose note is NEWER than every verdict (the runner's
-  non-rearmable "finished without a verdict" anomaly park after a crashed flip) is
-  indistinguishable in SQL from the LEGAL waiver park (`review escalation target became
-  the assignee — referral waived; resolve to resume`, which supersedes the escalated row
-  and parks over a closed round) and from a reviewer-deletion closure, so the arm must
-  stay silent there; the re-armable settle-throw park of the same crash class is OUT by
-  the decision-class gate and is healed by the re-arm sweep;
+  non-rearmable "finished without a verdict" anomaly park after a crashed flip) is OUT as
+  a DECLARED CHOICE, not a data limitation: the shape collides with the LEGAL waiver park
+  (`review escalation target became the assignee — referral waived; resolve to resume`,
+  which supersedes the escalated row and parks over a closed round) and with a
+  reviewer-deletion closure, and the only separator left is the free-text park reason
+  tail — a per-call-site string the probe will not key on, because a new producer body
+  would silently change the arm's meaning; the re-armable settle-throw park of the same
+  crash class is OUT by the decision-class gate and is healed by the re-arm sweep;
   (b) REFERRAL-OWED, a parked round that still owes a referral vote is excluded because
   the round is not decided, and the referral heal is review-flow-scoped (it never touches
   a parked row), so such a park is the owner's to move — declared, not reported.

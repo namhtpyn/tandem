@@ -81,6 +81,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
       const parkEmptyRound = `probe-park-empty-${tag}`; // silent: no verdict at all — not a closed round
       const parkReferral = `probe-park-referral-${tag}`; // silent: the referral still owes its vote (#474)
       const parkReferralMet = `probe-park-refmet-${tag}`; // fires: the referral's replacement row landed — no vote owed
+      const parkWaiverLate = `probe-park-waiverlate-${tag}`; // fires: a waiver-row park with a LATE verdict is a real strand
+      const parkReferralOldRound = `probe-park-refold-${tag}`; // fires: a PREVIOUS round's escalation owes nothing
       const parkVoid = `probe-park-void-${tag}`; // fires: a null-reviewer PENDING row is a NON-VOTE (settleRound's own filter)
       const parkOldRoundVerdict = `probe-park-oldround-${tag}`; // silent: a verdict in an OLDER round is not this round's
       const parkEscalatedOnly = `probe-park-escalated-${tag}`; // silent: ESCALATED is not a verdict
@@ -159,6 +161,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
       await seedTask({ id: parkEmptyRound, status: BLOCKED, park: IN_REVIEW, written: 10 });
       await seedTask({ id: parkReferral, status: BLOCKED, park: IN_REVIEW, written: 20 });
       await seedTask({ id: parkReferralMet, status: BLOCKED, park: IN_REVIEW, written: 20 });
+      await seedTask({ id: parkWaiverLate, status: BLOCKED, park: IN_REVIEW, written: 20 });
+      await seedTask({ id: parkReferralOldRound, status: BLOCKED, park: IN_REVIEW, written: 30 });
       await seedTask({ id: parkVoid, status: BLOCKED, park: IN_REVIEW, written: 10 });
       await seedTask({ id: parkOldRoundVerdict, status: BLOCKED, park: IN_REVIEW, written: 30 });
       await seedTask({ id: parkEscalatedOnly, status: BLOCKED, park: IN_REVIEW, written: 30 });
@@ -193,7 +197,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
       // the verdict, which is exactly why this arm must stay silent on it
       await seedNote(parkRecordNewer, parkedNote(1), 'STATUS', 1);
       await seedReview(parkRecordNewer, 'APPROVED', 10);
-      await seedReview(parkRecordNewer, 'SUPERSEDED', 20);
+      await seedReview(parkRecordNewer, 'SUPERSEDED', 20, null, 1, adminId);
       // EQUAL stamps prove nothing (strict `>`): the note copies the verdict's exact stamp
       await seedReview(parkRecordEqual, 'APPROVED', 10);
       const equalNote = `msg-${crypto.randomUUID()}`;
@@ -212,6 +216,14 @@ test.describe('prod probe decision-park arm (#431)', () => {
       // the replacement row landed: nothing owed, so the closed-round shape is a strand
       await seedReview(parkReferralMet, 'APPROVED', 10, adminId);
       await seedReview(parkReferralMet, 'ESCALATED', 20, null, 1, adminId);
+      // a waiver-row park (superseded escalation WITH a target) over which a LATE verdict
+      // landed is a real strand: a carve-out keyed on the superseded row would miss it
+      await seedNote(parkWaiverLate, parkedNote(10), 'STATUS', 10);
+      await seedReview(parkWaiverLate, 'SUPERSEDED', 20, null, 1, adminId);
+      await seedReview(parkWaiverLate, 'APPROVED', 1);
+      // a PREVIOUS round's escalation owes nothing to THIS round
+      await seedReview(parkReferralOldRound, 'ESCALATED', 10, null, 1, adminId);
+      await seedReview(parkReferralOldRound, 'APPROVED', 1, null, 2);
       await seedReview(parkRearmOwned, 'APPROVED', 1);
       await seedReview(parkExhausted, 'APPROVED', 1);
       await seedReview(parkRekeyed, 'APPROVED', 1);
@@ -243,7 +255,18 @@ test.describe('prod probe decision-park arm (#431)', () => {
       };
 
       const ids = await runArm(armSql);
-      for (const fires of [parkLost, parkMasked, parkSplit, parkRoundScope, parkKind, parkStaleBlock, parkVoid]) {
+      for (const fires of [
+        parkLost,
+        parkMasked,
+        parkSplit,
+        parkRoundScope,
+        parkKind,
+        parkStaleBlock,
+        parkVoid,
+        parkReferralMet,
+        parkWaiverLate,
+        parkReferralOldRound,
+      ]) {
         expect(ids.has(fires), `${fires} must fire`).toBe(true);
       }
       for (const silent of [
@@ -260,6 +283,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
         parkEmptyRound,
         parkOldRoundVerdict,
         parkEscalatedOnly,
+        parkReferral,
       ]) {
         expect(ids.has(silent), `${silent} must stay silent`).toBe(false);
       }
@@ -302,6 +326,15 @@ test.describe('prod probe decision-park arm (#431)', () => {
           ),
           fire: [],
           silent: [parkReferralMet],
+        },
+        {
+          name: 'referral round binding',
+          sql: armSql.replace(
+            "e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED'",
+            "e.status = 'ESCALATED'",
+          ),
+          fire: [],
+          silent: [parkReferralOldRound],
         },
         {
           name: 're-arm exclusivity',
