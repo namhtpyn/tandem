@@ -186,9 +186,18 @@ test.describe('escalation-handoff heal (#474)', () => {
       while (Date.now() < end && (await statusOf(sql, taskId)) === IN_REVIEW) await Bun.sleep(500);
       expect(
         await statusOf(sql, taskId),
-        'the recorded target is now the assignee: the round parks for the owner',
+        'the recorded target is now the assignee: the round parks once for the owner',
       ).toBe(BLOCKED);
       expect(await targetRowCount(sql, taskId, target), 'no self-review row is minted').toBe(0);
+      // the debt is CLEARED (not parked behind forever): a resolve resumes a round that no
+      // longer owes the vote — never a park→resolve→park loop
+      const escRow = (
+        await sql.unsafe(
+          "select status from task_reviews where task_id = $1 and round = 1 and status in ('ESCALATED','SUPERSEDED')",
+          [taskId],
+        )
+      )[0] as { status?: string } | undefined;
+      expect(escRow?.status, 'the impossible referral is waived, not left owing').toBe('SUPERSEDED');
     } finally {
       await sql.end();
     }

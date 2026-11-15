@@ -1811,6 +1811,7 @@ function warnEscalationHandoff(msg: string, e: unknown) {
 }
 
 export type EscalationHandoffCandidate = {
+  id: string;
   taskId: string;
   round: number;
   reviewerId: string | null;
@@ -1852,6 +1853,7 @@ export function escalationHandoffScan(ex: DbExecutor, cutoff: Date, taskId?: str
   const currentRound = sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${tasks.id})`;
   return asDb(ex)
     .select({
+      id: taskReviews.id,
       taskId: taskReviews.taskId,
       round: taskReviews.round,
       reviewerId: taskReviews.reviewerId,
@@ -1945,10 +1947,23 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
       )[0];
       if (!task) continue;
       // the assignment may have changed since the escalation: minting the recorded target
-      // onto their OWN work would defeat the never-the-assignee rule — park for the owner
-      // instead of guessing a replacement (the escalation-stall contract)
+      // onto their OWN work would defeat the never-the-assignee rule. Clear the debt first
+      // (the referral is IMPOSSIBLE, not parked forever) and park once for the owner: a
+      // resolve then resumes a round that no longer owes the vote — never a park→resolve→
+      // park loop, never a duplicate thread note per cycle.
       if (task.assigneeId === targetId) {
-        await parkRound(fresh.taskId, 'review escalation target became the assignee — resolve to resume');
+        await db
+          .update(taskReviews)
+          .set({
+            status: REVIEW_STATUS.SUPERSEDED,
+            note: `${fresh.note ?? ''} — waived: the recorded referral target is now the assignee`.trim(),
+            decidedAt: new Date(),
+          })
+          .where(and(eq(taskReviews.id, fresh.id), eq(taskReviews.status, REVIEW_STATUS.ESCALATED)));
+        await parkRound(
+          fresh.taskId,
+          'review escalation target became the assignee — referral waived; resolve to resume',
+        );
         continue;
       }
       const nextRoster = [...new Set([...task.reviewers.filter((r) => r !== escalatorId), targetId])];
@@ -2016,28 +2031,38 @@ async function sweepEscalationHandoffsInner(): Promise<number> {
         return true;
       });
       if (!minted) continue;
-      // logActivity's publish:false contract defers BOTH events to this post-commit note:
-      // the thread + review checklist invalidate under TASK_ACTIVITY, the task under TASKS
-      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-      // a settle that landed inside this replay window owns the task: tear the mint down
-      // (never dispatch into a terminal task) — the same self-heal the live path runs; the
-      // roster is reverted only when THIS pass wrote it (an owner move owns the roster)
-      if (await selfHealEscalationIfSettled(fresh.taskId, task.reviewers, { revertRoster: !fresh.ownerMoved }))
-        continue;
-      // never dispatch a review turn for a task the owner moved out of review: the row is
-      // declared debris and the next submit mints its own round
-      if (fresh.ownerMoved && !(await reviewTurnAllowed(fresh.taskId))) continue;
-      await dispatchAiReviewTurns(fresh.taskId, undefined, { targetReviewerId: targetId });
+      await finishEscalationHandoff(fresh, targetId, task.reviewers);
       healed += 1;
-      log.info(
-        `escalation-handoff heal: re-fired the referral of round ${fresh.round} on task ${fresh.taskId} (target ${targetId})`,
-      );
     } catch (e) {
       warnEscalationHandoff(`escalation-handoff heal: could not re-fire task ${candidate.taskId}:`, e);
     }
   }
   return healed;
+}
+
+/** the post-commit tail of a handoff replay: publish the in-tx activity's deferred events,
+ *  tear the mint down if a settle won the window, and fire the target's turn only on a
+ *  task the review flow still owns. Never re-throws (the sweep's catch logs). */
+async function finishEscalationHandoff(
+  fresh: EscalationHandoffCandidate,
+  targetId: string,
+  originalReviewers: string[],
+): Promise<void> {
+  // logActivity's publish:false contract defers BOTH events to this post-commit note:
+  // the thread + review checklist invalidate under TASK_ACTIVITY, the task under TASKS
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  // a settle that landed inside this replay window owns the task: tear the mint down
+  // (never dispatch into a terminal task) — the same self-heal the live path runs; the
+  // roster is reverted only when THIS pass wrote it (an owner move owns the roster)
+  if (await selfHealEscalationIfSettled(fresh.taskId, originalReviewers, { revertRoster: !fresh.ownerMoved })) return;
+  // never dispatch a review turn for a task the owner moved out of review: the row is
+  // declared debris and the next submit mints its own round
+  if (fresh.ownerMoved && !(await reviewTurnAllowed(fresh.taskId))) return;
+  await dispatchAiReviewTurns(fresh.taskId, undefined, { targetReviewerId: targetId });
+  log.info(
+    `escalation-handoff heal: re-fired the referral of round ${fresh.round} on task ${fresh.taskId} (target ${targetId})`,
+  );
 }
 
 /** BOOT HEAL (#365): settle every in-review round left with a void pending row and
