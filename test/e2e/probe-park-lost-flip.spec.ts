@@ -76,6 +76,9 @@ test.describe('prod probe decision-park arm (#431)', () => {
       const parkOnBlock = `probe-park-block-${tag}`; // silent: a gating block is not a park (the wedge arm reads it)
       const parkNotPaused = `probe-park-notpaused-${tag}`; // silent: an in-review row carrying a stale origin
       const parkEmptyRound = `probe-park-empty-${tag}`; // silent: no verdict at all — not a closed round
+      const parkVoid = `probe-park-void-${tag}`; // fires: a null-reviewer PENDING row is a NON-VOTE (settleRound's own filter)
+      const parkOldRoundVerdict = `probe-park-oldround-${tag}`; // silent: a verdict in an OLDER round is not this round's
+      const parkEscalatedOnly = `probe-park-escalated-${tag}`; // silent: ESCALATED is not a verdict
 
       const seedTask = async (t: {
         id: string;
@@ -148,6 +151,9 @@ test.describe('prod probe decision-park arm (#431)', () => {
       await seedTask({ id: parkOnBlock, status: BLOCKED, pre: IN_REVIEW, written: 10 });
       await seedTask({ id: parkNotPaused, status: IN_REVIEW, park: IN_REVIEW, written: 10 });
       await seedTask({ id: parkEmptyRound, status: BLOCKED, park: IN_REVIEW, written: 10 });
+      await seedTask({ id: parkVoid, status: BLOCKED, park: IN_REVIEW, written: 10 });
+      await seedTask({ id: parkOldRoundVerdict, status: BLOCKED, park: IN_REVIEW, written: 30 });
+      await seedTask({ id: parkEscalatedOnly, status: BLOCKED, park: IN_REVIEW, written: 30 });
 
       // the counterexample: a single-reviewer decision park closed by its approval, 1m ago
       await seedReview(parkLost, 'APPROVED', 1);
@@ -195,6 +201,14 @@ test.describe('prod probe decision-park arm (#431)', () => {
       await seedReview(parkDangling, 'APPROVED', 1);
       await seedReview(parkOnBlock, 'APPROVED', 1);
       await seedReview(parkNotPaused, 'APPROVED', 1);
+      // a void PENDING row (reviewer deleted mid-round) is a NON-VOTE: the round is closed
+      await seedReview(parkVoid, 'APPROVED', 1);
+      await seedReview(parkVoid, 'PENDING', null);
+      // a verdict in an OLDER round is not THIS round's closure
+      await seedReview(parkOldRoundVerdict, 'APPROVED', 1, adminId, 1);
+      await seedReview(parkOldRoundVerdict, 'SUPERSEDED', 1, adminId, 2);
+      // ESCALATED is a non-vote: a round holding only escalations has no verdict
+      await seedReview(parkEscalatedOnly, 'ESCALATED', 1);
 
       const OUT = new SQL(E2E_DATABASE_URL, { max: 1 });
       // the arm's own bytes, sliced out of the shipped UNION: the mutation proofs below
@@ -212,7 +226,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
       };
 
       const ids = await runArm(armSql);
-      for (const fires of [parkLost, parkMasked, parkSplit, parkRoundScope, parkKind, parkStaleBlock]) {
+      for (const fires of [parkLost, parkMasked, parkSplit, parkRoundScope, parkKind, parkStaleBlock, parkVoid]) {
         expect(ids.has(fires), `${fires} must fire`).toBe(true);
       }
       for (const silent of [
@@ -227,6 +241,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
         parkOnBlock,
         parkNotPaused,
         parkEmptyRound,
+        parkOldRoundVerdict,
+        parkEscalatedOnly,
       ]) {
         expect(ids.has(silent), `${silent} must stay silent`).toBe(false);
       }
@@ -237,7 +253,7 @@ test.describe('prod probe decision-park arm (#431)', () => {
         {
           name: 'live-round clause',
           sql: armSql.replace(
-            "and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and ",
+            "and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and ",
             'and ',
           ),
           fire: [parkLive],
@@ -246,8 +262,8 @@ test.describe('prod probe decision-park arm (#431)', () => {
         {
           name: 'round binding',
           sql: armSql.replace(
-            "r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)",
-            "r.status = 'PENDING'",
+            "r.status = 'PENDING' and r.reviewer_id is not null and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)",
+            "r.status = 'PENDING' and r.reviewer_id is not null",
           ),
           fire: [],
           silent: [parkRoundScope],
@@ -256,6 +272,39 @@ test.describe('prod probe decision-park arm (#431)', () => {
           name: 're-arm exclusivity',
           sql: armSql.replace('and t.park_rearm_after is null and t.park_rearm_attempts = 0', ''),
           fire: [parkRearmOwned, parkExhausted],
+          silent: [],
+        },
+        {
+          name: 'attempts term',
+          sql: armSql.replace('t.park_rearm_attempts = 0', 't.park_rearm_attempts >= 0'),
+          fire: [parkExhausted],
+          silent: [],
+        },
+        {
+          name: 'live-voter filter',
+          sql: armSql.replace(' and r.reviewer_id is not null', ''),
+          fire: [],
+          silent: [parkVoid],
+        },
+        {
+          name: 'verdict round binding',
+          sql: armSql.replace(
+            "and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))",
+            "and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED'))",
+          ),
+          fire: [parkOldRoundVerdict],
+          silent: [],
+        },
+        {
+          name: 'verdict status list',
+          sql: armSql.replace("r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED')", "r.status <> 'PENDING'"),
+          fire: [parkEscalatedOnly],
+          silent: [],
+        },
+        {
+          name: 'paused scope',
+          sql: armSql.replace("s.category = 'paused'", "s.category in ('paused', 'in_review')"),
+          fire: [parkNotPaused],
           silent: [],
         },
         {

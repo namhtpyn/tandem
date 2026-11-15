@@ -1235,17 +1235,23 @@ non-positive deltas render no duration.
   one VERDICT row, and the write-vs-verdict discriminator in its MAX form: the round's
   NEWEST verdict NEWER than the PARK'S OWN flow record (the `review parked …` note plus
   its 1:1 `kind='STATUS'` payload — never the task-wide newest gating note, which a
-  stale `auto-blocked:` note could satisfy on a row whose park note never landed; the
-  BLOCK-PARK RECORD FLOOR is 2.78.38, with the retired `updated_at` stamp below the floor
-  and for a record-less row, the declared residual). The park is the round's OWN stop, so
-  the owner's approval is the resolution — `settleRound` → `flipTask` accepts a paused row
-  whose park origin resolves into review — and a crash between the verdict row and the
-  flip strands the task with nothing reading it: `stallrv` / `lostsettle` require a
-  PENDING row, `settleExtinguishedRound` refuses a decided round, the re-arm scan filters
-  `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park, and the wedge
-  arm's ownership predicate excludes every parked row. The alert therefore names the PARK
-  as the owner's own resolution: the verdict is already recorded, so the repair is a
-  status move, never a re-arm. MAX on purpose, unlike the re-key arm's MIN — a
+  stale `auto-blocked:` note could satisfy on a parked row; the BLOCK-PARK RECORD FLOOR is
+  2.78.38, with the retired `updated_at` stamp below the floor and for a record-less row,
+  the declared residual. The record is the newest `review parked` note ON THE TASK, so a
+  row whose CURRENT park note never landed can be ordered against an earlier park
+  episode's note — pre-floor crash or a direct write only, declared here). The park is the
+  round's OWN stop, but the round can still CLOSE on a vote already in flight — an AI
+  reviewer's late verdict (`recordVerdict` has no category gate) or a replay; the human
+  verdict verbs refuse a non-`in_review` task, so no approval arrives here — and
+  `settleRound` → `flipTask` accepts a paused row whose park origin resolves into review.
+  A crash between that verdict row and the flip strands the task with nothing reading it:
+  `stallrv` / `lostsettle` require a LIVE PENDING row (a no-reviewer void row is a
+  non-vote by `settleRound`'s own filter and is not live), `settleExtinguishedRound`
+  refuses at its in-`in_review`-category gate (and needs a void row to act), the re-arm
+  scan filters `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park,
+  and the wedge arm's ownership predicate excludes every parked row. The alert therefore
+  names the PARK as the owner's own resolution: the verdict is already recorded, so the
+  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose, unlike the re-key arm's MIN — a
   multi-reviewer round split across the park write (a vote before it, the closing vote
   after) is this same owed-flip shape, and the re-key arm's late-row class has no
   analogue here (a park whose home resolves into review can always land its flip).
