@@ -138,9 +138,10 @@ flow_floor_met() {
 # machine strings (`auto-blocked: N subtask(s) open` #419, `review parked — <why>` #202)
 # and the 1:1 activity payload must carry kind='STATUS'. That payload is not free text:
 # each record body has exactly ONE writer (the gating block arm, parkRound), both mint
-# kind='STATUS' with a machine-composed body no user-supplied text reaches — the same
-# WRITER-SET argument as #430's owner record. NULL for a row with no such note: callers
-# coalesce to tasks.updated_at.
+# kind='STATUS' and a fixed machine PREFIX ('auto-blocked:' / 'review parked — ') no
+# other body produces; the park's <why> tail IS free text but sits AFTER the matched
+# prefix, so it cannot mint a record — the same WRITER-SET argument as #430's owner
+# record. NULL for a row with no such note: callers coalesce to tasks.updated_at.
 flow_record_ts() {
   printf "%s" "(select max(m.created_at) from task_messages m where m.task_id = t.id and (m.body like 'auto-blocked:%' or m.body like 'review parked %') and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS'))"
 }

@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   claimRows: [] as Array<Record<string, unknown>>,
   activities: [] as Array<{ body: string; ex: string; publish: boolean | undefined }>,
   published: [] as string[],
+  txDone: false,
+  publishedBeforeCommit: 0,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -26,7 +28,13 @@ vi.mock('../../server/db/index', async () => {
   };
   return {
     asDb: (x: unknown) => x,
-    db: { transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx) },
+    db: {
+      transaction: async (fn: (t: unknown) => Promise<unknown>) => {
+        const out = await fn(tx);
+        h.txDone = true;
+        return out;
+      },
+    },
   };
 });
 
@@ -63,6 +71,8 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   return {
     ...mod,
     publishChange: async (resource: string) => {
+      // an event announced inside the transaction would be erased by a rollback (#397)
+      if (!h.txDone) h.publishedBeforeCommit += 1;
       h.published.push(resource);
     },
   };
@@ -75,6 +85,8 @@ beforeEach(() => {
   h.claimRows = [{ id: 'proposal-1' }];
   h.activities = [];
   h.published = [];
+  h.txDone = false;
+  h.publishedBeforeCommit = 0;
 });
 
 describe('proposal decision events (#466)', () => {
@@ -87,5 +99,7 @@ describe('proposal decision events (#466)', () => {
     expect(h.activities[0]?.body).toContain('proposal rejected');
     // the decision caller owns the post-commit set: activity + tasks
     expect(h.published.sort()).toEqual(['TASKS', 'TASK_ACTIVITY']);
+    // ...and only AFTER the transaction committed (#397)
+    expect(h.publishedBeforeCommit).toBe(0);
   });
 });
