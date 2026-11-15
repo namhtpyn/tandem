@@ -9,7 +9,8 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // resolvable park home still lets the settle flip land — together with the wedge's
 // current-round predicate: no PENDING
 // row in `max(round)`, and the newest VERDICT row of that round NEWER than the task's
-// last write. No legal write path produces it — a gating block records the task's own
+// newest gating FLOW RECORD at/above 2.78.38 (the retired `updated_at` stamp below the
+// floor, and as the fallback for a row with no block/park note at all). No legal write path produces it — a gating block records the task's own
 // status, a park records an in-review home, a hand-made block clears both origins, and
 // `statuses.remove` re-homes every recorded reference inside its delete transaction — so
 // a surviving count means a direct-SQL delete or a guard regression. The arm is
@@ -148,6 +149,98 @@ test.describe('prod probe orphan-home arm (#432)', () => {
       expect(fired, 'a home that still RESOLVES belongs to the wedge block branch, not this arm').not.toContain(
         resolvable,
       );
+    } finally {
+      await sql.close();
+    }
+  });
+});
+
+test.describe('prod probe paused-row ordering — BLOCK-PARK RECORD FLOOR (#466)', () => {
+  test('orders the verdict against the block/park flow record at 2.78.38 and the stamp below it', async () => {
+    // CONTRACT: SPEC "Probe versioning" — ORPHAN-HOME / RE-KEYED-HOME ordering. Below
+    // 2.78.38 both arms keep the retired verdict-vs-write stamp. At/above it they order
+    // the verdict against the task's newest gating FLOW RECORD (`auto-blocked: …` /
+    // `review parked …`, payload kind='STATUS' — the same unforgeable shape as #430's
+    // owner record), falling back to the stamp for a record-less (pre-floor) row. The
+    // stamp is MASKABLE: a later benign task edit stamps past the verdict and a real
+    // strand reads as legal forever — that is the differential this spec pins.
+    const floored = await $`bash ${script} --strand-sql 2.78.38 2`.nothrow().quiet();
+    expect(floored.exitCode, floored.stderr.toString()).toBe(0);
+    const flooredSql = floored.stdout.toString().trim();
+    expect(flooredSql).toContain('auto-blocked:%');
+    const preFloor = await $`bash ${script} --strand-sql 2.78.37 2`.nothrow().quiet();
+    expect(preFloor.exitCode, preFloor.stderr.toString()).toBe(0);
+    // the wedge's owner-record term (2.78.24+) rides the same SQL — slice the ORPHAN arm
+    // itself: the record term must not leak into its pre-floor ordering
+    const preFloorOrphan = preFloor.stdout.toString().split("select 'orphanhome'")[1]?.split("select 'rekeyhome'")[0];
+    expect(preFloorOrphan, 'the record term must not leak below the floor').not.toContain('task_messages');
+
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const benignEdit = `probe-order-edit-${tag}`; // fires at the floor: verdict after the block record, a benign edit after both
+      const verdictFirst = `probe-order-reblock-${tag}`; // silent at the floor: verdict BEFORE the block record (the legal re-block ordering)
+      const preFloorBlock = `probe-order-prefloor-${tag}`; // fires: no record at all — the stamp fallback keeps the pre-floor era covered
+      const forgedRecord = `probe-order-forged-${tag}`; // fires: a note body without kind='STATUS' is not a record
+      const parkRecord = `probe-order-park-${tag}`; // fires: the park note is the flow record too
+      const rows = [
+        { id: benignEdit, written: 0 },
+        { id: verdictFirst, written: 30 },
+        { id: preFloorBlock, written: 10 },
+        { id: forgedRecord, written: 10 },
+        { id: parkRecord, written: 0 },
+      ];
+      for (const r of rows) {
+        await sql.unsafe(
+          // created_at = now(): the cleanup sweep is time-windowed on it, and nothing in
+          // the ordering reads it — a backdated row would leak past the teardown and a
+          // deliberately-flagged fixture would then haunt later pre-floor probe runs
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
+           values ($1, $1, $2, $3, null, now(), now() - ($4::int * interval '1 minute'))`,
+          [r.id, BLOCKED, DANGLING, r.written],
+        );
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, 1, 'APPROVED', null, now() - interval '10 minutes', now() - interval '5 minutes')`,
+          [`rev-${crypto.randomUUID()}`, r.id],
+        );
+      }
+      // the legal re-block's applied verdict predates the block record (the #423 class)
+      await sql.unsafe(`update task_reviews set decided_at = now() - interval '10 minutes' where task_id = $1`, [
+        verdictFirst,
+      ]);
+      const seedRecord = async (taskId: string, body: string, minutesAgo: number, kind = 'STATUS') => {
+        const messageId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, body, created_at)
+           values ($1, $2, $3, now() - ($4::int * interval '1 minute'))`,
+          [messageId, taskId, body, minutesAgo],
+        );
+        await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2::jsonb)`, [
+          messageId,
+          { kind, autoBlocked: true, open: 1 },
+        ]);
+      };
+      await seedRecord(benignEdit, 'auto-blocked: 1 subtask(s) open', 10);
+      await seedRecord(verdictFirst, 'auto-blocked: 3 subtask(s) open', 5);
+      await seedRecord(forgedRecord, 'auto-blocked: 1 subtask(s) open', 1, 'NOTE');
+      await seedRecord(parkRecord, 'review parked — re-dispatch exhausted', 10);
+
+      const fire = async (sqlText: string) => {
+        const out = await sql.unsafe(sqlText);
+        const arm = out.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'orphanhome');
+        expect(arm, 'the emitted SQL must carry the orphan-home arm').toBeTruthy();
+        return new Set(String(arm?.[1] ?? 'none').split(','));
+      };
+      const legacy = await fire(preFloor.stdout.toString().trim());
+      const at = await fire(flooredSql);
+      expect(legacy, 'a benign edit after the verdict masks the strand on a pre-floor image').not.toContain(benignEdit);
+      expect(at, 'the block record survives a later benign edit — the strand must fire').toContain(benignEdit);
+      expect(legacy, 'the stamp reads a legal #423 re-block as a strand on a pre-floor image').toContain(verdictFirst);
+      expect(at, 'the verdict predates the block record — a legal re-block stays silent').not.toContain(verdictFirst);
+      expect(at, 'a pre-floor block has no record: the stamp fallback must still fire').toContain(preFloorBlock);
+      expect(at, 'a NOTE-kind body is not a flow record — the stamp fallback must fire').toContain(forgedRecord);
+      expect(at, 'the park note is a flow record too').toContain(parkRecord);
     } finally {
       await sql.close();
     }

@@ -119,6 +119,46 @@ owner_floor_met() {
 legacy_rule() {
   printf "%s" "(select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at"
 }
+# BLOCK/PARK FLOW-RECORD floor (#466, 2.78.38): the gating auto-block note and the
+# review park note commit in the SAME transaction as their guarded status write (SPEC
+# "BLOCK-PARK RECORD"), so on a floored image every machine block/park carries its own
+# flow record. The paused-row arms order a round's verdict against that record instead of
+# `tasks.updated_at` — the stamp is MASKABLE: any later task write (a title/description/
+# assignee edit) stamps past the verdict and a real strand reads as legal forever. A
+# row with NO block/park note at all (pre-note-era state or a direct-SQL write) falls
+# back to the stamp, so those rows stay covered until they drain. The notes predate the
+# floor — what it adds is ATOMICITY: a pre-floor block whose note was lost to a crash is
+# a DECLARED era-bounded residual (an older record can order that row). RE-DERIVE the
+# floor for the release that actually ships the atomic writer — never assume it.
+FLOW_FLOOR=2.78.38
+flow_floor_met() {
+  [ "$(at_least "$FLOW_FLOOR" "${1:-}")" = "1" ]
+}
+# the newest gating FLOW RECORD for the task: the block/park note bodies are single-writer
+# machine strings (`auto-blocked: N subtask(s) open` #419, `review parked — <why>` #202)
+# and the 1:1 activity payload must carry kind='STATUS'. The record is unforgeable by
+# free text: each record body has exactly ONE writer (the gating block arm, parkRound), both mint
+# kind='STATUS' and a fixed machine PREFIX ('auto-blocked:' / 'review parked — ') no
+# other body produces; the park's <why> tail IS free text but sits AFTER the matched
+# prefix, so it cannot mint a record — the same WRITER-SET argument as #430's owner
+# record. NULL for a row with no such note: callers coalesce to tasks.updated_at.
+flow_record_ts() {
+  printf "%s" "(select max(m.created_at) from task_messages m where m.task_id = t.id and (m.body like 'auto-blocked:%' or m.body like 'review parked %') and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS'))"
+}
+verdict_ts() { # $1 = max|min
+  case "${1:-}" in max|min) ;; *) return 1 ;; esac
+  printf "(select %s(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))" "$1"
+}
+# paused-row ordering (#466): verdict vs the newest FLOW RECORD at/above the floor, the
+# retired verdict-vs-write stamp below it. $1 = max|min, $2 = prod version.
+paused_order() {
+  case "${1:-}" in max|min) ;; *) return 1 ;; esac
+  if flow_floor_met "${2:-}"; then
+    printf "%s > coalesce(%s, t.updated_at)" "$(verdict_ts "$1")" "$(flow_record_ts)"
+  else
+    printf "%s > t.updated_at" "$(verdict_ts "$1")"
+  fi
+}
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
 # parked/stranded round a legal egress or a teardown regression left behind. The note-dispatch
@@ -186,9 +226,11 @@ strand_sql() {
   # ORPHAN-HOME arm (#432): a PAUSED row with a recorded origin (block or park home) that
   # names NO task_statuses row — the home was deleted after the block recorded it — with
   # the wedge's current-round clause (no PENDING row in max(round), at least one verdict
-  # row) plus its OWN verdict-vs-write ordering (the newest verdict of that round NEWER
-  # than the task's last write; the wedge's owner-status discriminator is #430's, this arm
-  # keeps the simpler test). EITHER column alone
+  # row) plus its OWN verdict-vs-FLOW-EVENT ordering (#466): the newest verdict of that
+  # round NEWER than the task's newest gating FLOW RECORD (BLOCK-PARK RECORD FLOOR,
+  # 2.78.38), with the retired `tasks.updated_at` stamp below the floor and as the
+  # record-less-row fallback — a later benign task edit can no longer mask the strand.
+  # EITHER column alone
   # dangles: a row carrying both origins (no live writer emits that, but the schema
   # permits it) still fires when one of them lost its row. No legal write path produces
   # it: a gating block records the task's own status (a row that exists at write time), a
@@ -198,13 +240,15 @@ strand_sql() {
   # regression, or the ghost-task window the law declares (a task moved into the status
   # while it was being deleted). The arm also requires NEITHER origin to resolve to an
   # in-review home: the flip can still land through a resolvable park origin, so such a
-  # row is not this shape (the wedge's park exclusion, mirrored). VERSION-INDEPENDENT on purpose (a pre-guard image still produces
-  # the strand, so no image floor), but COLUMN-GATED like the block branch: the arm reads
+  # row is not this shape (the wedge's park exclusion, mirrored). VERSION-INDEPENDENT as
+  # an ARM on purpose (a pre-guard image still produces the strand, so no image floor on
+  # emission — only its ORDERING term is floor-gated, #466), but COLUMN-GATED like the
+  # block branch: the arm reads
   # park_from_status, and an origin column absent on the running image would kill the
   # WHOLE UNION (probe law #5 / #325) and blind every arm.
   orphan=""
   if [ "${2:-}" = "2" ]; then
-    orphan=" union all select 'orphanhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
+    orphan=" union all select 'orphanhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and not exists (select 1 from task_statuses o where o.id = t.pre_block_status)) or (t.park_from_status is not null and not exists (select 1 from task_statuses o where o.id = t.park_from_status))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order max "${1:-}")) x), 'none')"
   fi
   # RE-KEYED-HOME arm (#435): a PAUSED row whose recorded block/park origin RESOLVES to
   # a TERMINAL (done/cancelled-category) home — the home EXISTS, but its category moved
@@ -229,14 +273,15 @@ strand_sql() {
   # re-block, excluded by the MIN ordering. The current-round clause is mirrored from
   # the orphan arm; the ordering is STRONGER than the orphan's max() (min > write) for
   # the reasons above — a multi-reviewer round split across the block write (min < write)
-  # is a DECLARED boundary of this arm, tracked as #468. Mask below the addressable
-  # fix: #466 (the wedge's owner-status discriminator is #430's; this arm keeps the
-  # simpler stamp test). Per-column resolve,
+  # is a DECLARED boundary of this arm, tracked as #468. Ordering is #466's
+  # BLOCK-PARK RECORD FLOOR: below 2.78.38 the retired stamp test stands, at and above it
+  # MIN(verdict) > the newest gating flow record (record-less pre-floor rows coalesce to
+  # `tasks.updated_at`). Per-column resolve,
   # VERSION-independent (a pre-guard image produces the strand too), COLUMN-gated like
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (select min(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order min "${1:-}")) x), 'none')"
   fi
   printf "%s" "select 'wedge', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $rule${blkarm}) x), 'none') union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none') union all select 'lostsettle', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where $own and (t.assignee_id is null or r.reviewer_id <> t.assignee_id) and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.status = 'DONE' and tr.started_at >= r.created_at and tr.finished_at < now() - interval '2 minutes' and not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = t.id and tr2.employee_id = r.reviewer_id and (tr2.started_at, tr2.id) > (tr.started_at, tr.id)))) x), 'none')${ready}${orphan}${rekey}"
 }
@@ -384,6 +429,35 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(strand_orphan_arm 2.78.19 2)" | grep -qF "rekeyhome" && { echo "selfcheck fail: rekey arm leaked into the orphan slice"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.19 2)" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the rekey slice"; exit 1; }
   printf '%s' "$(strand_sql 2.78.20 2)" | grep -qF "orphanhome" || { echo "selfcheck fail: orphan arm missing at the current gate pair"; exit 1; }
+  # BLOCK/PARK FLOW-RECORD floor (#466): the paused-row ordering is version-gated — the
+  # retired stamp below 2.78.38, the newest gating flow record (with the stamp as the
+  # record-less pre-floor fallback) at and above it. The pre-floor pins above stay green by
+  # construction; these pin the floored half and the helpers' own gates.
+  flow_floor_met 2.78.37 && { echo "selfcheck fail: flow floor met below 2.78.38"; exit 1; }
+  flow_floor_met 2.78.38 || { echo "selfcheck fail: flow floor off at 2.78.38"; exit 1; }
+  flow_floor_met 2.78.100 || { echo "selfcheck fail: flow floor off at a higher patch"; exit 1; }
+  flow_floor_met 3.0.0 || { echo "selfcheck fail: flow floor off at the next major"; exit 1; }
+  flow_floor_met '' && { echo "selfcheck fail: flow floor met on an empty version"; exit 1; }
+  flow_floor_met guard-error && { echo "selfcheck fail: flow floor met on a non-semver"; exit 1; }
+  flow_floor_met 2.78.38-rc1 && { echo "selfcheck fail: flow floor met on a pre-release"; exit 1; }
+  paused_order bogus 2.78.38 && { echo "selfcheck fail: ordering accepted a non-max/min aggregate"; exit 1; }
+  printf '%s' "$(paused_order max 2.78.37)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor orphan ordering reads a record"; exit 1; }
+  [ "$(printf '%s' "$(paused_order max 2.78.37)" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: pre-floor orphan ordering lost the stamp"; exit 1; }
+  printf '%s' "$(paused_order max 2.78.38)" | grep -qF "coalesce((select max(m.created_at) from task_messages m where m.task_id = t.id" || { echo "selfcheck fail: floored orphan ordering lost the flow record"; exit 1; }
+  printf '%s' "$(paused_order max 2.78.38)" | grep -qF ", t.updated_at)" || { echo "selfcheck fail: floored orphan ordering lost the pre-floor fallback"; exit 1; }
+  printf '%s' "$(paused_order max 2.78.38)" | grep -qF "max(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored orphan ordering lost the MAX test"; exit 1; }
+  printf '%s' "$(paused_order min 2.78.38)" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey ordering lost the MIN test"; exit 1; }
+  printf '%s' "$(flow_record_ts)" | grep -qF "m.body like 'auto-blocked:%'" || { echo "selfcheck fail: flow record lost the block prefix"; exit 1; }
+  printf '%s' "$(flow_record_ts)" | grep -qF "m.body like 'review parked %'" || { echo "selfcheck fail: flow record lost the park prefix"; exit 1; }
+  printf '%s' "$(flow_record_ts)" | grep -qF "a.payload->>'kind' = 'STATUS'" || { echo "selfcheck fail: flow record lost the kind pin"; exit 1; }
+  ORPHAN_FLOW=$(strand_orphan_arm 2.78.38 2)
+  printf '%s' "$ORPHAN_FLOW" | grep -qF "auto-blocked:%" || { echo "selfcheck fail: floored orphan arm lost the flow record"; exit 1; }
+  printf '%s' "$ORPHAN_FLOW" | grep -qF ") > t.updated_at" && { echo "selfcheck fail: floored orphan arm still orders by the stamp"; exit 1; }
+  REKEY_FLOW=$(strand_rekey_arm 2.78.38 2)
+  printf '%s' "$REKEY_FLOW" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey arm lost the MIN test"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF ")) > coalesce((select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the record ordering"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "review parked %" || { echo "selfcheck fail: floored rekey arm lost the flow record"; exit 1; }
+  printf '%s' "$(strand_orphan_arm 2.78.37 2)" | grep -qF "auto-blocked:%" && { echo "selfcheck fail: pre-floor orphan arm reads a record"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the

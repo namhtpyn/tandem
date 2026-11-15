@@ -86,43 +86,45 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: (cols?: unknown) => ({ from: (table: unknown) => mkChain(cols, table === tasks) }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => {
-          if (table === tasks) h.taskUpdateSets.push(set);
-          return {
-            where: () => ({
-              returning: async () => [{ id: table === tasks ? 'task-1' : 'run-1' }],
-            }),
-          };
-        },
-      }),
-      query: {
-        aiEmployees: {
-          findMany: async () => [{ userId: 'rev-1' }],
-        },
-        taskStatuses: {
-          findMany: async () => h.statuses,
-        },
-        taskRuns: {
-          findMany: async () => (h.reviewRuns.length ? h.reviewRuns : [h.runFull]),
-          findFirst: async () => h.latestRun,
-        },
-        tasks: {
-          findMany: async () => [{ status: h.statuses[0]?.id, failStreak: 0 }],
-        },
-        taskReviews: {
-          findFirst: async () => ({ id: 'row-1' }),
-        },
-        user: {
-          findFirst: async () => ({ id: 'rev-1' }),
-        },
+  const dbMock: Record<string, unknown> = {
+    select: (cols?: unknown) => ({ from: (table: unknown) => mkChain(cols, table === tasks) }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => {
+        if (table === tasks) h.taskUpdateSets.push(set);
+        return {
+          where: () => ({
+            returning: async () => [{ id: table === tasks ? 'task-1' : 'run-1' }],
+          }),
+        };
+      },
+    }),
+    query: {
+      aiEmployees: {
+        findMany: async () => [{ userId: 'rev-1' }],
+      },
+      taskStatuses: {
+        findMany: async () => h.statuses,
+      },
+      taskRuns: {
+        findMany: async () => (h.reviewRuns.length ? h.reviewRuns : [h.runFull]),
+        findFirst: async () => h.latestRun,
+      },
+      tasks: {
+        findMany: async () => [{ status: h.statuses[0]?.id, failStreak: 0 }],
+      },
+      taskReviews: {
+        findFirst: async () => ({ id: 'row-1' }),
+      },
+      user: {
+        findFirst: async () => ({ id: 'rev-1' }),
       },
     },
   };
+  // #466: parkRound's flip + flow record run inside db.transaction; this suite asserts
+  // the surrounding behavior, so the double runs the callback on the same handle
+  // (atomicity itself is pinned in review-park-guard, TXN-DOUBLE)
+  dbMock.transaction = async (fn: (h: unknown) => Promise<unknown>) => fn(dbMock);
+  return { asDb: (x: unknown) => x, db: dbMock };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {

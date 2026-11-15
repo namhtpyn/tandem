@@ -10,12 +10,36 @@ import { mockDb, tasks as dbTasks } from './helpers/mock-db';
 
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
-  updates: [] as Array<{ table: string; set: Record<string, unknown>; hasPredicate: boolean; cond: unknown }>,
-  activities: [] as Array<{ body: string; payload: Record<string, unknown> }>,
+  updates: [] as Array<{
+    table: string;
+    set: Record<string, unknown>;
+    hasPredicate: boolean;
+    cond: unknown;
+    via: string;
+  }>,
+  activities: [] as Array<{ body: string; payload: Record<string, unknown>; via: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
+  const mkUpdate = (via: 'pool' | 'tx') => (table: unknown) => ({
+    set: (set: Record<string, unknown>) => ({
+      where: (cond: unknown) => {
+        const applied = () => {
+          h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, hasPredicate: cond != null, cond, via });
+          // parkRound's guarded write now .returning()s the flipped rows (#282):
+          // the atomic predicate decides the flip — here the guard always wins
+          return cond != null ? [{ id: 'task-1' }] : [];
+        };
+        return {
+          then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
+            Promise.resolve(applied()).then(onFulfilled),
+          returning: async () => applied(),
+        };
+      },
+    }),
+  });
+  const tx = { __tx: true, update: mkUpdate('tx') };
   return {
     asDb: (x: unknown) => x,
     db: {
@@ -41,23 +65,10 @@ vi.mock('../../server/db/index', async () => {
           },
         },
       },
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, hasPredicate: cond != null, cond });
-              // parkRound's guarded write now .returning()s the flipped rows (#282):
-              // the atomic predicate decides the flip — here the guard always wins
-              return cond != null ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
-                Promise.resolve(applied()).then(onFulfilled),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
+      update: mkUpdate('pool'),
+      // #466 TXN-DOUBLE: the pool call opens a transaction; the park flip + its flow
+      // record must ride THIS stamped handle, never the pool surface
+      transaction: async (fn: (h: unknown) => Promise<unknown>) => fn(tx),
     },
   };
 });
@@ -66,8 +77,11 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/thread.service')>();
   return {
     ...mod,
-    insertActivityMessage: async (args: { body: string; payload: Record<string, unknown> }) => {
-      h.activities.push({ body: args.body, payload: args.payload });
+    insertActivityMessage: async (
+      args: { body: string; payload: Record<string, unknown> },
+      ex?: { __tx?: boolean },
+    ) => {
+      h.activities.push({ body: args.body, payload: args.payload, via: ex?.__tx === true ? 'tx' : 'pool' });
     },
   };
 });
@@ -132,6 +146,24 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+    // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
+    // carries kind='STATUS' — the park writer must keep minting it
+    expect(h.activities[0]?.payload.kind).toBe('STATUS');
+  });
+
+  it('the park flip and its flow record commit in ONE transaction (#466)', async () => {
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
+    await parkRound('task-1', 'review turn failed — run settled FAILED');
+    // TXN-DOUBLE: the guarded flip carries the TX handle, never the pool — a mutation
+    // routing the flip back to the pool turns this red
+    expect(h.updates[0]?.via).toBe('tx');
+    // the FLOW RECORD rides the SAME handle: the probe's paused-row arms order a round's
+    // verdict against this row, so a landed park without it is a detector blind spot
+    expect(h.activities[0]?.via).toBe('tx');
+    expect(h.activities[0]?.payload.reviewParked).toBe(true);
+    // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
+    // carries kind='STATUS' — the park writer must keep minting it
+    expect(h.activities[0]?.payload.kind).toBe('STATUS');
   });
 
   it('a GATING auto-block from an in-review origin parks with the BLOCK origin (#419)', async () => {
