@@ -191,8 +191,11 @@ test.describe('prod probe paused-row ordering — BLOCK-PARK RECORD FLOOR (#466)
       ];
       for (const r of rows) {
         await sql.unsafe(
+          // created_at = now(): the cleanup sweep is time-windowed on it, and nothing in
+          // the ordering reads it — a backdated row would leak past the teardown and a
+          // deliberately-flagged fixture would then haunt later pre-floor probe runs
           `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
-           values ($1, $1, $2, $3, null, now() - interval '40 minutes', now() - ($4::int * interval '1 minute'))`,
+           values ($1, $1, $2, $3, null, now(), now() - ($4::int * interval '1 minute'))`,
           [r.id, BLOCKED, DANGLING, r.written],
         );
         await sql.unsafe(

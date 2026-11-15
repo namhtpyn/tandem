@@ -169,11 +169,15 @@ async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restor
     )
     .returning({ id: tasks.id });
   if (restored.length === 0) return 'lost';
-  await logActivity(cur.id, `unblocked: all subtasks terminal → ${restore}`, {
-    autoUnblocked: true,
-    restored: restore,
-    ...(parked ? { parkResumed: true } : {}),
-  });
+  // the restore note rides the SAME executor as the restore write; a borrowed caller
+  // transaction defers the events to its own commit (#397/#466)
+  await logActivity(
+    cur.id,
+    `unblocked: all subtasks terminal → ${restore}`,
+    { autoUnblocked: true, restored: restore, ...(parked ? { parkResumed: true } : {}) },
+    ex,
+    { publish: ex === db },
+  );
   // unblock-resume parity (#202) + #365 + #419: replay a restored LADDER park's turn,
   // settle a restore that lands in-review with no live voter (leaf helper)
   await resumeRestoredRound(cur.id, ladderOwns, known.get(restore));
