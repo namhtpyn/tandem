@@ -1225,36 +1225,56 @@ non-positive deltas render no duration.
   this one's. The live pass carries the arm's emit + previous-pass presence
   confirm + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped
   file: a SQL arm with no pass consumer is a detector that never runs).
-- The DECISION-PARK arm (#431, label `parkclosed`) reads a DECISION-class park
-  (`park_rearm_after IS NULL` with `park_rearm_attempts = 0` — a ladder-owned park is
-  resumed by the re-arm sweep and an exhausted ladder always carries `park_rearm_attempts
-  = 5`, the 5b arm's shape; both are OUT of this arm by declaration) whose CURRENT round
-  is CLOSED while the park still stands, with the park origin RESOLVING to an
-  in-review-category status (a terminal home is the RE-KEYED-HOME arm, a dangling one
-  ORPHAN-HOME). That combination has NO legal writer: every settle flips the task out of
-  the paused category and clears both origins in the same statement, and every park of an
-  already-closed round (the runner's "finished without a verdict" anomaly park, or a
-  straggler turn-failure park after a crashed flip) is itself the strand. BOTH crash
-  orders land here — the verdict written before the flip (a late AI verdict on the parked
-  task: `recordVerdict` has no category gate, while the human verdict verbs refuse a
-  non-`in_review` task) and the park written after a crashed flip (its note NEWER than
-  the verdict) — so the arm keys on the SHAPE, never an ordering: an ordering term would
-  hide the park-after-crash order and buys nothing against a shape no legal path produces
-  (a mask needs a legal writer). CLOSED mirrors `settleRound`'s own view of the round: NO
-  LIVE PENDING voter (a NULL-reviewer void row from a removed reviewer is a non-vote by
-  `settleRound`'s filter and does not keep the round open), NO owed referral (an
-  ESCALATED row carrying a target that never got its replacement row still owes that
-  vote, #474), and at least one VERDICT row. Nothing else reads the shape: `stallrv` /
-  `lostsettle` require a live PENDING row, `settleExtinguishedRound` refuses at its
-  in-`in_review`-category gate (and needs a void row to act), the re-arm scan filters
-  `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park, and the wedge
-  arm's ownership predicate excludes every parked row. The alert therefore names the PARK
-  as the owner's own resolution: the verdict is already recorded, so the repair is a
-  status move, never a re-arm or an approval. VERSION-independent as an arm above its
-  column floor but COLUMN-gated at the two-column gate plus the 2.63.0 re-arm-column
-  floor (a missing column would kill the whole UNION, #325) and PAUSED-scoped; the live
-  pass carries its emit + previous-pass presence confirm + id-set dedupe wiring, pinned
-  by `--selfcheck`.
+- The DECISION-PARK arm (#431, label `parkclosed`) reads the parked round that CLOSED
+  with its settle flip lost: a PAUSED row carrying `park_from_status` that RESOLVES to an
+  in-review-category status, `park_rearm_after IS NULL` with `park_rearm_attempts = 0`
+  (the DECISION-class park — a ladder-owned park is resumed by the re-arm sweep,
+  `park_rearm_after IS NOT NULL`, and an exhausted ladder always carries
+  `park_rearm_attempts = 5`, which is the 5b ladder arm's shape; both are OUT of this arm
+  by declaration), the CURRENT round (`max(round)`) holding NO LIVE PENDING voter (a
+  no-reviewer void row from a removed reviewer is a non-vote by `settleRound`'s own
+  filter and does not keep the round open), NO OWED REFERRAL (an ESCALATED row whose
+  recorded target never got its replacement row still owes that vote, #474 — the round is
+  not decided then), and at least one VERDICT row, and the write-vs-verdict discriminator
+  in its MAX form: the round's
+  NEWEST verdict NEWER than the PARK'S OWN flow record (the `review parked …` note plus
+  its 1:1 `kind='STATUS'` payload — never the task-wide newest gating note, which a
+  stale `auto-blocked:` note could satisfy on a parked row; the BLOCK-PARK RECORD FLOOR is
+  2.78.38, with the retired `updated_at` stamp below the floor and for a record-less row,
+  the declared residual. The record is the newest `review parked` note ON THE TASK, so a
+  row whose CURRENT park note never landed can be ordered against an earlier park
+  episode's note — pre-floor crash or a direct write only, declared here). The park is the
+  round's OWN stop, but the round can still CLOSE on a vote already in flight — an AI
+  reviewer's late verdict (`recordVerdict` has no category gate) or a replay; the human
+  verdict verbs refuse a non-`in_review` task, so no approval arrives here — and
+  `settleRound` → `flipTask` accepts a paused row whose park origin resolves into review.
+  A crash between that verdict row and the flip strands the task with nothing reading it:
+  `stallrv` / `lostsettle` require a LIVE PENDING row (a no-reviewer void row is a
+  non-vote by `settleRound`'s own filter and is not live), `settleExtinguishedRound`
+  refuses at its in-`in_review`-category gate (and needs a void row to act), the re-arm
+  scan filters `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park,
+  and the wedge arm's ownership predicate excludes every parked row. The alert therefore
+  names the PARK as the owner's own resolution: the verdict is already recorded, so the
+  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose, unlike the re-key arm's MIN — a
+  multi-reviewer round split across the park write (a vote before it, the closing vote
+  after) is this same owed-flip shape, and the re-key arm's late-row class has no
+  analogue here (a park whose home resolves into review can always land its flip).
+  VERSION-independent as an arm above its column floor but COLUMN-gated at the two-column
+  gate plus the 2.78.37 column floor (the arm reads `referral_target_id`, shipped there;
+  a missing column would kill the whole UNION, #325) and PAUSED-scoped; the live pass
+  carries its emit + previous-pass presence confirm + id-set dedupe wiring, pinned by
+  `--selfcheck`.
+  DECLARED BOUNDARIES — two shapes are OUT, and each MUST stay out:
+  (a) MIRROR ORDER, a decision park whose note is NEWER than every verdict (the runner's
+  non-rearmable "finished without a verdict" anomaly park after a crashed flip) is
+  indistinguishable in SQL from the LEGAL waiver park (`review escalation target became
+  the assignee — referral waived; resolve to resume`, which supersedes the escalated row
+  and parks over a closed round) and from a reviewer-deletion closure, so the arm must
+  stay silent there; the re-armable settle-throw park of the same crash class is OUT by
+  the decision-class gate and is healed by the re-arm sweep;
+  (b) REFERRAL-OWED, a parked round that still owes a referral vote is excluded because
+  the round is not decided, and the referral heal is review-flow-scoped (it never touches
+  a parked row), so such a park is the owner's to move — declared, not reported.
 - `--strand-sql <version> <origin-column-count>` prints the exact strand-shape
   SQL a pass would run for that gate pair (no network, no state writes — the
   probe's state directory is created only after both pure dispatch modes exit),
