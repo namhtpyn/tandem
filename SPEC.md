@@ -1441,9 +1441,14 @@ non-positive deltas render no duration.
   probe itself or as a BRAIN job) while the interpolated DISPLAY TOKEN is sanitised first:
   every character outside `[A-Za-z0-9 ._-]` — control characters, newlines, `:`, `!`, `=`
   included — becomes a space, runs of spaces collapse, the edges trim, and a name with
-  nothing left renders as `<unprintable>`. Only the sanitised token is rendered, so a name
-  can neither forge a second physical line nor spell the `P0!:` escalation prefix, and that
-  prefix is emitted by the identity branch alone, never composed from the rendered name.
+  nothing left renders as `<unprintable>`; a name the sanitiser changed carries a `~<6 hex>`
+  discriminator of the raw name, so two jobs whose tokens collide still emit distinct lines
+  (the repeat-suppression key is the line text). Every field the record can shape — name,
+  `state`, a schedule expression, a cause — is swept of control characters at emission, so
+  the line count is the job count, never the record's content; only the sanitised token is
+  rendered, so a name can neither forge a second physical line nor spell the `P0!:`
+  escalation prefix, and that prefix is emitted by the identity branch alone, never composed
+  from the rendered name.
   Every line carries the CAUSE, drawn from `last_error` /
   `last_delivery_error` / `last_fire_error`: the exception-class line (so a
   `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
@@ -1456,11 +1461,12 @@ non-positive deltas render no duration.
   (`…tandem-triage-2`), a `P0001`, a `P0RT` or an embedded token in record text or after
   `cause=` stays P1
   (every emitted line is `;`-sanitised, so the join separator never appears inside one) — and causes are `;`-sanitised on the way out so no error text can forge the escalation
-  prefix. The level is the MAX over the `;`-joined segments, and a segment that starts
-  `loopdead:` is classified by its own identity token ALONE: a job name, a cause or any
-  other payload inside such a segment never matches a loose P0 phrase (a job named
-  `unreachable`, or `cause=db unreachable`, stays P1), while a genuine `db: unreachable`
-  segment in the same join still pages. The repeat-suppression key masks
+  prefix. An alert line is P0 when ANY of its `;`-joined segments is P0, and a segment that
+  starts `loopdead:` or `loopdead_scan:` is classified by its own identity token ALONE: a
+  job name, a `state`, a cause or any other payload inside such a segment never matches a
+  loose P0 phrase (a job named `unreachable`, or `cause=db unreachable`, stays P1), while a
+  genuine `db: unreachable` segment in the same join still pages; the caller's own
+  three-or-more-anomaly override is unchanged. The repeat-suppression key masks
   volatile cause tails (`request_id=` / `trace=` / UUIDs / long hex ids / long digit runs /
   attempt counters) and every age (`=<n>m` and `=<n>h`) so a standing fault alerts once
   instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
