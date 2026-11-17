@@ -1368,3 +1368,59 @@ non-positive deltas render no duration.
   drift) and is the drift check the critic runs (exit 0 = live copy ==
   `origin/dev`; its tests retarget the live path with `TANDEM_PROBE_TEST=1`,
   where a successful comparison exits 3 — never 0).
+- The loop-liveness arm (#485) watches the loop ITSELF, not prod, and its record is the
+  scheduler's own `cron/jobs.json` — never `passes.jsonl`, because a job that keeps
+  ticking while every run FAILS looks fresh in its trail and is functionally dead. The
+  2026-11-15/16 gap proved it: `tandem-triage` failed 32 consecutive hourly runs and
+  `tandem-critic` 3, every one a pre-flight delivery failure, and nothing alerted for 33h
+  — every product arm was green because prod was healthy, and the designated dead-man
+  (the critic) is itself an LLM cron that dies with the provider. Liveness = last SUCCESS,
+  and success includes DELIVERABILITY and COMPLETION: Hermes records `delivery_failed` as
+  a successful run with `failure_streak` forced to 0, so a job whose every run reaches
+  nobody would otherwise be invisible — it gets its own term keyed off
+  `last_delivery_error`; `delivery_queued` is a delivery still IN PROGRESS (the outbox
+  still owes it) and stays silent; an operator CANCEL is not a failure (Hermes clears its
+  error and keeps the streak). Terms per enabled job, the probe excluded (it cannot
+  witness its own death): (a) a non-ok `last_status` at `failure_streak >= 2`; (a2)
+  `last_status = delivery_failed`; (b) OVERDUE — `next_run_at` more than an hour in the
+  past, the exact missed-fire signal and the only term that catches a low-cadence job
+  (monthly/quarterly/annual) in hours instead of multiples of its own gap; (b2) the newest
+  fire stamp (`last_dispatch.dispatched_at` or `last_run_at`, whichever is newer) older
+  than **2x the job's own MAX gap**, a job that never ran having no baseline and staying
+  silent; (b3) `next_run_at` present but NULL on a recurring job that has fired is `no next fire
+  scheduled - wedged` (it can never fire again, and (b) could never see it); (b4) fires
+  keep advancing while `last_run_at` sits beyond **max(4x gap, 12h)** —
+  a hung run or a wedged handoff, the same "runs but lands nowhere" class as (a2) — and a
+  job that fires but has NEVER recorded a completion is measured from `created_at` — with
+  the 12-hour floor set by measurement (the loop's own triage runs take up to 6.9h, so a
+  schedule-gap multiple alone paged on healthy runs). The gap is the LONGEST legitimate
+  gap between two fires, never the mean cadence — INCLUDING a cluster's own intra-day
+  spacing (`0 0,23 * * *` is a 1380m gap, not the 60m cross-midnight one) — ENUMERATED from
+  the cron fields over an 8-year core horizon plus a successor buffer: union semantics when day-of-month AND
+  day-of-week are both restricted (cron fires on the union, so `0 9 1 * 1` is a 7-day
+  gap, not 31), named months and weekdays (`JAN`, `MON-FRI`), day-of-month 29-31 reality
+  (`0 9 31 * *` is a 61-day gap), 0 and 7 both Sunday, croniter's seconds-LAST 6-field
+  exprs, or the interval minutes. A `once` job that never ran past its `run_at` plus ONE
+  HOUR of grace is dead (`one-shot never fired`) — a durable `run_claim`/`fire_claim`
+  inside two hours means the fire is IN FLIGHT and stays silent — evaluated even when the scheduler has
+  retired it (Hermes writes `enabled=false` + `state=completed` with no completion stamp,
+  so that gate must not run first); a `once` with no `run_at` is un-watched. A gap that cannot be derived is an ANOMALY
+  (`unsupported schedule … un-watched`), never silence; an empty or re-keyed store
+  (`jobs: []`) is `jobs.json has no jobs - un-watched`, never vacuous green; a corrupt
+  record is isolated (`record invalid`) without blinding the scan, and an enabled job
+  with no name is `un-watched` too. Every line carries the CAUSE, drawn from `last_error` /
+  `last_delivery_error` / `last_fire_error`: the exception-class line (so a
+  `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
+  last non-indented line, or any `Name: message` line), else a `reason`/`failed` line,
+  else the first line that is not the prompt's `# Cron Job:` title. The loop's
+  BRAIN jobs (`tandem-triage`, `tandem-critic`) carry the `loopdead:P0!:` line PREFIX —
+  escalated by exact brain-job NAME (`loopdead:P0!:tandem-triage` / `:tandem-critic`)
+  anywhere in the joined line, so a brain line that is not last still pages while a
+  look-alike job name, a `P0001`, a `P0RT` or an embedded prefix after `cause=` stays P1
+  (every emitted line is `;`-sanitised, so the join separator never appears inside one) — and causes are `;`-sanitised on the way out so no error text can forge the escalation
+  prefix; the repeat-suppression key masks
+  volatile cause tails (`request_id=` / `trace=` / UUIDs / long hex ids / long digit runs /
+  attempt counters) and every age (`=<n>m` and `=<n>h`) so a standing fault alerts once
+  instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
+  in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode so the unit
+  test drives the shipped bytes with fixtures.
