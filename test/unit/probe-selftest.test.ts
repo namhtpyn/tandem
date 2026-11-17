@@ -17,7 +17,10 @@ const FIXTURE = {
     {
       name: 'tandem-prod-watch',
       enabled: true,
-      schedule: { kind: 'interval', minutes: 10 },
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T22:00:00+00:00',
@@ -25,16 +28,24 @@ const FIXTURE = {
     {
       name: 'tandem-triage',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-17T00:00:00+00:00',
-      last_dispatch: { dispatched_at: '2026-11-17T02:00:00+00:00' },
+      last_dispatch: {
+        dispatched_at: '2026-11-17T02:00:00+00:00',
+      },
     },
     {
       name: 'tandem-critic',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 11,23 * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 11,23 * * *',
+      },
       last_status: 'error',
       failure_streak: 3,
       last_run_at: '2026-11-16T23:00:00+00:00',
@@ -43,7 +54,10 @@ const FIXTURE = {
     {
       name: 'nightly-report',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 2 * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 2 * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T02:00:00+00:00',
@@ -51,7 +65,10 @@ const FIXTURE = {
     {
       name: 'paused-job',
       enabled: false,
-      schedule: { kind: 'interval', minutes: 10 },
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
       last_status: 'error',
       failure_streak: 9,
       last_run_at: '2026-11-01T00:00:00+00:00',
@@ -59,7 +76,10 @@ const FIXTURE = {
     {
       name: 'streak2-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'failed',
       failure_streak: 2,
       last_run_at: '2026-11-17T01:30:00+00:00',
@@ -68,7 +88,10 @@ const FIXTURE = {
     {
       name: 'single-failure-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'error',
       failure_streak: 1,
       last_run_at: '2026-11-17T01:45:00+00:00',
@@ -77,7 +100,10 @@ const FIXTURE = {
     {
       name: 'undelivered-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'delivery_failed',
       failure_streak: 0,
       last_run_at: '2026-11-17T01:30:00+00:00',
@@ -87,7 +113,10 @@ const FIXTURE = {
     {
       name: 'queued-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'delivery_queued',
       failure_streak: 0,
       last_run_at: '2026-11-17T01:45:00+00:00',
@@ -95,7 +124,10 @@ const FIXTURE = {
     {
       name: 'queued-streak-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'delivery_queued',
       failure_streak: 2,
       last_run_at: '2026-11-17T01:45:00+00:00',
@@ -103,7 +135,10 @@ const FIXTURE = {
     {
       name: 'cancelled-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'cancelled',
       failure_streak: 5,
       last_run_at: '2026-11-17T01:45:00+00:00',
@@ -111,7 +146,10 @@ const FIXTURE = {
     {
       name: 'never-run-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: null,
       failure_streak: 0,
       last_run_at: null,
@@ -119,25 +157,38 @@ const FIXTURE = {
     {
       name: 'inflight-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T23:00:00+00:00',
-      last_dispatch: { dispatched_at: '2026-11-17T01:59:00+00:00' },
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
     },
     {
       name: 'no-completion-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T20:00:00+00:00',
-      last_dispatch: { dispatched_at: '2026-11-17T01:59:00+00:00' },
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
     },
     {
       name: 'stale-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T23:00:00+00:00',
@@ -146,7 +197,10 @@ const FIXTURE = {
     {
       name: 'interval-job',
       enabled: true,
-      schedule: { kind: 'interval', minutes: 10 },
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-17T01:35:00+00:00',
@@ -154,7 +208,10 @@ const FIXTURE = {
     {
       name: 'title-cause-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T23:00:00+00:00',
@@ -163,17 +220,27 @@ const FIXTURE = {
     {
       name: 'fire-error-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-16T23:00:00+00:00',
-      last_dispatch: { dispatched_at: '2026-11-16T23:00:00+00:00' },
-      last_fire_error: { detail: 'dispatch handoff missed the fire window' },
+      last_dispatch: {
+        dispatched_at: '2026-11-16T23:00:00+00:00',
+      },
+      last_fire_error: {
+        detail: 'dispatch handoff missed the fire window',
+      },
     },
     {
       name: 'monthly-drill',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 3 1 * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 3 1 * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-01T03:05:00+00:00',
@@ -181,7 +248,10 @@ const FIXTURE = {
     {
       name: 'quarterly-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 3 1 */3 *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 3 1 */3 *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-10-01T03:05:00+00:00',
@@ -189,7 +259,10 @@ const FIXTURE = {
     {
       name: 'annual-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 9 * 2 *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * 2 *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-02-28T09:00:00+00:00',
@@ -197,7 +270,10 @@ const FIXTURE = {
     {
       name: 'named-month-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 9 1 JAN *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 1 JAN *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-01-01T09:05:00+00:00',
@@ -205,7 +281,10 @@ const FIXTURE = {
     {
       name: 'weekday-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 4 * * 1-5' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 4 * * 1-5',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-13T04:05:00+00:00',
@@ -213,7 +292,10 @@ const FIXTURE = {
     {
       name: 'six-field-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 0 9 * * 1-5' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * * 1-5 0',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-10T09:00:00+00:00',
@@ -221,7 +303,10 @@ const FIXTURE = {
     {
       name: 'union-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 9 1 * 1' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 1 * 1',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-10-25T09:00:00+00:00',
@@ -229,23 +314,33 @@ const FIXTURE = {
     {
       name: 'once-job',
       enabled: true,
-      schedule: { kind: 'once', run_at: '2026-11-17T00:00:00+00:00' },
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
       last_status: null,
       failure_streak: 0,
       last_run_at: null,
+      state: 'completed',
     },
     {
       name: 'once-recent-job',
       enabled: true,
-      schedule: { kind: 'once', run_at: '2026-11-17T01:45:00+00:00' },
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T01:45:00+00:00',
+      },
       last_status: null,
       failure_streak: 0,
       last_run_at: null,
+      state: 'scheduled',
     },
     {
       name: 'once-norunat-job',
       enabled: true,
-      schedule: { kind: 'once' },
+      schedule: {
+        kind: 'once',
+      },
       last_status: null,
       failure_streak: 0,
       last_run_at: null,
@@ -253,7 +348,10 @@ const FIXTURE = {
     {
       name: 'unsupported-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 0 * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 0 * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-17T01:00:00+00:00',
@@ -262,7 +360,10 @@ const FIXTURE = {
       name: 'paused-state-job',
       enabled: true,
       state: 'paused',
-      schedule: { kind: 'interval', minutes: 10 },
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: '2026-11-01T00:00:00+00:00',
@@ -270,10 +371,73 @@ const FIXTURE = {
     {
       name: 'bad-record-job',
       enabled: true,
-      schedule: { kind: 'cron', expr: '0 * * * *' },
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
       last_status: 'ok',
       failure_streak: 0,
       last_run_at: 'not-a-time',
+    },
+    {
+      name: 'once-fired-job',
+      enabled: true,
+      state: 'completed',
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T00:00:31+00:00',
+    },
+    {
+      name: 'leap-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 0 29 2 *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2013-02-28T09:00:00+00:00',
+    },
+    {
+      name: 'sunday7-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * * 7',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-10-28T09:00:00+00:00',
+    },
+    {
+      name: 'overdue-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+      next_run_at: '2026-11-17T00:00:00+00:00',
+    },
+    {
+      name: 'hung-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T13:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
     },
   ],
 };
@@ -379,11 +543,15 @@ describe('prod probe selfcheck', () => {
   // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
   // through the shipped dispatch mode with the same fixture the selfcheck uses; every
   // term, every silence and the cause selection are pinned here (mutation-proved red).
+  // #485: the loop's own crons had no no-LLM arm — 33h of dead triage/critic went
+  // unalerted while every product arm stayed green (the designated dead-man, the critic,
+  // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
+  // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
+  // through the shipped dispatch mode with the same fixture the selfcheck uses; every
+  // term, every silence and the cause selection are pinned here (mutation-proved red).
   it('flags stale fires, repeated failures and undelivered runs from the scheduler record', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'probe-loop-'));
     const file = join(dir, 'jobs.json');
-    // The probe itself (4h quiet on a 10m interval) must be excluded, never reported; the
-    // healthy hourly job's DISPATCH stamp is fresh while its last completion is 2h old.
     writeFileSync(file, JSON.stringify(FIXTURE));
     const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
     const run = async (at = now) => {
@@ -394,36 +562,44 @@ describe('prod probe selfcheck', () => {
 
     const out = await run();
     const lines = out.trim().split('\n').filter(Boolean);
-    // (a) running-but-failing at exactly streak 2, cause carried, brain job P0
+    // (a) running-but-failing at exactly streak 2, cause carried; a BRAIN line carries the
+    // unforgeable 'loopdead:P0!:' prefix (never a bare suffix token)
     expect(lines).toContain(
-      'loopdead:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0',
+      'loopdead:P0!:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500',
     );
     expect(lines).toContain('loopdead:streak2-job failing >=2 consecutive ticks cause=boom');
     // (a2) delivery_failed = the run landed and reached nobody; the DELIVERY cause wins
     expect(lines).toContain('loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found');
-    // (b) stale fire: dispatch baseline, sub-hour ages in minutes, cause carried
+    // (b) overdue fire: the cadence-independent missed-fire signal
+    expect(lines).toContain(
+      'loopdead:overdue-job overdue fire: next_run_at past by =2h (max gap 60m) cause=no error recorded',
+    );
+    // (b2) stale fire: the newest stamp wins, sub-hour ages in minutes
     expect(lines).toContain('loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run');
     expect(lines).toContain('loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded');
-    // (b2) fires keep advancing but nothing completes
+    // (b3) dispatched but never completing past max(4x gap, 12h)
     expect(lines).toContain(
-      'loopdead:no-completion-job dispatched but no completion for =6h (max gap 60m) cause=no error recorded',
+      'loopdead:hung-job dispatched but no completion for =13h (max gap 60m) cause=no error recorded',
     );
     // cause selection: the prompt title is skipped, the exception line is the cause
     expect(lines).toContain('loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom');
     expect(out).toContain('cause=dispatch handoff missed the fire window');
-    // the gap is the LONGEST legitimate gap: dom/dow UNION semantics and seconds-first exprs
+    // the gap is the LONGEST legitimate gap, enumerated: dom/dow union, seconds-LAST
+    // six-field exprs, cron 7=Sunday, leap-day reality
     expect(out).toContain('loopdead:union-job last fire =545h ago (max gap 10080m)');
     expect(out).toContain('loopdead:six-field-job last fire =161h ago (max gap 4320m)');
+    expect(out).toContain('loopdead:sunday7-job last fire =473h ago (max gap 10080m)');
+    expect(out).toContain('loopdead:leap-job last fire =120233h ago (max gap 2103840m)');
     // one-shots and underivable schedules are anomalies; one corrupt record is isolated
     expect(out).toContain('loopdead:once-job one-shot never fired');
     expect(out).toContain('loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched');
     expect(out).toContain("loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched");
     expect(out).toContain('loopdead:bad-record-job record invalid');
-    expect(lines).toHaveLength(14);
+    expect(lines).toHaveLength(17);
     // silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
-    // operator cancel, disabled, paused state, never-run, in-flight, the dom/quarterly/
-    // annual drifts, named months, the weekday weekend gap, a one-shot inside its grace,
-    // and the probe itself
+    // operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
+    // inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
+    // annual drifts, named months, the weekday weekend gap, and the probe itself
     for (const quiet of [
       'tandem-triage',
       'nightly-report',
@@ -435,12 +611,14 @@ describe('prod probe selfcheck', () => {
       'paused-state-job',
       'never-run-job',
       'inflight-job',
+      'no-completion-job',
+      'once-fired-job',
+      'once-recent-job',
       'monthly-drill',
       'quarterly-job',
       'annual-job',
       'named-month-job',
       'weekday-job',
-      'once-recent-job',
       'tandem-prod-watch',
     ]) {
       expect(out).not.toContain(quiet);
@@ -449,7 +627,7 @@ describe('prod probe selfcheck', () => {
     // (silent) and one minute later it is stale (strict >, not >=)
     expect(await run(String(Date.parse('2026-11-17T04:00:00Z') / 1000))).not.toContain('tandem-triage');
     expect(await run(String(Date.parse('2026-11-17T04:01:00Z') / 1000))).toContain(
-      'loopdead:tandem-triage last fire =2h ago (max gap 60m)',
+      'loopdead:P0!:tandem-triage last fire =2h ago (max gap 60m)',
     );
 
     // an unreadable scheduler record is an ANOMALY (blind), never silence
