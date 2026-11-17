@@ -1368,3 +1368,20 @@ non-positive deltas render no duration.
   drift) and is the drift check the critic runs (exit 0 = live copy ==
   `origin/dev`; its tests retarget the live path with `TANDEM_PROBE_TEST=1`,
   where a successful comparison exits 3 — never 0).
+- The loop-liveness arm (#485) watches the loop ITSELF, not prod, and its record is the
+  scheduler's own `cron/jobs.json` — never `passes.jsonl`, because a job that keeps
+  ticking while every run FAILS looks fresh in its trail and is functionally dead. The
+  2026-11-15/16 gap proved it: `tandem-triage` failed 32 consecutive hourly runs and
+  `tandem-critic` 3, every one a pre-flight delivery failure, and nothing alerted for 33h
+  — every product arm was green because prod was healthy, and the designated dead-man
+  (the critic) is itself an LLM cron that dies with the provider. Liveness = last
+  SUCCESS, two terms per enabled job, the probe excluded (it cannot witness its own
+  death): (a) a non-ok `last_status` at `failure_streak >= 2` — running but never
+  succeeding, worded statically so a standing fault alerts once instead of every tick;
+  (b) `last_run_at` older than **2x** the job's own schedule interval (interval minutes,
+  or the minute/hour set sizes of a 5-field cron expr) — the tick itself stopped. Every
+  anomaly carries the job's `last_error` first line (the cause is never swallowed), an
+  unreadable/unparseable record is an anomaly (`loopdead_scan`), never silence, and the
+  loop's BRAIN jobs (`tandem-triage`, `tandem-critic`) are P0: their death is the loop's.
+  The arm lives in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode
+  so the unit test drives the shipped bytes with fixtures.
