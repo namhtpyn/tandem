@@ -685,13 +685,75 @@ PY
 }
 # LEVEL: P0 for a SPACE-DELIMITED P0 token anywhere in the joined anomaly line — a cause
 # string like `P0001` or a word like `P0RT` must never escalate the probe — plus the
-# pre-existing infra phrases other arms emit.
+# explicit P0 classes and the pre-existing infra phrases other arms emit. runtime_stale is
+# one of them: the gateway is running pre-update modules and every LLM cron is dead/dying.
 probe_level() {
   case "$1" in
-    *'loopdead:P0!:tandem-triage'*|*'loopdead:P0!:tandem-critic'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
+    *'loopdead:P0!:tandem-triage'*|*'loopdead:P0!:tandem-critic'*|*runtime_stale*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
     *) echo 1 ;;
   esac
 }
+# RUNTIME-REFRESH (#487, 2026-11-17): an update that installs code under a LIVE gateway
+# leaves the running process holding its OLD modules while every LAZY import reads the NEW
+# files from disk. The first lazily-imported module whose shape changed then raises
+# ImportError, uvicorn answers the cron worker's /api/ws upgrade with HTTP 500, and EVERY
+# LLM cron dies with a bare `InvalidStatus: server rejected WebSocket connection` as the
+# only symptom — the 2026-11-16 outage: triage + critic down 13h, root cause a process
+# serving since the 10-27 start with 11-09 code on disk (8 days of mixed modules). The
+# dead-man (loop-liveness) catches that only AFTER two failed ticks, and cannot catch the
+# case where only one lazily-imported path breaks. This arm reads the STATE: installed
+# HEAD commit newer than the serving process start = restart the unit. Silent (never a
+# false alarm) when the install is not a readable git tree, when the serving pid cannot be
+# resolved, or when a start epoch cannot be parsed — foreign layouts are out of scope.
+runtime_stale() {  # $1 = install dir, $2 = serving start epoch (test seam, skips pid resolve)
+  python3 - "${1:-}" "${2:-}" <<'PY'
+import os, subprocess, sys, time
+inst = sys.argv[1]
+if not inst:
+    sys.exit(0)
+try:
+    head = int(subprocess.run(["git", "-C", inst, "log", "-1", "--format=%ct"],
+                              capture_output=True, text=True, timeout=20).stdout.strip() or 0)
+except Exception:
+    sys.exit(0)  # not a git install / git absent: declared boundary, stay silent
+if not head:
+    sys.exit(0)
+start = sys.argv[2].strip()
+if start:
+    try:
+        start = float(start)
+    except ValueError:
+        sys.exit(0)
+else:
+    try:
+        pid = subprocess.run(["systemctl", "show", "hermes-dashboard.service", "-p", "MainPID", "--value"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        pid = ""
+    if not pid.isdigit() or pid == "0":
+        sys.exit(0)  # no serving unit under this name: foreign layout, stay silent
+    try:
+        with open("/proc/stat") as f:
+            btime = next(int(l.split()[1]) for l in f if l.startswith("btime "))
+        with open("/proc/%s/stat" % pid) as f:
+            fields = f.read().rsplit(")", 1)[1].split()  # field 3 starts after the comm
+        start = btime + float(fields[19]) / os.sysconf("SC_CLK_TCK")  # field 22 = starttime
+    except Exception:
+        sys.exit(0)
+if head > start:
+    fmt = "%Y-%m-%dT%H:%MZ"
+    print("runtime_stale: installed code %s is newer than the serving gateway (started %s) — "
+          "restart hermes-dashboard.service (mixed modules fail lazy imports; every LLM cron "
+          "dies with WebSocket 500)" % (time.strftime(fmt, time.gmtime(head)),
+                                        time.strftime(fmt, time.gmtime(start))))
+PY
+}
+if [ "${1:-}" = "--runtime-stale" ]; then
+  # the arm's unit test drives THESE bytes with fixtures — no network, no state writes
+  [ -n "${2:-}" ] || { echo "usage: --runtime-stale <install_dir> [serving_start_epoch]" >&2; exit 2; }
+  runtime_stale "$2" "${3:-}"
+  exit 0
+fi
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
   [ "$(own_predicate 2.78.20 2)" != "s.category = 'in_review'" ] || { echo "selfcheck fail: own block branch"; exit 1; }
@@ -1036,6 +1098,31 @@ FIX
   [ "$LLM2" = "1" ] || { echo "selfcheck fail: age masking missing ($LLM2)"; exit 1; }
   LLU=$(grep -c '^KEY=.*\[0-9a-fA-F\]{8}-\[0-9a-fA-F\]{4}-' "$0" 2>/dev/null || true)
   [ "$LLU" = "1" ] || { echo "selfcheck fail: uuid masking missing ($LLU)"; exit 1; }
+  # RUNTIME-REFRESH arm (#487): every branch of the shipped function is driven with
+  # fixtures — a real git tree whose HEAD predates the serving start FIRES, a tree OLDER
+  # than the start stays SILENT (the steady state), a non-git dir and an unparseable start
+  # epoch stay SILENT (declared boundary: foreign layouts never alarm) — plus the level and
+  # the live-pass wiring, so deleting the consumption ships a dead detector and goes red.
+  RTD=$(mktemp -d)
+  git init -q "$RTD/r" 2>/dev/null
+  GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=f@example.invalid \
+  GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=f@example.invalid \
+  GIT_AUTHOR_DATE=2026-11-09T16:24:33Z GIT_COMMITTER_DATE=2026-11-09T16:24:33Z \
+    git -C "$RTD/r" commit -q --no-gpg-sign --allow-empty -m fixture 2>/dev/null
+  RT_HEAD=$(git -C "$RTD/r" log -1 --format=%ct)
+  [ -n "$RT_HEAD" ] || { echo "selfcheck fail: fixture git unusable"; exit 1; }
+  RTF=$(runtime_stale "$RTD/r" "$((RT_HEAD - 3600))")
+  printf '%s' "$RTF" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: stale runtime silent"; exit 1; }
+  printf '%s' "$RTF" | grep -qF 'restart hermes-dashboard.service' || { echo "selfcheck fail: stale runtime lost its remedy"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/r" "$((RT_HEAD + 3600))")" ] || { echo "selfcheck fail: fresh runtime alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD" "")" ] || { echo "selfcheck fail: non-git dir alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/r" "not-a-epoch")" ] || { echo "selfcheck fail: bad start epoch alarmed"; exit 1; }
+  [ "$(probe_level "$RTF")" = "0" ] || { echo "selfcheck fail: runtime_stale not P0"; exit 1; }
+  RTC=$(grep -c '^RUNTIME=$(runtime_stale ' "$0" 2>/dev/null || true)
+  [ "$RTC" = "1" ] || { echo "selfcheck fail: runtime arm not consumed ($RTC)"; exit 1; }
+  RTA=$(grep -c '^\[ -n "\$RUNTIME" \] && anom' "$0" 2>/dev/null || true)
+  [ "$RTA" = "1" ] || { echo "selfcheck fail: runtime arm append missing ($RTA)"; exit 1; }
+  rm -rf "$RTD"
   echo "ok probe selfcheck"
   exit 0
 fi
@@ -1078,6 +1165,10 @@ if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
 else
   rm -f "$PROBE_STATE/.probe-write-test"
 fi
+
+# 0. runtime refresh (#487): installed code newer than the serving process = mixed modules
+RUNTIME=$(runtime_stale "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")
+[ -n "$RUNTIME" ] && anom+=("$RUNTIME")
 
 # 1. container health + image
 IMG=$("${CT[@]}" 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="container_inspect: failed (CT102 ssh or docker inspect — container missing?)"
