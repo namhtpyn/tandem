@@ -1435,10 +1435,12 @@ non-positive deltas render no duration.
   connection`. The dead-man catches that only after two failed ticks and never catches a
   break confined to one lazily-imported path, so this arm reads the STATE the gateway
   publishes: the booted `code_sha` in its own `gateway_state.json` against the install's
-  code identity, resolved EXACTLY as the platform resolves it — a git-source
-  `install-stamp.json` whose checkout `HEAD` diverges is IGNORED in favour of `HEAD` (a hot
-  pull, a rollback), otherwise the stamp's `commit` is the identity and `HEAD` is the
-  fallback; a sha must be 40 hex and may not be the all-zero placeholder. ANY live record
+  code identity, resolved exactly as the platform's own stamp gate resolves it — the stamp
+  must carry a `commit`, a known `updateMechanism` and a non-`light` payload; a git-source
+  stamp whose checkout `HEAD` diverges is REJECTED in favour of `HEAD` (a hot pull, a
+  rollback), otherwise the stamp's `commit` is the identity and `HEAD` is the fallback; a
+  commit must be non-empty and not the all-zero placeholder — the platform imposes no
+  length or charset rule, and neither does the arm (a short stamp must not blind it). ANY live record
   whose sha disagrees with that identity is the finding (a fresh sibling record never masks
   a stale one), and the result is P0 (`LLM crons may be dead or dying`). A record counts as
   the SERVING gateway only when its `gateway_state` is `running` OR `degraded` (degraded is
@@ -1456,8 +1458,12 @@ non-positive deltas render no duration.
   own self-guard and would block every operator run of the probe; the operator action is to
   restart the gateway unit (`hermes gateway restart`, or `systemctl --user restart
   hermes-gateway.service`) from a shell OUTSIDE the gateway process. The P0 prefix is
-  matched only at the start of the joined line or right after its separator, so a job's own
-  error text that happens to quote the arm's prefix cannot escalate its line to P0.
+  matched only at the start of the joined line or immediately after its `;` separator (no
+  space — the probe's join emits none), so a job's own error text that happens to quote the
+  arm's prefix cannot escalate its line to P0, and the scheduler scan lines strip the
+  separator from any caller-supplied text they print. A failing arm is never silent about
+  itself: its stderr is surfaced as a `runtime_stale_err:` anomaly instead of being
+  swallowed, so a detector that dies is visible rather than looking like a fresh install.
   DECLARED BOUNDARIES (silent, never a false alarm): no readable state file, no live record
   that is both stamped and sha-bearing, an install with no usable stamp and no git HEAD, a
   dirty worktree at the same commit (the arm compares commits, not file bytes), and the
@@ -1467,6 +1473,7 @@ non-positive deltas render no duration.
   pid does not, a record without a stamp is not trusted, a boolean/float pid is not
   trusted, a `)` inside the process comm does not shift the field index, the zero
   placeholder is rejected), the identity resolution (stamp honoured, a diverging git-source
-  stamp ignored, a short stamp falling back to HEAD), the absence of a runnable command in
-  the line, the P0 prefix position, the seam dispatch end-to-end and the live-pass wiring
+  stamp rejected, a short stamp honoured as the identity, an unknown `updateMechanism` and a
+  `light` payload rejected), the absence of a runnable command in the line, the stderr
+  surface, the P0 prefix position, the seam dispatch end-to-end and the live-pass wiring
   (call, then append, before the empty-exit), once each.
