@@ -808,7 +808,7 @@ describe('prod probe selfcheck', () => {
       }),
     );
     const padded = await $`bash ${script} --loop-liveness ${paddedFile} ${now}`.nothrow().quiet();
-    expect(padded.stdout.toString()).toMatch(/loopdead:tandem-triage~[a-z]{8} last fire/);
+    expect(padded.stdout.toString()).toMatch(/loopdead:tandem-triage~[a-z]{12} last fire/);
     expect(padded.stdout.toString()).not.toContain('loopdead:P0!:');
 
     // an unreadable scheduler record is an ANOMALY (blind), never silence
@@ -875,7 +875,7 @@ describe('prod probe selfcheck', () => {
     expect(out).toContain('loopdead:line forge~');
     // the crafted name renders its tokenised form and can never spell the P0 prefix
     expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).toMatch(
-      /^loopdead:P0 tandem-triage~[a-z]{8} last fire/,
+      /^loopdead:P0 tandem-triage~[a-z]{12} last fire/,
     );
     expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).not.toContain('P0!:');
     // a non-ASCII name stays readable (not shredded) and carries no discriminator
@@ -884,7 +884,7 @@ describe('prod probe selfcheck', () => {
     expect(out).toContain("unsupported schedule ('0  0 * *')");
     // an all-punctuation name keeps a stable label instead of an empty one
     expect(lines.find((l: string) => l.includes('<unprintable>'))).toMatch(
-      /^loopdead:<unprintable>~[a-z]{8} last fire/,
+      /^loopdead:<unprintable>~[a-z]{12} last fire/,
     );
     // two names that sanitise to the same token still emit DISTINCT lines (dedupe key)
     const nightly = lines.filter((l: string) => l.startsWith('loopdead:nightly report'));
@@ -952,6 +952,43 @@ describe('prod probe selfcheck', () => {
     expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
     rmSync(dir, { recursive: true, force: true });
   });
+  // #493: emission is UTF-8 BYTES, so a non-UTF-8 locale cannot abort the scan, and a
+  // decomposed (NFD) name keeps its combining mark instead of being shredded.
+  it('emits UTF-8 bytes under a non-UTF-8 locale and keeps decomposed names readable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-locale-'));
+    const file = join(dir, 'nfd.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'ba\u0301o',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`
+      .env({ ...process.env, PYTHONIOENCODING: 'iso-8859-1' })
+      .nothrow()
+      .quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const out = proc.stdout.toString('utf8');
+    const lines = out
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('loopdead:ba');
+    expect(lines[0]).toMatch(/^loopdead:ba[^ ]+o last fire/);
+    expect(out).not.toContain('unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
   // #493: a hostile name on the record-invalid path is tokenised the same way.
   it('tokenises a hostile name on the record-invalid path', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'probe-invalid-'));
@@ -978,7 +1015,7 @@ describe('prod probe selfcheck', () => {
       .split('\n')
       .filter((l: string) => l.length > 0);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^loopdead:x loopdead P0 tandem-triage y~[a-z]{8} record invalid/);
+    expect(lines[0]).toMatch(/^loopdead:x loopdead P0 tandem-triage y~[a-z]{12} record invalid/);
     expect(lines.filter((l: string) => l.startsWith('loopdead:P0!:'))).toHaveLength(0);
     rmSync(dir, { recursive: true, force: true });
   });

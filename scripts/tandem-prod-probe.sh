@@ -522,11 +522,11 @@ ALPHA = "abcdefghijklmnopqrstuvwxyz"
 def disc(n):
     # A LETTERS-ONLY discriminator of the RAW name: the repeat-suppression key masks
     # long digit runs and hex ids, so a hex/numeric suffix could be erased and two
-    # colliding display tokens would share a key. 26**8 keeps a deliberate pair far
-    # out of reach.
+    # colliding display tokens would share a key. 12 letters (26**12): a birthday
+    # search for a deliberate pair needs ~10**9 sanitised variants.
     h = int.from_bytes(hashlib.sha256(n.encode("utf-8", "surrogatepass")).digest(), "big")
     out = ""
-    for _ in range(8):
+    for _ in range(12):
         h, r = divmod(h, 26)
         out += ALPHA[r]
     return out
@@ -538,7 +538,7 @@ def display(n):
     # (an accented name is not shredded into letter soup) while it can never carry the
     # punctuation the level token or the join separator is built from. A name with
     # nothing left renders as <unprintable>. Any name the sanitiser changed carries a
-    # `~<8 letters>` discriminator of the RAW name, so two jobs whose tokens collide
+    # `~<12 letters>` discriminator of the RAW name, so two jobs whose tokens collide
     # still emit distinct lines. The raw name stays the identity key, so padding still
     # classifies verbatim.
     out = "".join(
@@ -550,11 +550,13 @@ def display(n):
     return out
 
 def out_line(s):
-    # TOTAL emission: no interpolated field may forge a physical line, and a lone
-    # surrogate must not kill the scan (a UnicodeEncodeError here would blind every
-    # later job, the brain ones included).
+    # TOTAL emission: no interpolated field may forge a physical line, and neither a lone
+    # surrogate nor a non-UTF-8 locale may kill the scan (a UnicodeEncodeError here would
+    # blind every later job, the brain ones included). Bytes go straight to the stream, so
+    # the LOCALE never re-encodes them.
     s = CTRL_RE.sub(" ", s)
-    print(s.encode("utf-8", "backslashreplace").decode("utf-8"))
+    sys.stdout.buffer.write(s.encode("utf-8", "backslashreplace") + b"\n")
+    sys.stdout.buffer.flush()
 
 OK_STATUS = {"ok", "success", "completed", "cancelled", "delivery_queued"}
 EXC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning)\b")
@@ -810,7 +812,6 @@ probe_level() {
   while [ -n "$rest" ]; do
     seg="${rest%%;*}"
     if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*;}"; fi
-    seg="${seg#"${seg%%[![:space:]]*}"}"
     case "$seg" in
       'loopdead:P0!:tandem-triage '*|'loopdead:P0!:tandem-critic '*) lvl=0; break ;;
       'loopdead:'*|'loopdead_scan:'*) continue ;;
@@ -1259,7 +1260,7 @@ FIX
   printf '{"jobs": [{"name": "tandem-triage ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/padded.json"
   RTP=$(printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")")
   printf '%s\n' "$RTP" | grep -qF 'loopdead:P0!:' && { echo "selfcheck fail: padded brain name escalated"; exit 1; }
-  printf '%s\n' "$RTP" | grep -Eq '^loopdead:tandem-triage~[a-z]{8} last fire' || { echo "selfcheck fail: padded job fell out of the scan (silence)"; exit 1; }
+  printf '%s\n' "$RTP" | grep -Eq '^loopdead:tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: padded job fell out of the scan (silence)"; exit 1; }
   # #493: the display token never carries ':' '!' '=' or a control character, so a crafted
   # name can neither forge a second physical line nor spell the P0 token; the P0 prefix is
   # chosen by identity alone, a sanitised token carries a ~hash discriminator so colliding
@@ -1268,16 +1269,18 @@ FIX
   RTC=$(printf '%s\n' "$(loop_liveness "$LLT/crafted.json" "$LLN")")
   [ "$(printf '%s\n' "$RTC" | grep -c .)" = "9" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^forge' && { echo "selfcheck fail: newline name forged a physical line"; exit 1; }
-  printf '%s\n' "$RTC" | grep -Eq '^loopdead:P0 tandem-triage~[a-z]{8} last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:P0 tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
   CCL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
   [ -n "$CCL" ] || { echo "selfcheck fail: crafted P0 line missing (vacuous check)"; exit 1; }
   case "$CCL" in *'P0!:'*) echo "selfcheck fail: crafted name spelled the P0 token"; exit 1 ;; esac
-  printf '%s\n' "$RTC" | grep -Eq '^loopdead:<unprintable>~[a-z]{8} last fire' || { echo "selfcheck fail: all-punctuation name lost its fallback token"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:<unprintable>~[a-z]{12} last fire' || { echo "selfcheck fail: all-punctuation name lost its fallback token"; exit 1; }
   [ "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sort -u | grep -c .)" = "2" ] || { echo "selfcheck fail: colliding display tokens emit identical lines"; exit 1; }
   D1=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 1p)")
   D2=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 2p)")
   [ -n "$D1" ] && [ "$D1" != "$D2" ] || { echo "selfcheck fail: colliding display tokens share a dedupe key"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^loopdead:báo cáo tuần last fire' || { echo "selfcheck fail: a non-ASCII name was shredded"; exit 1; }
+  NFD=$(printf '%s' '{"jobs": [{"name": "ba\u0301o", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/nfd.json"; PYTHONIOENCODING=iso-8859-1 loop_liveness "$LLT/nfd.json" "$LLN")
+  printf '%s\n' "$NFD" | grep -Eq '^loopdead:ba[^ ]+o last fire' || { echo "selfcheck fail: a decomposed name lost its combining mark or the locale killed the scan"; exit 1; }
   printf '%s\n' "$RTC" | grep -qF "unsupported schedule ('0  0 * *')" || { echo "selfcheck fail: the sweep rewrote quoted record text"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: real brain death lost its P0 token"; exit 1; }
   CPL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
@@ -1291,6 +1294,7 @@ FIX
   [ "$(probe_level "$BRL")" = "0" ] || { echo "selfcheck fail: brain death not P0"; exit 1; }
   [ "$(probe_level 'loopdead:j cause=db unreachable')" = "1" ] || { echo "selfcheck fail: a cause forged a loose P0 phrase"; exit 1; }
   [ "$(probe_level 'loopdead:j last fire;db: unreachable')" = "0" ] || { echo "selfcheck fail: a genuine db P0 lost to the segment rule"; exit 1; }
+  [ "$(probe_level 'x; loopdead:P0!:tandem-triage y')" = "1" ] || { echo "selfcheck fail: a space after the join separator escalated"; exit 1; }
   # LINE INTEGRITY (#493): every record-shaped field (name, state, schedule, cause) is swept
   # of every code point a Unicode line splitter treats as a break (C0/C1/LS/PS) at emission,
   # so the line count is the job count, not the content's; a lone surrogate must not kill the
@@ -1310,7 +1314,7 @@ FIX
   printf '%s' '{"jobs": [{"name": "x\nloopdead:P0!:tandem-triage y", "last_run_at": "x;y", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/invalid.json"
   RTJ=$(printf '%s\n' "$(loop_liveness "$LLT/invalid.json" "$LLN")")
   [ "$(printf '%s\n' "$RTJ" | grep -c .)" = "1" ] || { echo "selfcheck fail: record-invalid path forged a line"; exit 1; }
-  printf '%s\n' "$RTJ" | grep -Eq '^loopdead:x loopdead P0 tandem-triage y~[a-z]{8} record invalid' || { echo "selfcheck fail: hostile name on the record-invalid path not tokenised"; exit 1; }
+  printf '%s\n' "$RTJ" | grep -Eq '^loopdead:x loopdead P0 tandem-triage y~[a-z]{12} record invalid' || { echo "selfcheck fail: hostile name on the record-invalid path not tokenised"; exit 1; }
   printf '%s\n' "$RTJ" | grep -q '^loopdead:P0!:' && { echo "selfcheck fail: record-invalid path forged the P0 token"; exit 1; }
   # a scan line's record payload never reaches a loose P0 phrase either
   printf '%s' '{"jobs": ["db unreachable"]}' > "$LLT/scan.json"

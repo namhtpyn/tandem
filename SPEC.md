@@ -1444,17 +1444,19 @@ non-positive deltas render no duration.
   collapse and the edges trim, so a name stays READABLE in any script (an accented name is
   not shredded into letter soup) while it can never carry the punctuation a level token or
   the join separator is built from; a name with nothing left renders as `<unprintable>`.
-  A name the sanitiser changed carries a `~<8 letters>` discriminator of the raw name,
+  A name the sanitiser changed carries a `~<12 letters>` discriminator of the raw name,
   appended to the fallback too, so two jobs whose tokens collide still emit distinct lines —
   LETTERS-ONLY because the repeat-suppression key masks long digit runs and hex ids, which
-  would erase a numeric suffix and let the pair share a key (the key's other normalisations
+  would erase a numeric suffix and let the pair share a key; 26^12 letters puts a deliberate
+  birthday pair at ~10^9 sanitised variants (the key's other normalisations
   are unchanged: two clean names differing only in a date or a counter stay one standing
   fault by design). Every field the record can shape — name, `state`, a schedule expression,
   a cause — is swept at emission of every code point a Unicode line splitter treats as a
   break (C0, DEL, C1, U+2028/U+2029), so the line count is the job count, never the record's
-  content; emission is TOTAL (a lone surrogate is escaped, never allowed to abort the scan
-  before later jobs, the brain ones included) and lossless for quoted record text (the sweep
-  maps breaks, it does not collapse spaces). Only the sanitised token is rendered, so a name
+  content; emission is TOTAL and LOCALE-PROOF (UTF-8 bytes go straight to the stream, so a
+  lone surrogate is escaped and a non-UTF-8 locale cannot abort the scan before later jobs,
+  the brain ones included) and lossless for quoted record text (the sweep maps breaks, it
+  does not collapse spaces). Only the sanitised token is rendered, so a name
   can neither forge a second physical line nor spell the `P0!:` escalation prefix, and that
   prefix is emitted by the identity branch alone, never composed from the rendered name.
   Every line carries the CAUSE, drawn from `last_error` /
