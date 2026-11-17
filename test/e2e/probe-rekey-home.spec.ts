@@ -23,14 +23,18 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // terminal-by-owner shape is excluded BY CONSTRUCTION, not by a category
 // term — a DIRECT owner settle leaves the paused category and clears both origins in the
 // same statement; the residual owner-settle shape is the machine #423 re-block, excluded
-// by the ordering. That is why the arm fires on a resolved done/cancelled home when no
-// verdict predates the block write (the counterexample: in_review -> done under a blocked
-// task). Neither origin may resolve into review (a resolvable in-review home still lets
-// the flip land: the orphan arm's exclusion, mirrored), and the wedge's current-round
-// clause plus a MIN ordering — EVERY verdict of max(round) NEWER than the task's last
-// write, not just the newest — apply: the MIN test excludes the #423 re-block and the
-// #467 flip->supersede window a max() test misreads, and it is the reason the lateVerdict
-// seed below must stay silent. The arm is VERSION-independent (no image floor — a pre-guard image produces the
+// by the ordering. The counterexample is the resolved done/cancelled home under a blocked
+// task whose round carries no verdict older than the record that made it terminal
+// (in_review -> done with the settle never applied). Neither origin may resolve into
+// review (a resolvable in-review home still lets the flip land: the orphan arm's
+// exclusion, mirrored), and the wedge's current-round clause applies. The ORDERING is
+// floor-gated: below 2.78.38 (and on a row carrying no note of the origin's kind) the
+// retired MIN test — EVERY verdict of max(round) NEWER than the task's last write, not
+// just the newest — excludes the #423 re-block and the #467 flip->supersede window a
+// max() test misreads, which is why the lateVerdict seed below must stay silent on the
+// pre-floor emission; at/above the floor ANY verdict newer than the origin's OWN record
+// is the split-timing wedge (#468), pinned by the second test. The arm is
+// VERSION-independent (no image floor — a pre-guard image produces the
 // strand too) but COLUMN-gated exactly like the orphan arm: it reads BOTH origin columns,
 // and on a one-column image it would kill the whole UNION, so it must vanish there. It is
 // pinned on the SQL that ships: the probe emits it (--strand-sql) and this spec executes
