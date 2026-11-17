@@ -382,6 +382,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const noteLessNew = `probe-homecat-noteless-new-${tag}`; // fires: the fallback's own counterexample
       const recordedLive = `probe-homecat-live-${tag}`; // silent: a PENDING row in max(round)
       const recordedDoing = `probe-homecat-doing-${tag}`; // silent: the home still resolves non-terminal
+      const twoEpisode = `probe-homecat-two-episode-${tag}`; // silent: the NEWEST note recorded done
+      const undecided = `probe-homecat-undecided-${tag}`; // silent: no verdict row in max(round)
 
       const seedTask = async (id: string, pre: string | null, park: string | null, writtenMinutesAgo: number) => {
         await sql.unsafe(
@@ -440,6 +442,15 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedRecord(recordedLive, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedVerdict(recordedLive, 10);
       await seedVerdict(recordedLive, 4, 'PENDING');
+      // the record is the CURRENT episode's: an older in_review note must not outvote the
+      // newest done note (the term reads the newest auto-blocked record only)
+      await seedTask(twoEpisode, DONE, null, 5);
+      await seedRecord(twoEpisode, 30, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedRecord(twoEpisode, 5, 'auto-blocked: 2 subtask(s) open', { homeCategory: 'done' });
+      await seedVerdict(twoEpisode, 40);
+      // a round with NO verdict row is not a decided round: the exists-verdict clause
+      await seedTask(undecided, DONE, null, 5);
+      await seedRecord(undecided, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       // a home that still resolves non-terminal is not this shape, whatever the record says
       await seedTask(recordedDoing, DOING, null, 5);
       await seedRecord(recordedDoing, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
@@ -476,6 +487,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(post, 'a note-less row keeps the ordering fallback counterexample').toContain(noteLessNew);
       expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(recordedLive);
       expect(post, 'a home still resolving non-terminal is not this shape').not.toContain(recordedDoing);
+      expect(post, "the term reads the CURRENT episode's note, never an older same-kind record").not.toContain(
+        twoEpisode,
+      );
+      expect(post, 'a round with no verdict row is not a decided round').not.toContain(undecided);
     } finally {
       await sql.end();
     }

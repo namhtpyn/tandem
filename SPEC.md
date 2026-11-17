@@ -1179,11 +1179,11 @@ non-positive deltas render no duration.
   re-block write (a cancel that re-blocks records the cancelled status the same
   way). The ordering is PER VERDICT, not an aggregate, from the `2.78.38`
   BLOCK-PARK RECORD FLOOR (#466): ANY verdict of `max(round)` newer than the ORIGIN'S
-  OWN record is the split-timing wedge (#468); an all-older round is the #423 class or
-  the pre-block-re-key boundary the arm bullet declares (its applied verdict predates the
-  re-block record in the legal class). The arm bullet below
-  states the record exactly, the note-less/pre-floor MIN fallback and the two
-  declared residuals this SQL cannot see. The settle flip's write gate takes
+  OWN record is the split-timing wedge (#468); an all-older round is the #423 class, the
+  LATE re-key the category term fires on, or the pre-block-re-key residual the arm bullet
+  declares (the legal class's applied verdict predates the re-block record). The arm
+  bullet below states the record exactly, the note-less/pre-floor MIN fallback and the
+  three declared residuals this SQL cannot see. The settle flip's write gate takes
   only an in_review-category status or a paused block whose recorded origin
   (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
   terminal home fails every branch, the round closes on the verdict row with NO
@@ -1227,8 +1227,8 @@ non-positive deltas render no duration.
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
   same verdicts, the same superseded pending turn, the same note order). `homeCategory`
-  cannot separate it — only a record of the category the round's verdicts were decided
-  under would, and the verdict rows carry none. Below the floor the verdict-vs-stamp MIN
+  cannot separate it — only a record of the status that homed the round at its verdicts'
+  time would, and the verdict rows carry none. Below the floor the verdict-vs-stamp MIN
   test stands. A row carrying NO note of that kind at all falls back to the same
   MIN-vs-stamp test: below the floor the #467 flip→supersede window (its sweep atomic
   with the flip from 2.78.35) could legally leave one verdict past the block write, so
@@ -1255,8 +1255,9 @@ non-positive deltas render no duration.
   is only observable when the note survives (pre-floor crash or direct write only).
   (c) The PRE-BLOCK re-key (#491): a status re-keyed terminal BEFORE its task blocks
   records the ALREADY-terminal category, so `homeCategory` is terminal and the row is
-  byte-equivalent to the legal #423 shape; closing it needs a record of the category the
-  round's verdicts were decided under, which no row carries today.
+  byte-equivalent to the legal #423 shape; closing it needs a record of WHICH status
+  homed the round when its verdicts were written, which no row carries today (a category
+  record cannot split them — at verdict time both shapes read `in_review`).
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:

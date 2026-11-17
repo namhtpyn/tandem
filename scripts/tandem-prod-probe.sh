@@ -357,14 +357,20 @@ strand_sql() {
   # post-note verdict cannot be the #467 late-CAS window on a floored row (closed by
   # 2.78.35's atomic sweep): it means the round was open at the block — except on the
   # degraded path that skips its sweep (residual (a)). An ALL-OLDER round is the legal
-  # #423 re-block OR a DECLARED false negative: an admin re-key of a status that still
-  # homes a LIVE round (in_review -> done) before the task blocks leaves every verdict
-  # older than the note while the round can never be applied (statuses.save refuses a
-  # re-key only while a BLOCKED task records the home); SQL cannot separate that from
-  # #423 without the home's category AT block time, so the class is deliberately silent
-  # (#491). Below the floor the retired MIN-vs-stamp test stands, and a
-  # row carrying NO note of that kind falls back to it. TWO DECLARED residuals this
-  # SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a floored probe
+  # #423 re-block, the LATE re-key the category term below FIRES on, or the PRE-BLOCK
+  # re-key it cannot see (residual (c)). LATE re-key (#491, floor 2.78.41): a status
+  # re-keyed terminal while its task already sits BLOCKED over a live round (the
+  # block-state-home guard's read->upsert window, or a guard regression) — the block's
+  # note records the NON-terminal category it read, the home resolves terminal now, the
+  # pending turn is superseded by the owner-settled teardown and every verdict predates
+  # the note, so the ordering term is blind and `home_category_term` fires. PRE-BLOCK
+  # re-key (residual (c)): re-keyed BEFORE the task blocks, so the note records the
+  # ALREADY-terminal category and the row is byte-identical to #423 — silent by
+  # declaration, and closing it needs a record of the home's category at the round's OWN
+  # verdict time, which no row carries. Below the floor the retired MIN-vs-stamp test
+  # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
+  # residuals this SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a
+  # floored probe
   # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
   # flip->supersede crash window, and at ANY version the degraded settle path (flip
   # committed on the pool, sweep skipped by design when its isolation tx fails) — can
@@ -377,7 +383,12 @@ strand_sql() {
   # A NOTE-LOSS FALSE NEGATIVE rides the same class, the other way: a note-less row
   # whose round was split across the origin write (live at the write, the settling vote
   # after) falls back to MIN and stays SILENT — the split-timing class this term exists
-  # for is only observable when the note survives (pre-floor crash or direct write only). A direct
+  # for is only observable when the note survives (pre-floor crash or direct write only);
+  # (c) the PRE-BLOCK re-key: the home was re-keyed BEFORE the block, so its record's
+  # category is terminal and the row is byte-identical to #423 — the category term cannot
+  # see it, and splitting it needs a record that no row carries (the home's identity at
+  # the round's verdict time, not its category — at verdict time both shapes read
+  # in_review). A direct
   # owner settle clears both origins in the same statement, so the residual owner-settle
   # shape is that machine re-block, excluded by the all-older test. The current-round
   # clause is mirrored from the orphan arm. Per-column resolve,
