@@ -342,10 +342,10 @@ strand_sql() {
   # episode that set the origin, so a row whose CURRENT note was lost to a pre-2.78.38
   # crash and that still carries an EARLIER same-kind note orders against the older
   # record — a legal #423 row can read as the wedge (pre-floor crash or direct write);
-  # (c) a FALSE NEGATIVE in the same note-loss class: a note-less row whose round was
-  # split across the origin write (live at the write, the settling vote after) falls back
-  # to MIN and stays SILENT — the split-timing class this term exists for is only
-  # observable when the note survives (pre-floor crash or direct write only). A direct
+  # A NOTE-LOSS FALSE NEGATIVE rides the same class, the other way: a note-less row
+  # whose round was split across the origin write (live at the write, the settling vote
+  # after) falls back to MIN and stays SILENT — the split-timing class this term exists
+  # for is only observable when the note survives (pre-floor crash or direct write only). A direct
   # owner settle clears both origins in the same statement, so the residual owner-settle
   # shape is that machine re-block, excluded by the all-older test. The current-round
   # clause is mirrored from the orphan arm. Per-column resolve,

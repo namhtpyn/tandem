@@ -1240,10 +1240,10 @@ non-positive deltas render no duration.
   read the newest note of that KIND, never tied to the episode that set the origin, so a
   row whose CURRENT episode note was lost to a pre-`2.78.38` crash and that still carries
   an EARLIER same-kind note orders against the older record — a legal #423 row can then
-  read as the wedge (pre-floor crash or direct write only); (c) the same note loss
-  produces a FALSE NEGATIVE the other way: a note-less row whose round was split across
-  the origin write falls back to MIN and stays silent, so the split-timing class is only
-  observable when the note survives (pre-floor crash or direct write only).
+  read as the wedge (pre-floor crash or direct write only); a NOTE-LOSS FALSE
+  NEGATIVE rides the same class, the other way: a note-less row whose round was split
+  across the origin write falls back to MIN and stays silent, so the split-timing class
+  is only observable when the note survives (pre-floor crash or direct write only).
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
