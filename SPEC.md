@@ -1166,14 +1166,14 @@ non-positive deltas render no duration.
   status id as its home while that id's category is being rewritten; the standing
   residual class, declared like the orphan arm's ghost-task race) — and NEITHER origin resolves
   into review (a resolvable in-review origin still lets the settle flip land: the
-  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED BOUNDARY, not an
-  accident: a re-key into a NON-terminal category is, from the SQL, indistinguishable
-  from the declared legal class (a hold-landing repair round re-opened on a
-  ready/working status, then gating-blocked: the block legally records a non-review
-  home and a later verdict closes the round with no task write — the unblock restore
-  heals it). That sub-shape is OUT of this arm and NAMED here so no one assumes
-  coverage. A terminal home cannot host the hold-landing class; the OTHER legal class
-  a terminal home DOES host is the #423 re-block after a settle — the task settles
+  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED SCOPE BOUNDARY, not a
+  SQL impossibility: a hold-landing repair round re-opened on a ready/working status and
+  then gating-blocked legally records a non-review home whose category MATCHES the home
+  it resolves (the unblock restore heals it), and `homeCategory` would separate that from
+  a re-key into a NON-terminal category (`statuses.save`'s guard beat by the same
+  read→upsert window) — that wider term is tracked as #496 and OUT of this arm until it
+  lands, so no one assumes coverage. A terminal home cannot host the hold-landing class;
+  the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
   re-block write (a cancel that re-blocks records the cancelled status the same
@@ -1198,10 +1198,11 @@ non-positive deltas render no duration.
   `setStatus` moves the task out of the paused category and clears both machine
   origins in the same statement, so it leaves no origin behind; the residual
   owner-settle shape is the machine #423 re-block above, excluded by the
-  ordering. The counterexample shape is the resolved `done`/`cancelled` home under a
-  blocked task whose round carries at least one verdict NEWER than the record that made
-  it terminal (one vote before it, the settling vote after, is this same wedge; an
-  `in_review` home re-keyed to `done` with the settle never applied). The
+  ordering. The ORDERING TERM's counterexample shape is the resolved `done`/`cancelled`
+  home under a blocked task whose round carries at least one verdict NEWER than the
+  record that made it terminal (one vote before it, the settling vote after, is this same
+  wedge); the CATEGORY TERM's counterexample is the all-older late re-key stated in the
+  bullet above. The
   current-round clause (no PENDING row in `max(round)`, at least one verdict row) and
   the ordering above apply as specified; below the `2.78.24` record floor the WEDGE
   falls back to its legacy test (#430). THIS arm's own floor is `2.78.38` (BLOCK-PARK

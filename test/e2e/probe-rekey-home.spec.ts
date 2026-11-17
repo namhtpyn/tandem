@@ -442,8 +442,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedRecord(recordedLive, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedVerdict(recordedLive, 10);
       await seedVerdict(recordedLive, 4, 'PENDING');
-      // the record is the CURRENT episode's: an older in_review note must not outvote the
-      // newest done note (the term reads the newest auto-blocked record only)
+      // the record is the NEWEST same-kind note: an older in_review note must not outvote
+      // the newest done note (the binding is max(created_at), not "any note")
       await seedTask(twoEpisode, DONE, null, 5);
       await seedRecord(twoEpisode, 30, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedRecord(twoEpisode, 5, 'auto-blocked: 2 subtask(s) open', { homeCategory: 'done' });
@@ -487,7 +487,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(post, 'a note-less row keeps the ordering fallback counterexample').toContain(noteLessNew);
       expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(recordedLive);
       expect(post, 'a home still resolving non-terminal is not this shape').not.toContain(recordedDoing);
-      expect(post, "the term reads the CURRENT episode's note, never an older same-kind record").not.toContain(
+      expect(post, 'the term reads the NEWEST same-kind note, never an older one (residual (b))').not.toContain(
         twoEpisode,
       );
       expect(post, 'a round with no verdict row is not a decided round').not.toContain(undecided);

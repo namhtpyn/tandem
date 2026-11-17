@@ -575,13 +575,16 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(note?.kind).toBe('STATUS');
     // own transaction: both change events fire after commit
     expect(h.publishCount).toBe(2);
-    // HOME-CATEGORY RECORD (#491): the value is the HOME's category at block time, never a
-    // constant — a re-keyed home records the category the block actually committed against,
-    // which is what separates the #423 legal settle from the re-key strand.
+    // HOME-CATEGORY RECORD (#491): the value is the HOME's category AT THE FLIP, never a
+    // walk-time snapshot — the hook fires at the children read, after the walk's task read
+    // and before the flip, exactly where a concurrent re-key lands. A mutation that reads
+    // the category at the walk records 'in_review' and turns this red.
     h.notes.length = 0;
     h.childrenByParent.set('q', [{ status: STATUS.doing }]);
     row('q', { status: STATUS.inReview });
-    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.onChildrenQuery = () => {
+      h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    };
     await refreshParentGating('q');
     const rekeyed = h.notes.find((n) => n.body.startsWith('auto-blocked:'));
     expect(rekeyed?.meta).toMatchObject({ homeCategory: 'done' });

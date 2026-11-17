@@ -365,9 +365,9 @@ strand_sql() {
   # pending turn is superseded by the owner-settled teardown and every verdict predates
   # the note, so the ordering term is blind and `home_category_term` fires. PRE-BLOCK
   # re-key (residual (c)): re-keyed BEFORE the task blocks, so the note records the
-  # ALREADY-terminal category and the row is byte-identical to #423 — silent by
-  # declaration, and closing it needs a record of the home's category at the round's OWN
-  # verdict time, which no row carries. Below the floor the retired MIN-vs-stamp test
+  # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
+  # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
+  # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
   # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
   # residuals this SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a
   # floored probe
@@ -385,7 +385,7 @@ strand_sql() {
   # after) falls back to MIN and stays SILENT — the split-timing class this term exists
   # for is only observable when the note survives (pre-floor crash or direct write only);
   # (c) the PRE-BLOCK re-key: the home was re-keyed BEFORE the block, so its record's
-  # category is terminal and the row is byte-identical to #423 — the category term cannot
+  # category is terminal and the row is SQL-identical to #423 — the category term cannot
   # see it, and splitting it needs a record that no row carries (the home's identity at
   # the round's verdict time, not its category — at verdict time both shapes read
   # in_review). A direct
