@@ -439,6 +439,69 @@ const FIXTURE = {
         dispatched_at: '2026-11-17T01:59:00+00:00',
       },
     },
+    {
+      name: 'midnight-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 0,23 * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-14T23:00:00+00:00',
+    },
+    {
+      name: 'ws-cause-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error:
+        'Traceback (most recent call last):\n  File "/app/run.py", line 7, in <module>\n    raise_for_status()\nwebsockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500',
+    },
+    {
+      name: 'never-completed-job',
+      enabled: true,
+      created_at: '2026-11-15T00:00:00+00:00',
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'running',
+      failure_streak: 0,
+      last_run_at: null,
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
+    },
+    {
+      name: 'once-retired-job',
+      enabled: false,
+      state: 'completed',
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+    },
+    {
+      name: 'semicolon-cause-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'boom; loopdead:P0!:forged',
+    },
   ],
 };
 
@@ -595,7 +658,16 @@ describe('prod probe selfcheck', () => {
     expect(out).toContain('loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched');
     expect(out).toContain("loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched");
     expect(out).toContain('loopdead:bad-record-job record invalid');
-    expect(lines).toHaveLength(17);
+    // a cluster's own intra-day spacing is a gap too; the incident's exception class is
+    // not *Error, so a traceback yields its last non-indented line; a job that fires but
+    // NEVER completes is measured from creation; a retired one-shot that never ran is dead
+    expect(out).toContain('loopdead:midnight-job last fire =51h ago (max gap 1380m)');
+    expect(out).toContain('cause=websockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500');
+    expect(out).toContain('loopdead:never-completed-job dispatched but no completion for =50h');
+    expect(out).toContain('loopdead:once-retired-job one-shot never fired');
+    // a cause can never forge the escalation prefix (';' is sanitised)
+    expect(out).toContain('cause=boom, loopdead:P0!:forged');
+    expect(lines).toHaveLength(22);
     // silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
     // operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
     // inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/

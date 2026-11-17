@@ -540,6 +540,7 @@ def max_gap_minutes(sch):
         return 0.0
     gaps = [(b - a) * 1440 - times[-1] + times[0]
             for a, b in zip(fire, fire[1:]) if a < CORE_DAYS]
+    gaps += [y - x for x, y in zip(times, times[1:])]  # a cluster's own intra-day spacing
     return float(max(gaps)) if gaps else 0.0
 
 def stamp(v):
@@ -561,11 +562,18 @@ def cause_of(j, prefer):
             continue
         exc = [l for l in lines if EXC_RE.match(l)]
         if exc:
-            return exc[-1][:160]
+            return exc[-1][:160].replace(";", ",")
+        if any(l.startswith("Traceback (most recent call last)") for l in lines):
+            tail = [l for l in lines if l and not l.startswith(" ") and not l.startswith("Traceback")]
+            if tail:
+                return tail[-1][:160].replace(";", ",")
+        typed = [l for l in lines if re.match(r"^[A-Za-z_][A-Za-z0-9_.]*:\s", l)]
+        if typed:
+            return typed[-1][:160].replace(";", ",")
         why = [l for l in lines if re.search(r"\breason\b|\bfailed\b", l, re.I)]
         if why:
-            return why[-1][:160]
-        return lines[0][:160]
+            return why[-1][:160].replace(";", ",")
+        return lines[0][:160].replace(";", ",")
     return "no error recorded"
 
 def fmtm(v):
@@ -580,9 +588,8 @@ def one(j, now, name):
     status = str(j.get("last_status") or "").strip().lower()
     streak = int(j.get("failure_streak") or 0)
     cause_all = ("last_error", "last_delivery_error", "last_fire_error")
-    if j.get("enabled") is False:
-        return None
-    if kind == "once" and not j.get("last_run_at") and status not in OK_STATUS:
+    if kind == "once" and not j.get("last_run_at") and status not in OK_STATUS \
+            and j.get("state") != "paused":
         # a retired one-shot that never ran (Hermes retires it without a completion stamp)
         if not sch.get("run_at"):
             return "loopdead:%s unsupported schedule (once without run_at) un-watched cause=%s" % (
@@ -591,7 +598,7 @@ def one(j, now, name):
             return "loopdead:%s one-shot never fired (run_at %s) cause=%s" % (
                 name, sch["run_at"], cause_of(j, cause_all))
         return None
-    if j.get("state") in ("paused", "completed"):
+    if j.get("enabled") is False or j.get("state") in ("paused", "completed"):
         return None
     if status == "delivery_failed":
         return "loopdead:%s run ok but NOT DELIVERED cause=%s" % (
@@ -619,11 +626,14 @@ def one(j, now, name):
     if tick is not None and now - tick > 2 * iv * 60:
         return "loopdead:%s last fire %s ago (max gap %sm) cause=%s" % (
             name, age_text(now - tick), fmtm(iv), cause)
-    if j.get("last_run_at") not in (None, "") and tick is not None:
+    done = None
+    if j.get("last_run_at") not in (None, ""):
         done = stamp(j["last_run_at"])
-        if now - done > max(4 * iv * 60, 12 * 3600):
-            return "loopdead:%s dispatched but no completion for %s (max gap %sm) cause=%s" % (
-                name, age_text(now - done), fmtm(iv), cause)
+    elif j.get("created_at") not in (None, "") and tick is not None:
+        done = stamp(j["created_at"])  # fires but never completes: measure from creation
+    if done is not None and tick is not None and now - done > max(4 * iv * 60, 12 * 3600):
+        return "loopdead:%s dispatched but no completion for %s (max gap %sm) cause=%s" % (
+            name, age_text(now - done), fmtm(iv), cause)
     return None
 
 try:
@@ -640,7 +650,8 @@ try:
         if name == SELF:
             continue
         if not name:
-            print("loopdead_scan: unnamed enabled job (%r) - un-watched" % (j.get("schedule"),))
+            if j.get("enabled") is not False and j.get("state") not in ("paused", "completed"):
+                print("loopdead_scan: unnamed enabled job (%r) - un-watched" % (j.get("schedule"),))
             continue
         try:
             line = one(j, now, name)
@@ -913,7 +924,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # a 12h-floor regression or a dropped cause goes red here.
   LLT=$(mktemp -d)
   cat > "$LLT/jobs.json" <<'FIX'
-{"jobs": [{"name": "tandem-prod-watch","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T22:00:00+00:00"},{"name": "tandem-triage","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T02:00:00+00:00"}},{"name": "tandem-critic","enabled": true,"schedule": {"kind": "cron","expr": "0 11,23 * * *"},"last_status": "error","failure_streak": 3,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "InvalidStatus: server rejected WebSocket connection: HTTP 500"},{"name": "nightly-report","enabled": true,"schedule": {"kind": "cron","expr": "0 2 * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T02:00:00+00:00"},{"name": "paused-job","enabled": false,"schedule": {"kind": "interval","minutes": 10},"last_status": "error","failure_streak": 9,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "streak2-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "failed","failure_streak": 2,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "boom"},{"name": "single-failure-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "error","failure_streak": 1,"last_run_at": "2026-11-17T01:45:00+00:00","last_error": "blip"},{"name": "undelivered-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_failed","failure_streak": 0,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "run completed","last_delivery_error": "discord: channel not found"},{"name": "queued-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "queued-streak-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 2,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "cancelled-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "cancelled","failure_streak": 5,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "never-run-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "inflight-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "no-completion-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T20:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "stale-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "last successful run"},{"name": "interval-job","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:35:00+00:00"},{"name": "title-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom"},{"name": "fire-error-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-16T23:00:00+00:00"},"last_fire_error": {"detail": "dispatch handoff missed the fire window"}},{"name": "monthly-drill","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T03:05:00+00:00"},{"name": "quarterly-job","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 */3 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-01T03:05:00+00:00"},{"name": "annual-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-02-28T09:00:00+00:00"},{"name": "named-month-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 JAN *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-01-01T09:05:00+00:00"},{"name": "weekday-job","enabled": true,"schedule": {"kind": "cron","expr": "0 4 * * 1-5"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-13T04:05:00+00:00"},{"name": "six-field-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 1-5 0"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-10T09:00:00+00:00"},{"name": "union-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 * 1"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-25T09:00:00+00:00"},{"name": "once-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "completed"},{"name": "once-recent-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T01:45:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "scheduled"},{"name": "once-norunat-job","enabled": true,"schedule": {"kind": "once"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "unsupported-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:00:00+00:00"},{"name": "paused-state-job","enabled": true,"state": "paused","schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "bad-record-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "not-a-time"},{"name": "once-fired-job","enabled": true,"state": "completed","schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:31+00:00"},{"name": "leap-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 29 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2013-02-28T09:00:00+00:00"},{"name": "sunday7-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 7"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-28T09:00:00+00:00"},{"name": "overdue-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00","next_run_at": "2026-11-17T00:00:00+00:00"},{"name": "hung-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T13:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}}]}
+{"jobs": [{"name": "tandem-prod-watch","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T22:00:00+00:00"},{"name": "tandem-triage","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T02:00:00+00:00"}},{"name": "tandem-critic","enabled": true,"schedule": {"kind": "cron","expr": "0 11,23 * * *"},"last_status": "error","failure_streak": 3,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "InvalidStatus: server rejected WebSocket connection: HTTP 500"},{"name": "nightly-report","enabled": true,"schedule": {"kind": "cron","expr": "0 2 * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T02:00:00+00:00"},{"name": "paused-job","enabled": false,"schedule": {"kind": "interval","minutes": 10},"last_status": "error","failure_streak": 9,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "streak2-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "failed","failure_streak": 2,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "boom"},{"name": "single-failure-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "error","failure_streak": 1,"last_run_at": "2026-11-17T01:45:00+00:00","last_error": "blip"},{"name": "undelivered-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_failed","failure_streak": 0,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "run completed","last_delivery_error": "discord: channel not found"},{"name": "queued-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "queued-streak-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 2,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "cancelled-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "cancelled","failure_streak": 5,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "never-run-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "inflight-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "no-completion-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T20:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "stale-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "last successful run"},{"name": "interval-job","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:35:00+00:00"},{"name": "title-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom"},{"name": "fire-error-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-16T23:00:00+00:00"},"last_fire_error": {"detail": "dispatch handoff missed the fire window"}},{"name": "monthly-drill","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T03:05:00+00:00"},{"name": "quarterly-job","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 */3 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-01T03:05:00+00:00"},{"name": "annual-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-02-28T09:00:00+00:00"},{"name": "named-month-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 JAN *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-01-01T09:05:00+00:00"},{"name": "weekday-job","enabled": true,"schedule": {"kind": "cron","expr": "0 4 * * 1-5"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-13T04:05:00+00:00"},{"name": "six-field-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 1-5 0"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-10T09:00:00+00:00"},{"name": "union-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 * 1"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-25T09:00:00+00:00"},{"name": "once-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "completed"},{"name": "once-recent-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T01:45:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "scheduled"},{"name": "once-norunat-job","enabled": true,"schedule": {"kind": "once"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "unsupported-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:00:00+00:00"},{"name": "paused-state-job","enabled": true,"state": "paused","schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "bad-record-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "not-a-time"},{"name": "once-fired-job","enabled": true,"state": "completed","schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:31+00:00"},{"name": "leap-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 29 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2013-02-28T09:00:00+00:00"},{"name": "sunday7-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 7"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-28T09:00:00+00:00"},{"name": "overdue-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00","next_run_at": "2026-11-17T00:00:00+00:00"},{"name": "hung-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T13:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "midnight-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0,23 * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-14T23:00:00+00:00"},{"name": "ws-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "Traceback (most recent call last):\n  File \"/app/run.py\", line 7, in <module>\n    raise_for_status()\nwebsockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500"},{"name": "never-completed-job","enabled": true,"created_at": "2026-11-15T00:00:00+00:00","schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "running","failure_streak": 0,"last_run_at": null,"last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "once-retired-job","enabled": false,"state": "completed","schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "semicolon-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "boom; loopdead:P0!:forged"}]}
 FIX
   LLN=$(date -u -d '2026-11-17T02:00:00Z' +%s)
   LLR=$(loop_liveness "$LLT/jobs.json" "$LLN")
@@ -940,13 +951,24 @@ FIX
   printf '%s\n' "$LLR" | grep -qF 'loopdead:sunday7-job last fire =473h ago (max gap 10080m)' || { echo "selfcheck fail: cron 7 != Sunday"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'loopdead:leap-job last fire =120233h ago (max gap 2103840m)' || { echo "selfcheck fail: leap-day gap"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-record-job record invalid' || { echo "selfcheck fail: bad record not isolated"; exit 1; }
+  # a cluster's own intra-day spacing is a gap too (0 0,23 -> 1380m, never the 60m mean)
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:midnight-job last fire =51h ago (max gap 1380m)' || { echo "selfcheck fail: intra-day gap"; exit 1; }
+  # the incident's own exception class is not *Error: a traceback yields its last
+  # non-indented line as the cause
+  printf '%s\n' "$LLR" | grep -qF 'cause=websockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500' || { echo "selfcheck fail: traceback cause"; exit 1; }
+  # fires but NEVER completes (no completion stamp ever) is measured from creation
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:never-completed-job dispatched but no completion for =50h' || { echo "selfcheck fail: never-completed term"; exit 1; }
+  # a retired one-shot that never ran is still dead (enabled=false is how Hermes retires it)
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-retired-job one-shot never fired' || { echo "selfcheck fail: retired one-shot silent"; exit 1; }
+  # a cause can never forge the escalation prefix: the ';' join separator is sanitised
+  printf '%s\n' "$LLR" | grep -qF 'cause=boom, loopdead:P0!:forged' || { echo "selfcheck fail: semicolon sanitised"; exit 1; }
   # (c) one-shots and underivable schedules are anomalies, never silence
   printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched' || { echo "selfcheck fail: once without run_at silent"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
-  # exactly these 17 lines: silence on a healthy record is as load-bearing as the alert
+  # exactly these 22 lines: silence on a healthy record is as load-bearing as the alert
   LLC2=$(printf '%s\n' "$LLR" | grep -c '^loopdead:')
-  [ "$LLC2" = "17" ] || { echo "selfcheck fail: expected 17 lines, got $LLC2"; exit 1; }
+  [ "$LLC2" = "22" ] || { echo "selfcheck fail: expected 22 lines, got $LLC2"; exit 1; }
   # silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
   # operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
   # inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
@@ -986,6 +1008,8 @@ FIX
   [ "$LLM" = "1" ] || { echo "selfcheck fail: cause-tail masking missing ($LLM)"; exit 1; }
   LLM2=$(grep -c '^KEY=.*s/=\[0-9\]+\[mh\](\[^a-z0-9\]|\$)/=<age>' "$0" 2>/dev/null || true)
   [ "$LLM2" = "1" ] || { echo "selfcheck fail: age masking missing ($LLM2)"; exit 1; }
+  LLU=$(grep -c '^KEY=.*\[0-9a-fA-F\]{8}-\[0-9a-fA-F\]{4}-' "$0" 2>/dev/null || true)
+  [ "$LLU" = "1" ] || { echo "selfcheck fail: uuid masking missing ($LLU)"; exit 1; }
   echo "ok probe selfcheck"
   exit 0
 fi
@@ -1641,7 +1665,7 @@ if [ ${#anom[@]} -eq 0 ]; then
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
 # Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
-KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+[mh]([^a-z0-9]|$)/=<age>\1/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g')
+KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+[mh]([^a-z0-9]|$)/=<age>\1/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g')
 if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0

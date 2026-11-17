@@ -1388,28 +1388,33 @@ non-positive deltas render no duration.
   fire stamp (`last_dispatch.dispatched_at` or `last_run_at`, whichever is newer) older
   than **2x the job's own MAX gap**, a job that never ran having no baseline and staying
   silent; (b3) fires keep advancing while `last_run_at` sits beyond **max(4x gap, 12h)** —
-  a hung run or a wedged handoff, the same "runs but lands nowhere" class as (a2), with
+  a hung run or a wedged handoff, the same "runs but lands nowhere" class as (a2) — and a
+  job that fires but has NEVER recorded a completion is measured from `created_at` — with
   the 12-hour floor set by measurement (the loop's own triage runs take up to 6.9h, so a
   schedule-gap multiple alone paged on healthy runs). The gap is the LONGEST legitimate
-  gap between two fires, never the mean cadence, ENUMERATED from the cron fields over an
-  8-year core horizon plus a successor buffer: union semantics when day-of-month AND
+  gap between two fires, never the mean cadence — INCLUDING a cluster's own intra-day
+  spacing (`0 0,23 * * *` is a 1380m gap, not the 60m cross-midnight one) — ENUMERATED from
+  the cron fields over an 8-year core horizon plus a successor buffer: union semantics when day-of-month AND
   day-of-week are both restricted (cron fires on the union, so `0 9 1 * 1` is a 7-day
   gap, not 31), named months and weekdays (`JAN`, `MON-FRI`), day-of-month 29-31 reality
   (`0 9 31 * *` is a 61-day gap), 0 and 7 both Sunday, croniter's seconds-LAST 6-field
   exprs, or the interval minutes. A `once` job that never ran past its `run_at` plus ONE
   HOUR of grace is dead (`one-shot never fired`) — evaluated even when the scheduler has
-  already retired it as `completed` without a completion stamp; a `once` with no
-  `run_at` is un-watched. A gap that cannot be derived is an ANOMALY
+  retired it (Hermes writes `enabled=false` + `state=completed` with no completion stamp,
+  so that gate must not run first); a `once` with no `run_at` is un-watched. A gap that cannot be derived is an ANOMALY
   (`unsupported schedule … un-watched`), never silence; a corrupt record is isolated
   (`record invalid`) without blinding the scan, and an enabled job with no name is
-  `un-watched` too. Every line carries the CAUSE — the exception-class line, else a
-  `reason`/`failed` line, else the first line that is not the prompt's `# Cron Job:`
-  title, drawn from `last_error` / `last_delivery_error` / `last_fire_error`. The loop's
+  `un-watched` too. Every line carries the CAUSE, drawn from `last_error` /
+  `last_delivery_error` / `last_fire_error`: the exception-class line (so a
+  `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
+  last non-indented line, or any `Name: message` line), else a `reason`/`failed` line,
+  else the first line that is not the prompt's `# Cron Job:` title. The loop's
   BRAIN jobs (`tandem-triage`, `tandem-critic`) carry the `loopdead:P0!:` line PREFIX —
   escalated at line start or after the `;` join, so a brain line that is not last still
   pages and no cause string can forge it (a `P0001`, a `P0RT` or an embedded
-  `loopdead:P0!:` after `cause=` stays P1) — and the repeat-suppression key masks
-  volatile cause tails (`request_id=` / `trace=` / long hex ids / long digit runs /
+  `loopdead:P0!:` after `cause=` stays P1) — and causes are `;`-sanitised on the way out so no error text can forge the escalation
+  prefix; the repeat-suppression key masks
+  volatile cause tails (`request_id=` / `trace=` / UUIDs / long hex ids / long digit runs /
   attempt counters) and every age (`=<n>m` and `=<n>h`) so a standing fault alerts once
   instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
   in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode so the unit
