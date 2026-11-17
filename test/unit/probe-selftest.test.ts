@@ -109,12 +109,14 @@ describe('prod probe selfcheck', () => {
   // unalerted while every product arm stayed green (the designated dead-man, the critic,
   // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
   // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
-  // through the shipped dispatch mode; every term, every silence and the cause path are
-  // pinned here (mutation-proved red in the shipping pass).
+  // through the shipped dispatch mode; every term, every silence and the cause selection
+  // are pinned here (mutation-proved red in the shipping pass).
   it('flags stale fires, repeated failures and undelivered runs from the scheduler record', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'probe-loop-'));
-    const jobs = {
+    const file = join(dir, 'jobs.json');
+    const fixture = {
       jobs: [
+        // the probe itself: 4h quiet on a 10m interval — must be excluded, never reported
         {
           name: 'tandem-prod-watch',
           enabled: true,
@@ -123,6 +125,8 @@ describe('prod probe selfcheck', () => {
           failure_streak: 0,
           last_run_at: '2026-11-16T22:00:00+00:00',
         },
+        // healthy hourly job whose DISPATCH stamp is fresh although the last completion
+        // was two hours ago — the dispatch stamp is the liveness baseline
         {
           name: 'tandem-triage',
           enabled: true,
@@ -132,6 +136,7 @@ describe('prod probe selfcheck', () => {
           last_run_at: '2026-11-17T00:00:00+00:00',
           last_dispatch: { dispatched_at: '2026-11-17T02:00:00+00:00' },
         },
+        // the real incident shape: three consecutive failures with the delivery cause
         {
           name: 'tandem-critic',
           enabled: true,
@@ -157,6 +162,7 @@ describe('prod probe selfcheck', () => {
           failure_streak: 9,
           last_run_at: '2026-11-01T00:00:00+00:00',
         },
+        // exactly the streak boundary
         {
           name: 'streak2-job',
           enabled: true,
@@ -166,6 +172,17 @@ describe('prod probe selfcheck', () => {
           last_run_at: '2026-11-17T01:30:00+00:00',
           last_error: 'boom',
         },
+        // a single failed run is a blip, not a dead loop
+        {
+          name: 'single-failure-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'error',
+          failure_streak: 1,
+          last_run_at: '2026-11-17T01:45:00+00:00',
+          last_error: 'blip',
+        },
+        // delivery_failed: the run landed and reached nobody; the DELIVERY cause wins
         {
           name: 'undelivered-job',
           enabled: true,
@@ -173,8 +190,19 @@ describe('prod probe selfcheck', () => {
           last_status: 'delivery_failed',
           failure_streak: 0,
           last_run_at: '2026-11-17T01:30:00+00:00',
+          last_error: 'run completed',
           last_delivery_error: 'discord: channel not found',
         },
+        // queued delivery is in progress, not a fault
+        {
+          name: 'queued-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'delivery_queued',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T01:45:00+00:00',
+        },
+        // a job that never ran has no baseline
         {
           name: 'never-run-job',
           enabled: true,
@@ -183,6 +211,7 @@ describe('prod probe selfcheck', () => {
           failure_streak: 0,
           last_run_at: null,
         },
+        // a long run in flight is not a dead loop
         {
           name: 'inflight-job',
           enabled: true,
@@ -192,6 +221,7 @@ describe('prod probe selfcheck', () => {
           last_run_at: '2026-11-16T23:00:00+00:00',
           last_dispatch: { dispatched_at: '2026-11-17T01:59:00+00:00' },
         },
+        // 3h of silence on an hourly job
         {
           name: 'stale-job',
           enabled: true,
@@ -201,6 +231,37 @@ describe('prod probe selfcheck', () => {
           last_run_at: '2026-11-16T23:00:00+00:00',
           last_error: 'last successful run',
         },
+        // sub-hour ages render in minutes
+        {
+          name: 'interval-job',
+          enabled: true,
+          schedule: { kind: 'interval', minutes: 10 },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T01:35:00+00:00',
+        },
+        // the prompt title is not a cause; the exception class line is
+        {
+          name: 'title-cause-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-16T23:00:00+00:00',
+          last_error: '# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom',
+        },
+        // a missed dispatch handoff is a cause too
+        {
+          name: 'fire-error-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-16T23:00:00+00:00',
+          last_dispatch: { dispatched_at: '2026-11-16T23:00:00+00:00' },
+          last_fire_error: { detail: 'dispatch handoff missed the fire window' },
+        },
+        // sub-daily cadences must not read as stale on their real gap
         {
           name: 'monthly-drill',
           enabled: true,
@@ -208,6 +269,32 @@ describe('prod probe selfcheck', () => {
           last_status: 'ok',
           failure_streak: 0,
           last_run_at: '2026-11-01T03:05:00+00:00',
+        },
+        {
+          name: 'quarterly-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 3 1 */3 *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-10-01T03:05:00+00:00',
+        },
+        {
+          name: 'weekday-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 4 * * 1-5' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-13T04:05:00+00:00',
+        },
+        // a one-shot that never fired is a dead job; an underivable schedule is un-watched;
+        // a corrupt record is isolated
+        {
+          name: 'once-job',
+          enabled: true,
+          schedule: { kind: 'once', run_at: '2026-11-17T00:00:00+00:00' },
+          last_status: null,
+          failure_streak: 0,
+          last_run_at: null,
         },
         {
           name: 'unsupported-job',
@@ -236,8 +323,7 @@ describe('prod probe selfcheck', () => {
         },
       ],
     };
-    const file = join(dir, 'jobs.json');
-    writeFileSync(file, JSON.stringify(jobs));
+    writeFileSync(file, JSON.stringify(fixture));
     const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
     const run = async (at = now) => {
       const proc = await $`bash ${script} --loop-liveness ${file} ${at}`.nothrow().quiet();
@@ -247,43 +333,48 @@ describe('prod probe selfcheck', () => {
 
     const out = await run();
     const lines = out.trim().split('\n').filter(Boolean);
-    // running-but-failing at exactly streak 2, with the CAUSE carried
-    expect(lines.find((l) => l.startsWith('loopdead:tandem-critic'))).toBe(
-      'loopdead:tandem-critic failing =2+ consecutive ticks (interval 720m) cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0',
+    // running-but-failing at exactly streak 2, cause carried, brain job P0
+    expect(lines).toContain(
+      'loopdead:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0',
     );
-    expect(out).toContain('loopdead:streak2-job failing =2+ consecutive ticks (interval 60m) cause=boom');
+    expect(lines).toContain('loopdead:streak2-job failing >=2 consecutive ticks cause=boom');
     // delivery_failed = the run landed but reached nobody: its own term and its own cause
-    expect(out).toContain(
-      'loopdead:undelivered-job run ok but NOT DELIVERED (interval 60m) cause=discord: channel not found',
-    );
-    // stale fire uses the dispatch stamp as the baseline: a long run in flight is no fault
-    expect(out).toContain('loopdead:stale-job last fire =3h ago (interval 60m) cause=last successful run');
-    expect(out).not.toContain('inflight-job');
-    // one corrupt record is isolated, never fatal to the rest of the scan
+    expect(lines).toContain('loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found');
+    // stale fire: dispatch stamp baseline, sub-hour ages in minutes, cause carried
+    expect(lines).toContain('loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run');
+    expect(lines).toContain('loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded');
+    // the prompt title is skipped, the exception line is the cause; a missed handoff counts
+    expect(lines).toContain('loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom');
+    expect(out).toContain('cause=dispatch handoff missed the fire window');
+    // one-shot never fired / underivable schedule / corrupt record are anomalies, isolated
+    expect(out).toContain('loopdead:once-job one-shot never fired');
+    expect(out).toContain("loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched");
     expect(out).toContain('loopdead:bad-record-job record invalid');
-    // an underivable schedule is an anomaly, not silence
-    expect(out).toContain('loopdead:unsupported-job unsupported schedule');
-    // silences: healthy hourly inside 2x, 24h job inside 48h, disabled, paused state,
-    // never-run (no baseline), the probe itself, and a dom-based monthly job inside 60d
+    expect(lines).toHaveLength(10);
+    // silences: healthy hourly inside 2x, 24h inside 48h, a single failure, queued
+    // delivery, disabled, paused state, never-run, in-flight, the dom monthly and
+    // quarterly drifts, the weekday cron's weekend gap, and the probe itself
     for (const quiet of [
       'tandem-triage',
       'nightly-report',
+      'single-failure-job',
+      'queued-job',
       'paused-job',
       'paused-state-job',
       'never-run-job',
-      'tandem-prod-watch',
+      'inflight-job',
       'monthly-drill',
+      'quarterly-job',
+      'weekday-job',
+      'tandem-prod-watch',
     ]) {
       expect(out).not.toContain(quiet);
     }
-    // only the four real faults are reported (no duplicate lines per job)
-    expect(lines).toHaveLength(6);
-
-    // boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at
-    // 2x (silent) and one minute later it is stale (strict >, not >=)
+    // boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at 2x
+    // (silent) and one minute later it is stale (strict >, not >=)
     expect(await run(String(Date.parse('2026-11-17T04:00:00Z') / 1000))).not.toContain('tandem-triage');
     expect(await run(String(Date.parse('2026-11-17T04:01:00Z') / 1000))).toContain(
-      'loopdead:tandem-triage last fire =2h ago (interval 60m)',
+      'loopdead:tandem-triage last fire =2h ago (max gap 60m)',
     );
 
     // an unreadable scheduler record is an ANOMALY (blind), never silence

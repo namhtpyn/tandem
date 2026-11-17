@@ -429,18 +429,20 @@ egress_arm_on() {
 # every run FAILS looks fresh in its trail and dead in reality, so liveness = last
 # SUCCESS and success includes deliverability.
 # Terms per enabled, non-paused/non-completed job (the probe excluded — it cannot witness
-# its own death), each carrying the CAUSE (last_error / last_delivery_error / last_fire_error
-# first meaningful line, never swallowed):
-#   (a) running-but-failing: a non-ok last_status at failure_streak >= 2. Hermes records
-#       delivery_failed/delivery_queued as a SUCCESSFUL run with streak forced to 0, so
-#       those get their own term — a job whose every run is never delivered is invisible
-#       even though it "runs".
-#   (b) stale fire: the last fire stamp older than 2x the job's own schedule interval.
+# its own death), each carrying the CAUSE (never swallowed):
+#   (a) running-but-failing: a non-ok last_status at failure_streak >= 2.
+#   (a2) NOT DELIVERED: last_status = delivery_failed — Hermes counts that as a
+#       SUCCESSFUL run with failure_streak forced to 0, so without its own term a job
+#       whose every run reaches nobody is invisible. delivery_queued is IN PROGRESS (the
+#       outbox still owes it) and stays silent.
+#   (b) stale fire: the last fire stamp older than 2x the job's own MAX schedule gap.
 #       The stamp is last_dispatch.dispatched_at when present (a long run in flight is not
 #       a dead loop), else last_run_at; a job that never ran has no baseline and stays
-#       silent.
-#   (c) a schedule whose interval cannot be derived (unparseable/unsupported cron or a
-#       non-positive interval) is an anomaly — an un-watched job is not a green one.
+#       silent. The gap is the longest interval between consecutive fires, not the mean
+#       cadence — a business-hours or weekday cron must not alert on its overnight /
+#       weekend gap.
+#   (c) a schedule whose gap cannot be derived is an anomaly, never silence: an
+#       un-watched job is not a green one.
 # Worded statically and the repeat-suppression key masks volatile cause tails, so a
 # standing fault alerts once instead of every 10-min tick. The loop's BRAIN jobs
 # (tandem-triage / tandem-critic) are P0: their death is the loop's.
@@ -448,8 +450,8 @@ loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
 import json, re, sys, datetime
 BRAIN = ("tandem-triage", "tandem-critic")
 SELF = "tandem-prod-watch"
-OK_STATUS = {"", "ok", "success", "completed"}
-DELIVERY_STATUS = {"delivery_failed", "delivery_queued"}
+OK_STATUS = {"", "ok", "success", "completed", "delivery_queued"}
+EXC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning)\b")
 
 def expand(f, lo, hi):
     vals = set()
@@ -476,9 +478,22 @@ def expand(f, lo, hi):
         return set()
     return vals
 
-def interval_minutes(sch):
-    if sch.get("kind") == "interval":
+def max_spread(vals, period, unit):
+    """Longest gap between consecutive selections of a repeating cycle, in `unit`."""
+    v = sorted(vals)
+    if not v:
+        return 0
+    gaps = [b - a for a, b in zip(v, v[1:])]
+    gaps.append(v[0] + period - v[-1])
+    return max(gaps) * unit
+
+def max_gap_minutes(sch):
+    """Longest legitimate gap between two fires, in minutes (0 = underivable)."""
+    kind = str(sch.get("kind") or "")
+    if kind == "interval":
         return float(sch.get("minutes") or 0)
+    if kind == "once":
+        return 0.0  # handled by the caller: a one-shot has no recurring gap
     f = str(sch.get("expr") or "").split()
     if len(f) == 6:
         f = f[1:]  # seconds-first form
@@ -487,53 +502,79 @@ def interval_minutes(sch):
     mi, hr = expand(f[0], 0, 59), expand(f[1], 0, 23)
     if not mi or not hr:
         return 0.0
+    times = sorted(h * 60 + m for h in hr for m in mi)  # exact minute-of-day fire times
+    intraday = max([y - x for x, y in zip(times, times[1:])] + [times[0] + 1440 - times[-1]])
     dom, mon, dow = f[2], f[3], f[4]
-    days = 1.0
+    day_span = 1
     if dom not in ("*", "?"):
         d = expand(dom, 1, 31)
         if not d:
             return 0.0
-        days = 30.0 / len(d)
+        day_span = max_spread(d, 31, 1)
     elif dow not in ("*", "?"):
         w = expand(dow, 0, 7)
         if not w:
             return 0.0
-        days = 7.0 / len(w)
+        day_span = max_spread(w, 7, 1)
     if mon not in ("*", "?"):
         m = expand(mon, 1, 12)
         if not m:
             return 0.0
-        days *= 12.0 / len(m)
-    return days * 1440.0 / (len(mi) * len(hr))
+        day_span *= max_spread(m, 12, 1)
+    return (day_span - 1) * 1440 + intraday
 
 def stamp(v):
-    return datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    d = datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    if d.utcoffset() is None:  # offset-less stamps are UTC here, never host-local
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.timestamp()
 
-def cause_of(j):
-    for key in ("last_error", "last_delivery_error"):
-        lines = [l.strip() for l in str(j.get(key) or "").splitlines() if l.strip()]
-        if lines:
-            pick = next((l for l in lines if re.search(r"reason|error", l, re.I)), lines[0])
-            return re.sub(r"\s+", " ", pick)[:160]
-    fe = j.get("last_fire_error")
-    if isinstance(fe, dict) and str(fe.get("detail") or "").strip():
-        return re.sub(r"\s+", " ", str(fe["detail"]).strip())[:160]
+def cause_of(j, prefer):
+    """First MEANINGFUL line: an exception-class line, else a 'reason:' line, else the
+    first non-title line — the scheduler's own prompt title ('# Cron Job: …') is not a cause."""
+    for key in prefer:
+        raw = j.get(key)
+        if isinstance(raw, dict) and key == "last_fire_error":
+            raw = raw.get("detail")
+        lines = [re.sub(r"\s+", " ", l).strip() for l in str(raw or "").splitlines() if l.strip()]
+        lines = [l for l in lines if not l.startswith("#")]
+        if not lines:
+            continue
+        exc = [l for l in lines if EXC_RE.match(l)]
+        if exc:
+            return exc[-1][:160]
+        why = [l for l in lines if re.search(r"\breason\b|\bfailed\b", l, re.I)]
+        if why:
+            return why[-1][:160]
+        return lines[0][:160]
     return "no error recorded"
+
+def age_text(sec):
+    return ("=%dm" % int(sec / 60)) if sec < 3600 else ("=%dh" % int(sec / 3600))
 
 def one(j, now, name):
     sch = j.get("schedule") or {}
-    iv = interval_minutes(sch)
     p0 = " P0" if name in BRAIN else ""
     status = str(j.get("last_status") or "").strip().lower()
     streak = int(j.get("failure_streak") or 0)
-    cause = cause_of(j)
-    if iv <= 0:
-        expr = sch.get("expr") if sch.get("kind") != "interval" else "interval=%r minutes" % (sch.get("minutes"),)
-        return "loopdead:%s unsupported schedule (%r) - un-watched%s" % (name, expr, p0)
-    if status in DELIVERY_STATUS:
-        return "loopdead:%s run ok but NOT DELIVERED (interval %gm) cause=%s%s" % (name, iv, cause, p0)
+    if status == "delivery_failed":
+        return "loopdead:%s run ok but NOT DELIVERED cause=%s%s" % (
+            name, cause_of(j, ("last_delivery_error", "last_error", "last_fire_error")), p0)
     if status not in OK_STATUS and streak >= 2:
-        return "loopdead:%s failing =2+ consecutive ticks (interval %gm) cause=%s%s" % (name, iv, cause, p0)
+        return "loopdead:%s failing >=2 consecutive ticks cause=%s%s" % (
+            name, cause_of(j, ("last_error", "last_delivery_error", "last_fire_error")), p0)
+    cause = cause_of(j, ("last_error", "last_delivery_error", "last_fire_error"))
+    if str(sch.get("kind") or "") == "once":
+        if j.get("last_run_at") or status in ("ok", "success", "completed"):
+            return None
+        if sch.get("run_at") and now > stamp(sch["run_at"]) + 3600:
+            return "loopdead:%s one-shot never fired (run_at %s) cause=%s%s" % (
+                name, sch["run_at"], cause, p0)
+        return None
+    iv = max_gap_minutes(sch)
+    if iv <= 0:
+        shown = sch.get("expr") if sch.get("kind") != "interval" else "interval=%r minutes" % (sch.get("minutes"),)
+        return "loopdead:%s unsupported schedule (%r) un-watched cause=%s%s" % (name, shown, cause, p0)
     tick = None
     disp = j.get("last_dispatch")
     if isinstance(disp, dict) and disp.get("dispatched_at") not in (None, ""):
@@ -541,32 +582,47 @@ def one(j, now, name):
     if tick is None and j.get("last_run_at") not in (None, ""):
         tick = stamp(j["last_run_at"])
     if tick is not None and now - tick > 2 * iv * 60:
-        return "loopdead:%s last fire =%dh ago (interval %gm) cause=%s%s" % (name, int((now - tick) / 3600), iv, cause, p0)
+        return "loopdead:%s last fire %s ago (max gap %gm) cause=%s%s" % (
+            name, age_text(now - tick), iv, cause, p0)
     return None
 
 try:
     jobs = json.load(open(sys.argv[1])).get("jobs", [])
     if isinstance(jobs, dict):
-        jobs = list(jobs.values())
+        # name-keyed maps are legal: the KEY is the name when the entry has none
+        jobs = [dict(v, name=v.get("name") or k) if isinstance(v, dict) else v for k, v in jobs.items()]
     now = float(sys.argv[2])
     for j in jobs:
         if not isinstance(j, dict):
             print("loopdead_scan: non-object job entry %r" % (j,))
             continue
         name = str(j.get("name") or "")
-        if not name or name == SELF or j.get("enabled") is False or j.get("state") in ("paused", "completed"):
+        if name == SELF or j.get("enabled") is False or j.get("state") in ("paused", "completed"):
+            continue
+        if not name:
+            print("loopdead_scan: unnamed enabled job (%r) - un-watched" % (j.get("schedule"),))
             continue
         try:
             line = one(j, now, name)
         except Exception as e:
-            line = "loopdead:%s record invalid (%s: %s)" % (
-                name, type(e).__name__, str(e).replace("\n", " ")[:120])
+            line = "loopdead:%s record invalid (%s: %s)%s" % (
+                name, type(e).__name__, str(e).replace("\n", " ")[:120],
+                " P0" if name in BRAIN else "")
         if line:
             print(line)
 except Exception as e:
     msg = ("%s: %s" % (type(e).__name__, e)).replace("\n", " ")[:160]
     print("loopdead_scan: unreadable jobs.json (%s)" % msg)
 PY
+}
+# LEVEL: P0 for a SPACE-DELIMITED P0 token anywhere in the joined anomaly line — a cause
+# string like `P0001` or a word like `P0RT` must never escalate the probe — plus the
+# pre-existing infra phrases other arms emit.
+probe_level() {
+  case "$1" in
+    *' P0'|*' P0;'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
+    *) echo 1 ;;
+  esac
 }
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
@@ -811,8 +867,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
   printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
   # LOOP-LIVENESS (#485): the shipped function driven by fixtures — every term, every
-  # silence and every cause path is pinned; a flipped threshold, a lost self-exclusion,
-  # a dropped cause string or a missing P0 marker goes red here.
+  # silence, the cause selection and the escalation token are pinned; a flipped
+  # threshold, a lost self-exclusion, a dropped cause or a mean-cadence regression goes
+  # red here.
   LLT=$(mktemp -d)
   cat > "$LLT/jobs.json" <<'FIX'
 {"jobs":[
@@ -822,11 +879,19 @@ if [ "${1:-}" = "--selfcheck" ]; then
  {"name":"nightly-report","enabled":true,"schedule":{"kind":"cron","expr":"0 2 * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T02:00:00+00:00"},
  {"name":"paused-job","enabled":false,"schedule":{"kind":"interval","minutes":10},"last_status":"error","failure_streak":9,"last_run_at":"2026-11-01T00:00:00+00:00"},
  {"name":"streak2-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"failed","failure_streak":2,"last_run_at":"2026-11-17T01:30:00+00:00","last_error":"boom"},
- {"name":"undelivered-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_failed","failure_streak":0,"last_run_at":"2026-11-17T01:30:00+00:00","last_delivery_error":"discord: channel not found"},
+ {"name":"single-failure-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"error","failure_streak":1,"last_run_at":"2026-11-17T01:45:00+00:00","last_error":"blip"},
+ {"name":"undelivered-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_failed","failure_streak":0,"last_run_at":"2026-11-17T01:30:00+00:00","last_error":"run completed","last_delivery_error":"discord: channel not found"},
+ {"name":"queued-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_queued","failure_streak":0,"last_run_at":"2026-11-17T01:45:00+00:00"},
  {"name":"never-run-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":null,"failure_streak":0,"last_run_at":null},
  {"name":"inflight-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_dispatch":{"dispatched_at":"2026-11-17T01:59:00+00:00"}},
  {"name":"stale-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_error":"last successful run"},
+ {"name":"interval-job","enabled":true,"schedule":{"kind":"interval","minutes":10},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T01:35:00+00:00"},
+ {"name":"title-cause-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_error":"# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom"},
+ {"name":"fire-error-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_dispatch":{"dispatched_at":"2026-11-16T23:00:00+00:00"},"last_fire_error":{"detail":"dispatch handoff missed the fire window"}},
  {"name":"monthly-drill","enabled":true,"schedule":{"kind":"cron","expr":"0 3 1 * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-01T03:05:00+00:00"},
+ {"name":"quarterly-job","enabled":true,"schedule":{"kind":"cron","expr":"0 3 1 */3 *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-10-01T03:05:00+00:00"},
+ {"name":"weekday-job","enabled":true,"schedule":{"kind":"cron","expr":"0 4 * * 1-5"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-13T04:05:00+00:00"},
+ {"name":"once-job","enabled":true,"schedule":{"kind":"once","run_at":"2026-11-17T00:00:00+00:00"},"last_status":null,"failure_streak":0,"last_run_at":null},
  {"name":"unsupported-job","enabled":true,"schedule":{"kind":"cron","expr":"0 0 * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T01:00:00+00:00"},
  {"name":"paused-state-job","enabled":true,"state":"paused","schedule":{"kind":"interval","minutes":10},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-01T00:00:00+00:00"},
  {"name":"bad-record-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"not-a-time"}
@@ -834,40 +899,55 @@ if [ "${1:-}" = "--selfcheck" ]; then
 FIX
   LLN=$(date -u -d '2026-11-17T02:00:00Z' +%s)
   LLR=$(loop_liveness "$LLT/jobs.json" "$LLN")
-  # (a) running-but-failing at EXACTLY streak 2, the cause carried, the brain job P0
-  printf '%s\n' "$LLR" | grep -q '^loopdead:tandem-critic failing =2+ consecutive ticks (interval 720m) cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0$' || { echo "selfcheck fail: critic streak gate"; exit 1; }
-  printf '%s\n' "$LLR" | grep -q '^loopdead:streak2-job failing =2+ consecutive ticks (interval 60m) cause=boom$' || { echo "selfcheck fail: streak=2 boundary"; exit 1; }
-  # (a2) delivery status = the run landed but never reached anyone: its own term
-  printf '%s\n' "$LLR" | grep -q '^loopdead:undelivered-job run ok but NOT DELIVERED (interval 60m) cause=discord: channel not found$' || { echo "selfcheck fail: delivery term"; exit 1; }
-  # (b) stale fire, with the cause; and per-job isolation (one corrupt record cannot
-  # blind the rest of the scan)
-  printf '%s\n' "$LLR" | grep -q '^loopdead:stale-job last fire =3h ago (interval 60m) cause=last successful run$' || { echo "selfcheck fail: stale fire term"; exit 1; }
-  printf '%s\n' "$LLR" | grep -q '^loopdead:bad-record-job record invalid' || { echo "selfcheck fail: bad record not isolated"; exit 1; }
-  # (c) an underivable schedule is an anomaly, never silence
-  printf '%s\n' "$LLR" | grep -q '^loopdead:unsupported-job unsupported schedule (.*) - un-watched' || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
-  # silences: healthy hourly inside 2x, 24h job inside 48h, disabled, paused state,
-  # never-run (no baseline), in-flight (dispatch stamp fresh), monthly dom job inside 60d,
-  # and the probe itself (it cannot witness its own death)
-  for QUIET in tandem-triage nightly-report paused-job paused-state-job never-run-job inflight-job monthly-drill tandem-prod-watch; do
+  # (a) running-but-failing at EXACTLY streak 2, cause carried, brain job P0
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0' || { echo "selfcheck fail: critic streak gate"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:streak2-job failing >=2 consecutive ticks cause=boom' || { echo "selfcheck fail: streak=2 boundary"; exit 1; }
+  # (a2) delivery_failed = run landed and reached nobody; the DELIVERY cause wins, and a
+  # queued delivery is in progress, not a fault
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found' || { echo "selfcheck fail: delivery term"; exit 1; }
+  # (b) stale fire: dispatch stamp is the baseline, age in minutes under an hour
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run' || { echo "selfcheck fail: stale fire term"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded' || { echo "selfcheck fail: sub-hour age"; exit 1; }
+  # cause selection: the scheduler's prompt title is not a cause; last_fire_error is one
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom' || { echo "selfcheck fail: cause skips the title line"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'cause=dispatch handoff missed the fire window' || { echo "selfcheck fail: last_fire_error cause"; exit 1; }
+  # (c) a one-shot that never fired, an underivable schedule and a corrupt record are
+  # anomalies — and one corrupt record never blinds the rest of the scan
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-record-job record invalid' || { echo "selfcheck fail: bad record not isolated"; exit 1; }
+  # silences: healthy hourly inside 2x, 24h inside 48h, a single failure, queued delivery,
+  # disabled, paused state, never-run, in-flight, the dom monthly and quarterly drifts, the
+  # weekday cron's weekend gap, and the probe itself
+  for QUIET in tandem-triage nightly-report single-failure-job queued-job paused-job paused-state-job never-run-job inflight-job monthly-drill quarterly-job weekday-job tandem-prod-watch; do
     printf '%s\n' "$LLR" | grep -q "loopdead:$QUIET" && { echo "selfcheck fail: $QUIET alerted on a healthy record"; exit 1; }
   done
+  # boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at 2x
+  # (silent) and one minute later it is stale (strict >)
+  printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$(date -u -d '2026-11-17T04:00:00Z' +%s)")" | grep -q 'loopdead:tandem-triage' && { echo "selfcheck fail: exactly 2x alerted"; exit 1; }
+  printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$(date -u -d '2026-11-17T04:01:00Z' +%s)")" | grep -qF 'loopdead:tandem-triage last fire =2h ago (max gap 60m)' || { echo "selfcheck fail: just past 2x silent"; exit 1; }
   # unreadable scheduler record = blind, and the cause reaches the operator
   printf 'not json' > "$LLT/jobs.json"
   printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$LLN")" | grep -q '^loopdead_scan: unreadable jobs.json' || { echo "selfcheck fail: unreadable jobs.json silent"; exit 1; }
   rm -rf "$LLT"
-  # P0 token pin: the pass escalates on a SPACE-DELIMITED P0 token, so a cause string
-  # like `P0001` can never escalate the whole probe, while a brain line always does.
-  grep -qF "case \"\$LINE\" in *' P0'|*' P0;'" "$0" || { echo "selfcheck fail: P0 token case"; exit 1; }
-  # WIRING pin: the live pass must CONSUME the arm (run it once, append once, surface its
-  # stderr, mask volatile cause tails in the dedupe key) — deleting any of those keeps
-  # every fixture green and ships a dead or screaming detector. Anchored at column 0 so
-  # each pin cannot match its own grep line.
+  # ESCALATION pin: the P0 token is matched ANYWHERE in the joined line (a brain line that
+  # is not last must still page) and only as a whole token (a cause like `P0001` must not).
+  [ "$(probe_level 'loopdead:tandem-critic x P0;mr=1')" = "0" ] || { echo "selfcheck fail: mid-line P0 token"; exit 1; }
+  [ "$(probe_level 'loopdead:tandem-critic x P0')" = "0" ] || { echo "selfcheck fail: trailing P0 token"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=Postgres error P0001')" = "1" ] || { echo "selfcheck fail: P0001 escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=word P0RT')" = "1" ] || { echo "selfcheck fail: P0RT escalated"; exit 1; }
+  # WIRING pins: the live pass must CONSUME the arm (run once, append once, surface its
+  # stderr, take its level from the shipped function) and the dedupe key must mask
+  # volatile cause tails — deleting any of those keeps the fixtures green and ships a
+  # dead, screaming or mute detector. Anchored at column 0 so no pin matches its own grep.
   LLC=$(grep -c '^LLOUT=$(loop_liveness "$PROFILE_DIR/cron/jobs.json" 2>"$LLERR")' "$0" 2>/dev/null || true)
   [ "$LLC" = "1" ] || { echo "selfcheck fail: loop-liveness pass missing ($LLC)"; exit 1; }
   LLA=$(grep -c '^[[:space:]]*\[ -n "\$L" \] && anom' "$0" 2>/dev/null || true)
   [ "$LLA" = "1" ] || { echo "selfcheck fail: loop-liveness append missing ($LLA)"; exit 1; }
   LLE=$(grep -c '^\[ -s "\$LLERR" \] && anom' "$0" 2>/dev/null || true)
   [ "$LLE" = "1" ] || { echo "selfcheck fail: loop-liveness stderr surface missing ($LLE)"; exit 1; }
+  LLV=$(grep -c '^LVL=$(probe_level "$LINE")' "$0" 2>/dev/null || true)
+  [ "$LLV" = "1" ] || { echo "selfcheck fail: level not taken from probe_level ($LLV)"; exit 1; }
   LLM=$(grep -c "s/request_id=\[^ ;\]\*/request_id=<id>/g" "$0" 2>/dev/null || true)
   [ "$LLM" = "1" ] || { echo "selfcheck fail: cause-tail masking missing ($LLM)"; exit 1; }
   echo "ok probe selfcheck"
@@ -1525,12 +1605,11 @@ if [ ${#anom[@]} -eq 0 ]; then
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
 # Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
-KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-f]{16,}\b/<id>/g')
+KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/=[0-9]+m([^a-z0-9]|$)/=<age>m\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g')
 if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0
 fi
 echo "$KEY" > "$PROBE_STATE/last-anomaly"
-LVL=1; [ ${#anom[@]} -ge 3 ] && LVL=0
-case "$LINE" in *' P0'|*' P0;'|*unreachable*|*public=*|*version_rpc*|*container_inspect*) LVL=0 ;; esac
+LVL=$(probe_level "$LINE"); [ ${#anom[@]} -ge 3 ] && LVL=0
 printf 'P%d: %s\n' "$LVL" "$LINE"
