@@ -17,7 +17,9 @@ export type AfterCommit = () => Promise<void>;
  * `drain` runs the closures one at a time: a THROWING closure is logged and the rest
  * still run (a resume failure must never skip the remaining work or suppress the
  * caller's own post-commit publish), and a STALLED closure leaves everything behind it
- * still queued rather than spliced away. Draining is at-most-once — a closure runs
+ * still queued rather than spliced away — but the drain cannot finish past a closure
+ * that never settles, so the caller's publish waits behind it (declared boundary, #479:
+ * no timeout is imposed on resume work). Draining is at-most-once — a closure runs
  * exactly once, and a second drain of an emptied queue is a no-op.
  */
 export class AfterCommitQueue {
