@@ -544,7 +544,9 @@ def display(n):
     out = "".join(
         c if (c.isalnum() or c in TOKEN_CHARS or unicodedata.category(c).startswith("M")) else " "
         for c in n)
-    out = SPACES_RE.sub(" ", out).strip() or "<unprintable>"
+    out = SPACES_RE.sub(" ", out).strip()
+    if not any(c.isalnum() for c in out):
+        out = "<unprintable>"
     if out != n:
         out += "~" + disc(n)
     return out
@@ -748,7 +750,9 @@ def one(j, now, name):
     return None
 
 try:
-    jobs = json.load(open(sys.argv[1])).get("jobs", [])
+    # the record is UTF-8 BYTES: a locale-encoded text open would raise UnicodeDecodeError
+    # under LC_ALL=C and collapse the whole scan (the brain jobs' P0 included)
+    jobs = json.loads(open(sys.argv[1], "rb").read().decode("utf-8", "replace")).get("jobs", [])
     if isinstance(jobs, dict):
         # name-keyed maps are legal: the KEY is the name when the entry has none, and a
         # blank/whitespace-only `name` IS none (blank falls back to the key; any other name
@@ -1265,9 +1269,9 @@ FIX
   # name can neither forge a second physical line nor spell the P0 token; the P0 prefix is
   # chosen by identity alone, a sanitised token carries a ~hash discriminator so colliding
   # names still emit distinct lines, and a loopdead payload never reaches a loose P0 phrase.
-  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly:report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "b\u00e1o c\u00e1o tu\u1ea7n", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "spaced-expr", "enabled": true, "schedule": {"kind": "cron", "expr": "0  0 * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
+  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly:report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "b\u00e1o c\u00e1o tu\u1ea7n", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "spaced-expr", "enabled": true, "schedule": {"kind": "cron", "expr": "0  0 * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "x=5m", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "a:b", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "a!b", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": " tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "\u0301", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
   RTC=$(printf '%s\n' "$(loop_liveness "$LLT/crafted.json" "$LLN")")
-  [ "$(printf '%s\n' "$RTC" | grep -c .)" = "9" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
+  [ "$(printf '%s\n' "$RTC" | grep -c .)" = "14" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^forge' && { echo "selfcheck fail: newline name forged a physical line"; exit 1; }
   printf '%s\n' "$RTC" | grep -Eq '^loopdead:P0 tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
   CCL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
@@ -1281,7 +1285,19 @@ FIX
   printf '%s\n' "$RTC" | grep -q '^loopdead:báo cáo tuần last fire' || { echo "selfcheck fail: a non-ASCII name was shredded"; exit 1; }
   NFD=$(printf '%s' '{"jobs": [{"name": "ba\u0301o", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/nfd.json"; PYTHONIOENCODING=iso-8859-1 loop_liveness "$LLT/nfd.json" "$LLN")
   printf '%s\n' "$NFD" | grep -Eq '^loopdead:ba[^ ]+o last fire' || { echo "selfcheck fail: a decomposed name lost its combining mark or the locale killed the scan"; exit 1; }
+  LOK=$(PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 LC_ALL=C loop_liveness "$LLT/nfd.json" "$LLN")
+  printf '%s\n' "$LOK" | grep -q '^loopdead:ba' || { echo "selfcheck fail: a C locale decode killed the scan"; exit 1; }
+  # the record is read as BYTES: a stray invalid-UTF-8 byte degrades to U+FFFD and the scan
+  # still reports the job (a locale-decoded text read would raise and blind every job)
+  printf '{"jobs": [{"name": "bad\xe1byte", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/badutf.json"
+  BUT=$(loop_liveness "$LLT/badutf.json" "$LLN")
+  printf '%s\n' "$BUT" | grep -q '^loopdead:bad' || { echo "selfcheck fail: an invalid UTF-8 byte in the record killed the scan"; exit 1; }
   printf '%s\n' "$RTC" | grep -qF "unsupported schedule ('0  0 * *')" || { echo "selfcheck fail: the sweep rewrote quoted record text"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:x 5m~[a-z]{12} last fire' || { echo "selfcheck fail: '=' survived into the token (age-mask collision)"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: a leading space survived the trim"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:<unprintable>~[a-z]{12} last fire' || { echo "selfcheck fail: a mark-only name rendered invisibly"; exit 1; }
+  A1=$(printf '%s\n' "$RTC" | grep -E '^loopdead:a b' | sed -n 1p); A2=$(printf '%s\n' "$RTC" | grep -E '^loopdead:a b' | sed -n 2p)
+  [ -n "$A1" ] && [ -n "$A2" ] && [ "$A1" != "$A2" ] && [ "$(dedupe_key "$A1")" != "$(dedupe_key "$A2")" ] || { echo "selfcheck fail: two identically-sanitised names collide in line or key"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: real brain death lost its P0 token"; exit 1; }
   CPL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
   [ -n "$CPL" ] || { echo "selfcheck fail: crafted P0 line missing (vacuous check)"; exit 1; }
@@ -1300,13 +1316,15 @@ FIX
   # so the line count is the job count, not the content's; a lone surrogate must not kill the
   # scan (the brain job AFTER it must still emit its P0); a hostile name through the
   # record-invalid path is tokenised too.
-  printf '%s' '{"jobs": [{"name": "surrogate", "last_status": "error", "failure_streak": 3, "last_error": "\ud800db: unreachable", "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge", "state": "error\u0085db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge3", "state": "error\ndb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge2", "state": "error\u2028db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "tandem-triage", "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/integrity.json"
+  printf '%s' '{"jobs": [{"name": "surrogate", "last_status": "error", "failure_streak": 3, "last_error": "\ud800db: unreachable", "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge", "state": "error\u0085db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge4", "state": "error\u2029db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge5", "state": "error\u007fdb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge3", "state": "error\ndb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge2", "state": "error\u2028db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "tandem-triage", "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/integrity.json"
   RTI=$(printf '%s\n' "$(loop_liveness "$LLT/integrity.json" "$LLN")")
-  [ "$(printf '%s\n' "$RTI" | grep -c .)" = "5" ] || { echo "selfcheck fail: a record field forged a physical line or killed the scan"; exit 1; }
+  [ "$(printf '%s\n' "$RTI" | grep -c .)" = "7" ] || { echo "selfcheck fail: a record field forged a physical line or killed the scan"; exit 1; }
   printf '%s\n' "$RTI" | grep -q '^db:' && { echo "selfcheck fail: a swept break forged a line start"; exit 1; }
   printf '%s\n' "$RTI" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: a lone surrogate killed the scan before the brain job"; exit 1; }
   [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:surrogate')")" = "1" ] || { echo "selfcheck fail: surrogate cause escalated"; exit 1; }
   printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C1 state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge4 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: PS state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge5 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: DEL state not swept"; exit 1; }
   printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge3 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C0 state not swept"; exit 1; }
   [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:stateforge ' || true)")" = "1" ] || { echo "selfcheck fail: C1 state payload escalated"; exit 1; }
   printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge2 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: LS state not swept"; exit 1; }
@@ -2084,7 +2102,9 @@ RBAC2=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/settings/u
 CREEP=$(python3 - "$PROFILE_DIR/cron/jobs.json" 2>/dev/null <<'PY'
 import json, sys
 try:
-    jobs = json.load(open(sys.argv[1])).get("jobs", [])
+    # the record is UTF-8 BYTES: a locale-encoded text open would raise UnicodeDecodeError
+    # under LC_ALL=C and collapse the whole scan (the brain jobs' P0 included)
+    jobs = json.loads(open(sys.argv[1], "rb").read().decode("utf-8", "replace")).get("jobs", [])
     if isinstance(jobs, dict):
         jobs = list(jobs.values())
     n = 0

@@ -850,6 +850,12 @@ describe('prod probe selfcheck', () => {
             failure_streak: 0,
             last_run_at: '2026-11-15T00:00:00+00:00',
           },
+          dead('unreachable'),
+          dead('x=5m'),
+          dead('a:b'),
+          dead('a!b'),
+          dead(' tandem-triage'),
+          dead('\u0301'),
           {
             name: 'tandem-triage',
             enabled: true,
@@ -870,22 +876,28 @@ describe('prod probe selfcheck', () => {
       .split('\n')
       .filter((l: string) => l.length > 0);
     // one physical line per job: the escaped newline collapsed to a space, no forged line
-    expect(lines).toHaveLength(8);
+    expect(lines).toHaveLength(14);
     expect(lines.filter((l: string) => l.startsWith('forge'))).toHaveLength(0);
     expect(out).toContain('loopdead:line forge~');
     // the crafted name renders its tokenised form and can never spell the P0 prefix
     expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).toMatch(
       /^loopdead:P0 tandem-triage~[a-z]{12} last fire/,
     );
-    expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).not.toContain('P0!:');
+    // '=' and whitespace never reach the token (the age mask would collide x=5m / x=10m)
+    expect(out).toContain('loopdead:x 5m~');
+    expect(out).not.toContain('x=5m');
     // a non-ASCII name stays readable (not shredded) and carries no discriminator
     expect(out).toContain('loopdead:báo cáo tuần last fire');
     // quoted record text is emitted losslessly (the sweep maps breaks, it does not collapse)
     expect(out).toContain("unsupported schedule ('0  0 * *')");
-    // an all-punctuation name keeps a stable label instead of an empty one
-    expect(lines.find((l: string) => l.includes('<unprintable>'))).toMatch(
-      /^loopdead:<unprintable>~[a-z]{12} last fire/,
-    );
+    // an all-punctuation (or mark-only) name keeps a stable, visible label
+    const unprintable = lines.filter((l: string) => l.includes('<unprintable>~'));
+    expect(unprintable.length).toBeGreaterThanOrEqual(2);
+    for (const l of unprintable) expect(l).toMatch(/^loopdead:<unprintable>~[a-z]{12} last fire/);
+    // two names that sanitise identically still emit distinct lines
+    const ab = lines.filter((l: string) => l.startsWith('loopdead:a b'));
+    expect(ab).toHaveLength(2);
+    expect(new Set(ab).size).toBe(2);
     // two names that sanitise to the same token still emit DISTINCT lines (dedupe key)
     const nightly = lines.filter((l: string) => l.startsWith('loopdead:nightly report'));
     expect(nightly).toHaveLength(2);
@@ -923,6 +935,8 @@ describe('prod probe selfcheck', () => {
           dead('stateforge', { state: 'error\u0085db: unreachable', next_run_at: null }),
           dead('stateforge2', { state: 'error\u2028db: unreachable', next_run_at: null }),
           dead('stateforge3', { state: 'error\ndb: unreachable', next_run_at: null }),
+          dead('stateforge4', { state: 'error\u2029db: unreachable', next_run_at: null }),
+          dead('stateforge5', { state: 'error\u007fdb: unreachable', next_run_at: null }),
           {
             name: 'tandem-triage',
             enabled: true,
@@ -944,11 +958,13 @@ describe('prod probe selfcheck', () => {
       .filter((l: string) => l.length > 0);
     // one physical line per job — a C1/LS break forged nothing and the surrogate did not
     // abort the scan
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(7);
     expect(lines.filter((l: string) => l.startsWith('db:'))).toHaveLength(0);
     expect(out).toContain('loopdead:stateforge no next fire scheduled (state=error db: unreachable) - wedged');
     expect(out).toContain('loopdead:stateforge2 no next fire scheduled (state=error db: unreachable) - wedged');
     expect(out).toContain('loopdead:stateforge3 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge4 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge5 no next fire scheduled (state=error db: unreachable) - wedged');
     expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
     rmSync(dir, { recursive: true, force: true });
   });
