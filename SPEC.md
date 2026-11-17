@@ -1371,8 +1371,8 @@ non-positive deltas render no duration.
 - The loop-liveness arm (#485) watches the loop ITSELF, not prod, and its record is the
   scheduler's own `cron/jobs.json` — never `passes.jsonl`, because a job that keeps
   ticking while every run FAILS looks fresh in its trail and is functionally dead. The
-  2026-11-15/16 gap proved it: `tandem-triage` failed 32 consecutive hourly runs and
-  `tandem-critic` 3, every one a pre-flight delivery failure, and nothing alerted for 33h
+  2026-11-15/16 gap proved it: `tandem-triage` failed 30 consecutive hourly runs and
+  `tandem-critic` 3, every one a pre-flight delivery failure, and nothing alerted for 29h
   — every product arm was green because prod was healthy, and the designated dead-man
   (the critic) is itself an LLM cron that dies with the provider. Liveness = last SUCCESS,
   and success includes DELIVERABILITY and COMPLETION: Hermes records `delivery_failed` as
@@ -1425,24 +1425,25 @@ non-positive deltas render no duration.
   in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode so the unit
   test drives the shipped bytes with fixtures.
 - The RUNTIME-REFRESH arm (#487) reads the mixed-module state that killed the loop on
-  2026-11-16: code installed under a LIVE process (the unit had served since the 10-27
-  start while the code on disk was committed 11-10T00:24Z) leaves the running gateway
-  holding its OLD modules, so every LAZY import afterwards reads NEW files — `tui_gateway`
-  imported `release_process_group_once_empty` at WebSocket-upgrade time, raised
-  ImportError, uvicorn answered the cron worker with HTTP 500, and every LLM cron died
-  (`tandem-triage` 30 consecutive runs across 29h, 11-15T18:00Z to 11-16T23:00Z;
-  `tandem-critic` 3 runs) recording only `InvalidStatus: server rejected WebSocket
+  2026-11-15/16: an install that lands under a LIVE gateway (files written 17:55:20Z, two
+  minutes after the 17:53:50Z gateway start) leaves the running process holding its OLD
+  modules while every LAZY import afterwards reads NEW files — `tui_gateway` imported
+  `release_process_group_once_empty` at WebSocket-upgrade time, raised ImportError,
+  uvicorn answered the cron worker with HTTP 500, and every LLM cron died (`tandem-triage`
+  30 runs, `tandem-critic` 3, the dockhand report 1 — 29h, from 11-15T18:00:15Z to the
+  11-16T23:02:15Z restart) recording only `InvalidStatus: server rejected WebSocket
   connection`. The dead-man catches that only after two failed ticks and never catches a
-  break confined to one lazily-imported path, so this arm reads the STATE: the installed
-  HEAD commit time vs the serving dashboard's process start, both on the host (git tree +
-  `/proc/<MainPID>/stat` starttime against `/proc/stat` btime). Installed code NEWER than
-  the serving process is the anomaly, P0 (every LLM cron is dead or dying), and the line
-  carries the remedy (`restart hermes-dashboard.service`). The steady state (a HEAD older
-  than the start), a non-git install, an unresolvable serving pid (a differently-named
-  unit or a gateway housed elsewhere) and an unparseable start all stay SILENT — a foreign
-  layout never alarms. ONE DECLARED LIMIT: the arm reads the installed HEAD COMMIT time,
-  not an install stamp, so a tree rolled BACK to an older commit is invisible to it.
-  `--runtime-stale <install> [start_epoch]` is the unit test's seam so the fixtures drive
-  the shipped bytes; `--selfcheck` pins the fire/silence matrix (both the epoch seam and
-  the PRODUCTION pid/proc parse, plus the exact unit argv and the live-pass wiring) and
-  the P0 level, once each.
+  break confined to one lazily-imported path, so this arm reads the STATE the gateway
+  publishes: `code_sha` in its own `gateway_state.json` vs the install's `git rev-parse
+  HEAD` — equal is healthy, different is P0 (every LLM cron is dead or dying) with the
+  remedy in the line (`restart hermes-gateway.service`). The GATEWAY is the unit the cron
+  workers dial for `/api/ws`, never the dashboard (a separate process, out of scope): the
+  incident process was the gateway (pid 3851155), whose unit restarted at 23:02:15Z and
+  healed it while the dashboard kept its own older process. DECLARED BOUNDARIES (silent,
+  never a false alarm): no readable `gateway_state.json`, a `gateway_state` that is not
+  `running`, a pid that is not alive, a non-git install, a missing sha on either side, and
+  a dirty worktree at the same commit (the arm compares commits, not file bytes).
+  `--runtime-stale <state.json> <install> [proc_root]` is the unit test's seam so the
+  fixtures drive the shipped bytes; `--selfcheck` pins the fire/silence matrix, the P0
+  level and the live-pass wiring (call, append, seam dispatch, append-before-join), once
+  each.

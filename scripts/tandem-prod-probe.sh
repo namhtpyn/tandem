@@ -693,73 +693,62 @@ probe_level() {
     *) echo 1 ;;
   esac
 }
-# RUNTIME-REFRESH (#487, 2026-11-17): an update that installs code under a LIVE gateway
-# leaves the running process holding its OLD modules while every LAZY import reads the NEW
-# files from disk. The first lazily-imported module whose shape changed then raises
-# ImportError, uvicorn answers the cron worker's /api/ws upgrade with HTTP 500, and EVERY
-# LLM cron dies with a bare `InvalidStatus: server rejected WebSocket connection` as the
-# only symptom — the 2026-11-16 outage: `tandem-triage` failed 30 consecutive runs across
-# 29h (11-15T18:00Z -> 11-16T23:00Z) and `tandem-critic` 3, while the serving process had
-# started 10-27 and the code on disk was committed 11-10T00:24Z (8 days of mixed modules).
-# The dead-man (loop-liveness) catches that only AFTER two failed ticks, and cannot catch
-# the case where only one lazily-imported path breaks. This arm reads the STATE: installed
-# HEAD commit newer than the serving process start = restart the unit. DECLARED BOUNDARIES
-# (silent, never a false alarm): the install is not a readable git tree, the serving pid
-# cannot be resolved (a differently-named unit, or a gateway housed elsewhere), a start
-# epoch cannot be parsed, or the tree was rolled BACK to an older commit — the arm reads
-# the installed HEAD COMMIT time, not an install stamp, so a backwards checkout is
-# invisible to it.
-runtime_stale() {  # $1 = install dir, $2 = serving start epoch (test seam: skips pid resolve)
-  python3 - "${1:-}" "${2:-}" <<'PY'
-import os, subprocess, sys, time
-inst = sys.argv[1]
-if not inst:
+# RUNTIME-REFRESH (#487, 2026-11-17): the gateway ADVERTISES the code it booted
+# (`code_sha` in gateway_state.json). An install that lands under a LIVE gateway — the
+# 2026-11-15 incident: files written 17:55:20Z, two minutes AFTER the 17:53:50Z gateway
+# start — leaves the process holding its OLD modules while every LAZY import reads the NEW
+# files, so the first lazily-imported module whose shape changed raises ImportError:
+# `tui_gateway` imported `release_process_group_once_empty` at WebSocket-upgrade time,
+# uvicorn answered the cron worker's /api/ws upgrade with HTTP 500, and every LLM cron
+# died instantly (`tandem-triage` 30 runs, `tandem-critic` 3, the dockhand report 1 — 29h,
+# 18:00:15Z to the 23:02:15Z restart) recording only `InvalidStatus: server rejected
+# WebSocket connection`. The dead-man (loop-liveness) catches that only AFTER two failed
+# ticks and cannot catch a break confined to one lazily-imported path. This arm reads the
+# STATE the gateway itself publishes: the booted `code_sha` vs the install's
+# `git rev-parse HEAD` — equal is healthy, different is P0 carrying the remedy. DECLARED
+# BOUNDARIES (silent, never a false alarm): no readable gateway_state.json, a
+# `gateway_state` that is not `running`, a pid that is not alive, a non-git install, a
+# missing sha on either side, and the DASHBOARD unit (a separate process, out of scope);
+# a dirty worktree at the same commit is invisible too (the arm compares commits, not
+# file bytes).
+runtime_stale() {  # $1 = gateway_state.json, $2 = install dir, $3 = proc root (test seam)
+  python3 - "${1:-}" "${2:-}" "${3:-}" <<'PY'
+import json, os, subprocess, sys
+sf, inst, proc = sys.argv[1], sys.argv[2], (sys.argv[3] or "/proc")
+def silent():
     sys.exit(0)
+if not sf or not inst:
+    silent()
 try:
-    head = int(subprocess.run(["git", "-C", inst, "log", "-1", "--format=%ct"],
-                              capture_output=True, text=True, timeout=20).stdout.strip() or 0)
+    st = json.load(open(sf))
 except Exception:
-    sys.exit(0)  # not a git install / git absent: declared boundary, stay silent
-if not head:
-    sys.exit(0)
-proc = os.environ.get("TANDEM_PROC_ROOT") or "/proc"
-unit = "".join(c for c in (os.environ.get("TANDEM_GATEWAY_UNIT") or "hermes-dashboard.service")
-               if c.isalnum() or c in "._@-")
-start = sys.argv[2].strip()
-if start:
-    try:
-        start = float(start)
-    except ValueError:
-        sys.exit(0)
-else:
-    pid = os.environ.get("TANDEM_GATEWAY_PID") or ""
-    if not pid:
-        try:
-            pid = subprocess.run(["systemctl", "show", unit, "-p", "MainPID", "--value"],
-                                 capture_output=True, text=True, timeout=10).stdout.strip()
-        except Exception:
-            pid = ""
-    if not pid.isdigit() or pid == "0":
-        sys.exit(0)  # no serving unit under this name: foreign layout, stay silent
-    try:
-        with open(os.path.join(proc, "stat")) as f:
-            btime = next(int(l.split()[1]) for l in f if l.startswith("btime "))
-        with open(os.path.join(proc, pid, "stat")) as f:
-            fields = f.read().rsplit(")", 1)[1].split()  # field 3 starts after the comm
-        start = btime + float(fields[19]) / os.sysconf("SC_CLK_TCK")  # field 22 = starttime
-    except Exception:
-        sys.exit(0)
-if head > start:
-    fmt = "%Y-%m-%dT%H:%MZ"
-    print("runtime_stale: installed code %s is newer than the serving gateway (started %s), "
-          "restart %s (mixed modules fail lazy imports, every LLM cron dies with WebSocket 500)"
-          % (time.strftime(fmt, time.gmtime(head)), time.strftime(fmt, time.gmtime(start)), unit))
+    silent()  # absent/unreadable state: declared boundary, stay silent
+if str(st.get("gateway_state") or "") != "running":
+    silent()
+try:
+    pid = int(st.get("pid"))
+except Exception:
+    silent()
+if pid <= 0 or not os.path.isdir(os.path.join(proc, str(pid))):
+    silent()  # the advertised gateway is not alive: not this arm's shape
+try:
+    installed = subprocess.run(["git", "-C", inst, "rev-parse", "HEAD"],
+                               capture_output=True, text=True, timeout=20).stdout.strip().lower()
+except Exception:
+    silent()  # not a git install / git absent: declared boundary
+booted = str(st.get("code_sha") or "").strip().lower()
+if not installed or not booted:
+    silent()
+if booted != installed:
+    print("runtime_stale: the gateway (pid %d) booted code %s but the install is %s, "
+          "restart hermes-gateway.service (mixed modules fail lazy imports, every LLM cron "
+          "dies with WebSocket 500)" % (pid, booted[:9], installed[:9]))
 PY
 }
 if [ "${1:-}" = "--runtime-stale" ]; then
   # the arm's unit test drives THESE bytes with fixtures — no network, no state writes
-  [ -n "${2:-}" ] || { echo "usage: --runtime-stale <install_dir> [serving_start_epoch]" >&2; exit 2; }
-  runtime_stale "$2" "${3:-}"
+  [ -n "${2:-}" ] || { echo "usage: --runtime-stale <gateway_state.json> <install_dir> [proc_root]" >&2; exit 2; }
+  runtime_stale "$2" "${3:-}" "${4:-}"
   exit 0
 fi
 if [ "${1:-}" = "--selfcheck" ]; then
@@ -1106,55 +1095,41 @@ FIX
   [ "$LLM2" = "1" ] || { echo "selfcheck fail: age masking missing ($LLM2)"; exit 1; }
   LLU=$(grep -c '^KEY=.*\[0-9a-fA-F\]{8}-\[0-9a-fA-F\]{4}-' "$0" 2>/dev/null || true)
   [ "$LLU" = "1" ] || { echo "selfcheck fail: uuid masking missing ($LLU)"; exit 1; }
-  # RUNTIME-REFRESH arm (#487): the shipped function is driven through BOTH branches — the
-  # explicit-epoch seam AND the production pid/proc parse (stub unit + fixture proc tree, so
-  # a field-index, btime-prefix or CLK_TCK regression goes red). A HEAD NEWER than the
-  # serving start FIRES with the remedy; a HEAD older stays SILENT (the steady state); a
-  # non-git dir, an unparseable epoch and a missing/wedged pid stay SILENT (declared
-  # boundaries never alarm); the line carries no ';' join separator; the level is P0; and
-  # the live pass consumes the arm and dispatches the seam exactly once.
+  # RUNTIME-REFRESH arm (#487): the shipped function is driven with fixtures through every
+  # branch — a booted sha DIFFERENT from the install FIRES with the remedy; the SAME sha is
+  # the steady state and stays silent; and a non-running state, a dead pid, an absent state
+  # file, an absent sha and a non-git install each stay SILENT (declared boundaries never
+  # alarm). The line carries no ';' join separator, the level is P0, and the live pass
+  # consumes the arm (call + append) BEFORE the anomaly line is joined, exactly once.
   RTD=$(mktemp -d 2>/dev/null) || { echo "selfcheck fail: mktemp for the runtime fixture"; exit 1; }
-  mkdir -p "$RTD/r"
+  mkdir -p "$RTD/r" "$RTD/proc/4242"
   git init -q "$RTD/r" 2>/dev/null
   GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=f@example.invalid \
   GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=f@example.invalid \
   GIT_AUTHOR_DATE=2026-11-09T16:24:33Z GIT_COMMITTER_DATE=2026-11-09T16:24:33Z \
     git -C "$RTD/r" commit -q --no-gpg-sign --allow-empty -m fixture 2>/dev/null
-  RT_HEAD=$(git -C "$RTD/r" log -1 --format=%ct)
-  [ -n "$RT_HEAD" ] || { echo "selfcheck fail: fixture git unusable"; exit 1; }
-  RTF=$(runtime_stale "$RTD/r" "$((RT_HEAD - 3600))")
+  RT_SHA=$(git -C "$RTD/r" rev-parse HEAD)
+  [ -n "$RT_SHA" ] || { echo "selfcheck fail: fixture git unusable"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 4242, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stale.json"
+  RTF=$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")
   printf '%s' "$RTF" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: stale runtime silent"; exit 1; }
-  printf '%s' "$RTF" | grep -qF 'restart hermes-dashboard.service' || { echo "selfcheck fail: stale runtime lost its remedy"; exit 1; }
+  printf '%s' "$RTF" | grep -qF 'restart hermes-gateway.service' || { echo "selfcheck fail: stale runtime lost its remedy"; exit 1; }
   printf '%s' "$RTF" | grep -qF ';' && { echo "selfcheck fail: runtime line carries the join separator"; exit 1; }
-  [ -z "$(runtime_stale "$RTD/r" "$((RT_HEAD + 3600))")" ] || { echo "selfcheck fail: fresh runtime alarmed"; exit 1; }
-  [ -z "$(runtime_stale "$RTD/nope" "")" ] || { echo "selfcheck fail: non-git dir alarmed"; exit 1; }
-  [ -z "$(runtime_stale "$RTD/r" "not-a-epoch")" ] || { echo "selfcheck fail: bad start epoch alarmed"; exit 1; }
-  # PRODUCTION branch: a fixture proc tree (btime + one pid whose field 22 is the start)
-  RTB="$RTD/proc"; mkdir -p "$RTB/4242"
-  RT_BTIME=$((RT_HEAD - 7200))
-  printf 'btime %s\ncpu  0 0 0 0 0 0 0 0\n' "$RT_BTIME" > "$RTB/stat"
-  RT_HZ=$(getconf CLK_TCK 2>/dev/null); case "$RT_HZ" in ''|*[!0-9]*) RT_HZ=100 ;; esac
-  RT_TICKS=$(( (RT_HEAD - 3600 - RT_BTIME) * RT_HZ ))
-  python3 - "$RTB/4242/stat" "$RT_TICKS" <<'PY2'
-import sys
-open(sys.argv[1], "w").write("4242 (hermes dashboard) S " + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
-PY2
-  RT_BIN="$RTD/bin"; mkdir -p "$RT_BIN"
-  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/systemctl.argv"\necho 4242\n' "$RTD" > "$RT_BIN/systemctl"
-  chmod +x "$RT_BIN/systemctl"
-  RTP=$(PATH="$RT_BIN:$PATH" TANDEM_PROC_ROOT="$RTB" runtime_stale "$RTD/r")
-  grep -qx 'show hermes-dashboard.service -p MainPID --value' "$RTD/systemctl.argv" 2>/dev/null || { echo "selfcheck fail: runtime arm lost the unit contract"; exit 1; }
-  RTP2=$(TANDEM_GATEWAY_PID=4242 TANDEM_PROC_ROOT="$RTB" runtime_stale "$RTD/r")
-  for RT_ONE in "$RTP" "$RTP2"; do
-    printf '%s' "$RT_ONE" | grep -qF "started $(date -u -d "@$((RT_HEAD - 3600))" +%Y-%m-%dT%H:%MZ)" || { echo "selfcheck fail: production proc parse mis-resolved the start"; exit 1; }
-  done
-  [ -z "$(TANDEM_GATEWAY_PID=9000 TANDEM_PROC_ROOT="$RTB" runtime_stale "$RTD/r")" ] || { echo "selfcheck fail: missing proc entry alarmed"; exit 1; }
-  [ -z "$(TANDEM_GATEWAY_PID=0 runtime_stale "$RTD/r")" ] || { echo "selfcheck fail: pid 0 alarmed"; exit 1; }
-  [ -z "$(TANDEM_PROC_ROOT="$RTD/nope" TANDEM_GATEWAY_PID=4242 runtime_stale "$RTD/r")" ] || { echo "selfcheck fail: unreadable proc root alarmed"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 4242, "code_sha": "%s"}' "$RT_SHA" > "$RTD/ok.json"
+  [ -z "$(runtime_stale "$RTD/ok.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: matching sha alarmed"; exit 1; }
+  printf '{"gateway_state": "stopped", "pid": 4242, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stopped.json"
+  [ -z "$(runtime_stale "$RTD/stopped.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: stopped gateway alarmed"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 9999, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/dead.json"
+  [ -z "$(runtime_stale "$RTD/dead.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: dead pid alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/absent.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent state alarmed"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 4242, "code_sha": ""}' > "$RTD/nosha.json"
+  [ -z "$(runtime_stale "$RTD/nosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/nope" "$RTD/proc")" ] || { echo "selfcheck fail: non-git install alarmed"; exit 1; }
   [ "$(probe_level "$RTF")" = "0" ] || { echo "selfcheck fail: runtime_stale not P0"; exit 1; }
-  grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
+  grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
   grep -cxF '[ -n "$RUNTIME" ] && anom+=("$RUNTIME")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm append missing"; exit 1; }
   grep -cxF 'if [ "${1:-}" = "--runtime-stale" ]; then' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime seam dispatch changed"; exit 1; }
+  awk '/^RUNTIME=\$\(runtime_stale /{a=NR} /^LINE="\$\(IFS=/{b=NR} END{exit !(a && b && a<b)}' "$0" || { echo "selfcheck fail: runtime append does not precede the line join"; exit 1; }
   rm -rf "$RTD"
   echo "ok probe selfcheck"
   exit 0
@@ -1200,7 +1175,7 @@ else
 fi
 
 # 0. runtime refresh (#487): installed code newer than the serving process = mixed modules
-RUNTIME=$(runtime_stale "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")
+RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")
 [ -n "$RUNTIME" ] && anom+=("$RUNTIME")
 
 # 1. container health + image
