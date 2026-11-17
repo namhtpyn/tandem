@@ -1,3 +1,14 @@
+## [2.78.40](https://github.com/namhtpyn/tandem/compare/v2.78.39...v2.78.40) (2026-11-17)
+
+
+### Bug Fixes
+
+* [#479](https://github.com/namhtpyn/tandem/issues/479) defer the borrowed gating-restore resume to the caller's post-commit ([3b08629](https://github.com/namhtpyn/tandem/commit/3b0862986b67056d08b3d28f9b66ebca30932bad))
+* [#479](https://github.com/namhtpyn/tandem/issues/479) r2 — key the deferral on the executor, pin the read-free refusal and the drained collector ([875a855](https://github.com/namhtpyn/tandem/commit/875a8557885bf597818f795195481ece3f3fadf3)), closes [#466](https://github.com/namhtpyn/tandem/issues/466)
+* [#479](https://github.com/namhtpyn/tandem/issues/479) r3 — branded AfterCommitQueue, awaited drain with failure isolation, heal named and pinned ([1956092](https://github.com/namhtpyn/tandem/commit/19560922e2b8dd84b9db896e16d45fc15695499a)), closes [#369](https://github.com/namhtpyn/tandem/issues/369)
+* [#479](https://github.com/namhtpyn/tandem/issues/479) r4 — queue into its own module, drain shifts one job at a time, caller-level isolation pinned ([1afb84b](https://github.com/namhtpyn/tandem/commit/1afb84b2cf607fec4f49619d3e9adc207f7ed980))
+* [#479](https://github.com/namhtpyn/tandem/issues/479) r5 — the never-settling resume is a declared boundary, not a silent splice ([c5d3a38](https://github.com/namhtpyn/tandem/commit/c5d3a38b6e2fdadfc0e2aea5e06b6661deb99d5f))
+
 ## [2.78.39](https://github.com/namhtpyn/tandem/compare/v2.78.38...v2.78.39) (2026-11-15)
 
 
