@@ -841,6 +841,15 @@ describe('prod probe selfcheck', () => {
           dead('!!!'),
           dead('nightly:report'),
           dead('nightly report'),
+          dead('báo cáo tuần'),
+          {
+            name: 'spaced-expr',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0  0 * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
           {
             name: 'tandem-triage',
             enabled: true,
@@ -861,7 +870,7 @@ describe('prod probe selfcheck', () => {
       .split('\n')
       .filter((l: string) => l.length > 0);
     // one physical line per job: the escaped newline collapsed to a space, no forged line
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(8);
     expect(lines.filter((l: string) => l.startsWith('forge'))).toHaveLength(0);
     expect(out).toContain('loopdead:line forge~');
     // the crafted name renders its tokenised form and can never spell the P0 prefix
@@ -869,6 +878,10 @@ describe('prod probe selfcheck', () => {
       /^loopdead:P0 tandem-triage~[a-z]{8} last fire/,
     );
     expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).not.toContain('P0!:');
+    // a non-ASCII name stays readable (not shredded) and carries no discriminator
+    expect(out).toContain('loopdead:báo cáo tuần last fire');
+    // quoted record text is emitted losslessly (the sweep maps breaks, it does not collapse)
+    expect(out).toContain("unsupported schedule ('0  0 * *')");
     // an all-punctuation name keeps a stable label instead of an empty one
     expect(lines.find((l: string) => l.includes('<unprintable>'))).toMatch(
       /^loopdead:<unprintable>~[a-z]{8} last fire/,
@@ -909,6 +922,7 @@ describe('prod probe selfcheck', () => {
           }),
           dead('stateforge', { state: 'error\u0085db: unreachable', next_run_at: null }),
           dead('stateforge2', { state: 'error\u2028db: unreachable', next_run_at: null }),
+          dead('stateforge3', { state: 'error\ndb: unreachable', next_run_at: null }),
           {
             name: 'tandem-triage',
             enabled: true,
@@ -930,10 +944,11 @@ describe('prod probe selfcheck', () => {
       .filter((l: string) => l.length > 0);
     // one physical line per job — a C1/LS break forged nothing and the surrogate did not
     // abort the scan
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5);
     expect(lines.filter((l: string) => l.startsWith('db:'))).toHaveLength(0);
     expect(out).toContain('loopdead:stateforge no next fire scheduled (state=error db: unreachable) - wedged');
     expect(out).toContain('loopdead:stateforge2 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge3 no next fire scheduled (state=error db: unreachable) - wedged');
     expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
     rmSync(dir, { recursive: true, force: true });
   });

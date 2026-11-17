@@ -510,11 +510,11 @@ egress_arm_on() {
 # (tandem-triage / tandem-critic) carry the `loopdead:P0!:` prefix: their death is the
 # loop's, and a cause string can never forge the token.
 loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
-import datetime, hashlib, json, re, sys
+import datetime, hashlib, json, re, sys, unicodedata
 BRAIN = ("tandem-triage", "tandem-critic")
 SELF = "tandem-prod-watch"
-TOKEN_RE = re.compile(r"[^A-Za-z0-9 ._-]+")
 SPACES_RE = re.compile(r" {2,}")
+TOKEN_CHARS = " ._-"
 # every code point a Unicode-aware line splitter treats as a break: C0, DEL, C1, LS, PS
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 ALPHA = "abcdefghijklmnopqrstuvwxyz"
@@ -532,15 +532,19 @@ def disc(n):
     return out
 
 def display(n):
-    # The DISPLAY token only, never identity: every char outside [A-Za-z0-9 ._-]
-    # (control chars, newline/tab, ':', '!', '=') becomes a space, runs collapse,
-    # edges trim; a name with nothing printable left renders as <unprintable>.
-    # Any name the sanitiser changed carries a `~<8 letters>` discriminator of the
-    # RAW name, so two jobs whose tokens collide still emit distinct lines (the
-    # repeat-suppression key is the normalised line, and a swap between them must
-    # re-alert). The raw name stays the identity key, so padding still classifies
-    # verbatim.
-    out = SPACES_RE.sub(" ", TOKEN_RE.sub(" ", n)).strip() or "<unprintable>"
+    # The DISPLAY token only, never identity: every char that is not a letter, a digit,
+    # a combining mark, a space, '.', '_' or '-' (control chars, ':', '!', '=') becomes a
+    # space; runs collapse and the edges trim, so a name stays READABLE in any script
+    # (an accented name is not shredded into letter soup) while it can never carry the
+    # punctuation the level token or the join separator is built from. A name with
+    # nothing left renders as <unprintable>. Any name the sanitiser changed carries a
+    # `~<8 letters>` discriminator of the RAW name, so two jobs whose tokens collide
+    # still emit distinct lines. The raw name stays the identity key, so padding still
+    # classifies verbatim.
+    out = "".join(
+        c if (c.isalnum() or c in TOKEN_CHARS or unicodedata.category(c).startswith("M")) else " "
+        for c in n)
+    out = SPACES_RE.sub(" ", out).strip() or "<unprintable>"
     if out != n:
         out += "~" + disc(n)
     return out
@@ -549,7 +553,7 @@ def out_line(s):
     # TOTAL emission: no interpolated field may forge a physical line, and a lone
     # surrogate must not kill the scan (a UnicodeEncodeError here would blind every
     # later job, the brain ones included).
-    s = SPACES_RE.sub(" ", CTRL_RE.sub(" ", s))
+    s = CTRL_RE.sub(" ", s)
     print(s.encode("utf-8", "backslashreplace").decode("utf-8"))
 
 OK_STATUS = {"ok", "success", "completed", "cancelled", "delivery_queued"}
@@ -1260,9 +1264,9 @@ FIX
   # name can neither forge a second physical line nor spell the P0 token; the P0 prefix is
   # chosen by identity alone, a sanitised token carries a ~hash discriminator so colliding
   # names still emit distinct lines, and a loopdead payload never reaches a loose P0 phrase.
-  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly:report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
+  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly:report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "b\u00e1o c\u00e1o tu\u1ea7n", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "spaced-expr", "enabled": true, "schedule": {"kind": "cron", "expr": "0  0 * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
   RTC=$(printf '%s\n' "$(loop_liveness "$LLT/crafted.json" "$LLN")")
-  [ "$(printf '%s\n' "$RTC" | grep -c .)" = "7" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
+  [ "$(printf '%s\n' "$RTC" | grep -c .)" = "9" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^forge' && { echo "selfcheck fail: newline name forged a physical line"; exit 1; }
   printf '%s\n' "$RTC" | grep -Eq '^loopdead:P0 tandem-triage~[a-z]{8} last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
   CCL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
@@ -1273,10 +1277,18 @@ FIX
   D1=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 1p)")
   D2=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 2p)")
   [ -n "$D1" ] && [ "$D1" != "$D2" ] || { echo "selfcheck fail: colliding display tokens share a dedupe key"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^loopdead:báo cáo tuần last fire' || { echo "selfcheck fail: a non-ASCII name was shredded"; exit 1; }
+  printf '%s\n' "$RTC" | grep -qF "unsupported schedule ('0  0 * *')" || { echo "selfcheck fail: the sweep rewrote quoted record text"; exit 1; }
   printf '%s\n' "$RTC" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: real brain death lost its P0 token"; exit 1; }
-  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage')")" = "1" ] || { echo "selfcheck fail: crafted P0 name escalated"; exit 1; }
-  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep 'unreachable last fire')")" = "1" ] || { echo "selfcheck fail: letters-only P0 phrase name escalated"; exit 1; }
-  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep 'P0!:tandem-triage')")" = "0" ] || { echo "selfcheck fail: brain death not P0"; exit 1; }
+  CPL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
+  [ -n "$CPL" ] || { echo "selfcheck fail: crafted P0 line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$CPL")" = "1" ] || { echo "selfcheck fail: crafted P0 name escalated"; exit 1; }
+  URL=$(printf '%s\n' "$RTC" | grep '^loopdead:unreachable' || true)
+  [ -n "$URL" ] || { echo "selfcheck fail: unreachable-name line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$URL")" = "1" ] || { echo "selfcheck fail: letters-only P0 phrase name escalated"; exit 1; }
+  BRL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0!:tandem-triage' || true)
+  [ -n "$BRL" ] || { echo "selfcheck fail: brain line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$BRL")" = "0" ] || { echo "selfcheck fail: brain death not P0"; exit 1; }
   [ "$(probe_level 'loopdead:j cause=db unreachable')" = "1" ] || { echo "selfcheck fail: a cause forged a loose P0 phrase"; exit 1; }
   [ "$(probe_level 'loopdead:j last fire;db: unreachable')" = "0" ] || { echo "selfcheck fail: a genuine db P0 lost to the segment rule"; exit 1; }
   # LINE INTEGRITY (#493): every record-shaped field (name, state, schedule, cause) is swept
@@ -1284,13 +1296,15 @@ FIX
   # so the line count is the job count, not the content's; a lone surrogate must not kill the
   # scan (the brain job AFTER it must still emit its P0); a hostile name through the
   # record-invalid path is tokenised too.
-  printf '%s' '{"jobs": [{"name": "surrogate", "last_status": "error", "failure_streak": 3, "last_error": "\ud800db: unreachable", "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge", "state": "error\u0085db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge2", "state": "error\u2028db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "tandem-triage", "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/integrity.json"
+  printf '%s' '{"jobs": [{"name": "surrogate", "last_status": "error", "failure_streak": 3, "last_error": "\ud800db: unreachable", "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge", "state": "error\u0085db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge3", "state": "error\ndb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge2", "state": "error\u2028db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "tandem-triage", "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/integrity.json"
   RTI=$(printf '%s\n' "$(loop_liveness "$LLT/integrity.json" "$LLN")")
-  [ "$(printf '%s\n' "$RTI" | grep -c .)" = "4" ] || { echo "selfcheck fail: a record field forged a physical line or killed the scan"; exit 1; }
+  [ "$(printf '%s\n' "$RTI" | grep -c .)" = "5" ] || { echo "selfcheck fail: a record field forged a physical line or killed the scan"; exit 1; }
   printf '%s\n' "$RTI" | grep -q '^db:' && { echo "selfcheck fail: a swept break forged a line start"; exit 1; }
   printf '%s\n' "$RTI" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: a lone surrogate killed the scan before the brain job"; exit 1; }
   [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:surrogate')")" = "1" ] || { echo "selfcheck fail: surrogate cause escalated"; exit 1; }
   printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C1 state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge3 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C0 state not swept"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:stateforge ' || true)")" = "1" ] || { echo "selfcheck fail: C1 state payload escalated"; exit 1; }
   printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge2 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: LS state not swept"; exit 1; }
   [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:stateforge2')")" = "1" ] || { echo "selfcheck fail: state payload escalated"; exit 1; }
   printf '%s' '{"jobs": [{"name": "x\nloopdead:P0!:tandem-triage y", "last_run_at": "x;y", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/invalid.json"
