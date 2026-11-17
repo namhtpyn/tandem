@@ -228,4 +228,112 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await sql.end();
     }
   });
+  test('per-verdict record ordering at and above the block-record floor (#468)', async () => {
+    // The record's OWN timestamp is the discriminator: a verdict NEWER than the record
+    // means the round was LIVE when the block/park landed. Below the floor (and for a
+    // row carrying NO record) the retired MIN-vs-write test stands, so the SAME seeds
+    // must read differently at 2.78.37 and 2.78.38.
+    const preFloor = await $`bash ${script} --strand-sql 2.78.37 2`.nothrow().quiet();
+    expect(preFloor.exitCode, preFloor.stderr.toString()).toBe(0);
+    const floored = await $`bash ${script} --strand-sql 2.78.38 2`.nothrow().quiet();
+    expect(floored.exitCode, floored.stderr.toString()).toBe(0);
+    // the per-verdict term is the floored bytes only: a pre-floor emission that carried
+    // it would fire on the #467 late-CAS class the MIN test exists to exclude
+    expect(preFloor.stdout.toString()).not.toContain(
+      'coalesce(r.decided_at, r.created_at) > (select max(m.created_at)',
+    );
+    expect(floored.stdout.toString()).toContain('coalesce(r.decided_at, r.created_at) > (select max(m.created_at)');
+
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const splitWedge = `probe-split-wedge-${tag}`;
+      const recordedLegal = `probe-recorded-legal-${tag}`;
+      const masked = `probe-record-masked-${tag}`;
+      const recordless = `probe-recordless-${tag}`;
+      const recordlessFire = `probe-recordless-fire-${tag}`;
+      const parkSplit = `probe-park-split-${tag}`;
+      const seedTasks = [
+        // one vote BEFORE the block record, the settling vote AFTER: the split-timing
+        // wedge the aggregate MIN missed (verdicts 10m + 1m, record 5m)
+        { id: splitWedge, pre: DONE, park: null, written: 5 },
+        // every verdict older than the record: the legal #423 settle-then-reblock
+        { id: recordedLegal, pre: DONE, park: null, written: 5 },
+        // a LATER task write (1m) past every verdict (10m, 2m): the stamp test masks the
+        // wedge (min 10m is older than 1m), the record term (2m > 5m) does not
+        { id: masked, pre: DONE, park: null, written: 1 },
+        // NO record at all on a floored image: the MIN fallback keeps the #467-era pin
+        { id: recordless, pre: DONE, park: null, written: 5 },
+        { id: recordlessFire, pre: DONE, park: null, written: 5 },
+        // the park path orders against its OWN record: same split shape, park origin
+        { id: parkSplit, pre: null, park: DONE, written: 5 },
+      ];
+      for (const t of seedTasks) {
+        await sql.unsafe(
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, now(), now() - ($6::int * interval '1 minute'))`,
+          [t.id, t.id, BLOCKED, t.pre, t.park, t.written],
+        );
+      }
+      const seedRecord = async (taskId: string, body: string, createdAtMinutesAgo: number) => {
+        const messageId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, author_id, body, created_at)
+           values ($1, $2, null, $3, now() - ($4::int * interval '1 minute'))`,
+          [messageId, taskId, body, createdAtMinutesAgo],
+        );
+        await sql.unsafe(
+          `insert into task_message_activities (message_id, payload) values ($1, '{"kind":"STATUS"}'::jsonb)`,
+          [messageId],
+        );
+      };
+      await seedRecord(splitWedge, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(recordedLegal, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(masked, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(parkSplit, 'review parked — reconciliation needed', 5);
+
+      const seedReview = async (taskId: string, status: string, decidedMinutesAgo: number | null) => {
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, 1, $3, null, now() - interval '10 minutes',
+                   case when $4::int is null then null else now() - ($4::int * interval '1 minute') end)`,
+          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo],
+        );
+      };
+      await seedReview(splitWedge, 'APPROVED', 10);
+      await seedReview(splitWedge, 'APPROVED', 1);
+      await seedReview(recordedLegal, 'APPROVED', 10);
+      await seedReview(masked, 'APPROVED', 10);
+      await seedReview(masked, 'APPROVED', 2);
+      await seedReview(recordless, 'APPROVED', 10);
+      await seedReview(recordless, 'APPROVED', 1);
+      await seedReview(recordlessFire, 'APPROVED', 1);
+      await seedReview(parkSplit, 'APPROVED', 10);
+      await seedReview(parkSplit, 'APPROVED', 1);
+
+      const firedFor = async (strandSql: string) => {
+        const rows = (await sql.unsafe(strandSql)) as Record<string, unknown>[];
+        const arm = rows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'rekeyhome');
+        expect(arm, 'the emitted SQL must carry the re-keyed-home arm').toBeTruthy();
+        return new Set(String(arm?.[1] ?? 'none').split(','));
+      };
+
+      const pre = await firedFor(preFloor.stdout.toString().trim());
+      expect(pre, 'below the floor the record is not read: the split wedge reads as the legal MIN shape').not.toContain(
+        splitWedge,
+      );
+      expect(pre, 'the stamp test fires the single post-write verdict').toContain(recordlessFire);
+      expect(pre, 'a later task write masks the wedge below the floor').not.toContain(masked);
+
+      const post = await firedFor(floored.stdout.toString().trim());
+      expect(post, 'a round SPLIT across the block record is the wedge (#468)').toContain(splitWedge);
+      expect(post, 'an all-older round is the legal #423 re-block').not.toContain(recordedLegal);
+      expect(post, 'the record term is not maskable by a later task write').toContain(masked);
+      expect(post, 'a record-less row keeps the MIN fallback: the #467 era pin').not.toContain(recordless);
+      expect(post, 'the record-less fallback still fires the counterexample').toContain(recordlessFire);
+      expect(post, 'the park origin orders against the park record').toContain(parkSplit);
+    } finally {
+      await sql.end();
+    }
+  });
 });

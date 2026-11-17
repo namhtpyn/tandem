@@ -162,6 +162,22 @@ paused_order() {
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
 }
+# RE-KEY per-verdict ordering (#468): at/above the flow floor the arm asks whether ANY
+# verdict of the current round is NEWER than the newest block/park record — the round was
+# LIVE when the record landed (one vote in, the settling vote after), the split-timing
+# wedge the aggregate MIN test missed, and a later task write cannot mask it. An all-older
+# round is the legal #423 settle-then-reblock (its applied verdict predates its record).
+# Below the floor, and for a row carrying NO record, the MIN-vs-stamp test stands: the
+# #467 flip->supersede window (closed by 2.78.35's atomic sweep) could legally leave one
+# verdict past the stamp on a pre-floor image, and a record-less row is exactly such a row
+# until it drains.
+paused_order_any() {  # $1 = prod version
+  if flow_floor_met "${1:-}"; then
+    printf "case when %s is null then %s > t.updated_at else exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > %s) end" "$(flow_record_ts)" "$(verdict_ts min)" "$(flow_record_ts)"
+  else
+    printf "%s > t.updated_at" "$(verdict_ts min)"
+  fi
+}
 # PARK RECORD (the park's OWN flow note): the arm orders its verdict against the note the
 # park write itself produced. Unlike flow_record_ts (the task-wide newest gating note,
 # which an older auto-blocked note can satisfy on a parked row whose park note never
@@ -285,23 +301,26 @@ strand_sql() {
   # that sub-shape is OUT of this arm and named in SPEC (r1 boundary, #435). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
-  # applied verdict PREDATES the re-block write, so ordering EVERY verdict of the round
-  # after the last write (MIN, not MAX) excludes it — and also excludes the
-  # flip->supersede window shape (a late reviewer CAS landing after the re-block, #467),
-  # which a MAX test would misread as a re-key. A direct owner settle clears both
-  # origins in the same statement, so the residual owner-settle shape is that machine
-  # re-block, excluded by the MIN ordering. The current-round clause is mirrored from
-  # the orphan arm; the ordering is STRONGER than the orphan's max() (min > write) for
-  # the reasons above — a multi-reviewer round split across the block write (min < write)
-  # is a DECLARED boundary of this arm, tracked as #468. Ordering is #466's
-  # BLOCK-PARK RECORD FLOOR: below 2.78.38 the retired stamp test stands, at and above it
-  # MIN(verdict) > the newest gating flow record (record-less pre-floor rows coalesce to
-  # `tasks.updated_at`). Per-column resolve,
+  # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
+  # than the record is legal. The ordering is therefore PER VERDICT (#468): at and above
+  # the BLOCK-PARK RECORD FLOOR (#466, 2.78.38) the arm fires when ANY verdict of the
+  # round is NEWER than the newest gating flow record — a round still LIVE when the block
+  # landed (one vote in, the settling vote after) is the split-timing wedge the aggregate
+  # MIN test missed, and a record ordering cannot be masked by a later task write. Every
+  # settle path at/above the floor sweeps its pending rows BEFORE its re-gate, so a
+  # post-record verdict cannot be the #467 late-CAS window (closed by 2.78.35's atomic
+  # sweep): it means the round was open at the block. Below the floor the retired
+  # MIN-vs-stamp test stands, and a row carrying NO block/park note falls back to it — a
+  # pre-floor image could legally leave one verdict past the stamp (#467), so the
+  # per-verdict term is RECORD-gated, never version-only. A direct owner settle clears
+  # both origins in the same statement, so the residual owner-settle shape is that
+  # machine re-block, excluded by the all-older test. The current-round clause is mirrored
+  # from the orphan arm. Per-column resolve,
   # VERSION-independent (a pre-guard image produces the strand too), COLUMN-gated like
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order min "${1:-}")) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order_any "${1:-}")) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -924,9 +943,14 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$ORPHAN_FLOW" | grep -qF "auto-blocked:%" || { echo "selfcheck fail: floored orphan arm lost the flow record"; exit 1; }
   printf '%s' "$ORPHAN_FLOW" | grep -qF ") > t.updated_at" && { echo "selfcheck fail: floored orphan arm still orders by the stamp"; exit 1; }
   REKEY_FLOW=$(strand_rekey_arm 2.78.38 2)
-  printf '%s' "$REKEY_FLOW" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey arm lost the MIN test"; exit 1; }
-  printf '%s' "$REKEY_FLOW" | grep -qF ")) > coalesce((select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the record ordering"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "case when (select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the record-present branch"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > (select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the per-verdict record term"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey arm lost the record-less MIN fallback"; exit 1; }
   printf '%s' "$REKEY_FLOW" | grep -qF "review parked %" || { echo "selfcheck fail: floored rekey arm lost the flow record"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor per-verdict ordering reads a record"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "exists (select 1 from task_reviews" && { echo "selfcheck fail: pre-floor per-verdict ordering lost the MIN test"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.38)" | grep -qF "exists (select 1 from task_reviews" || { echo "selfcheck fail: floored per-verdict ordering lost the verdict term"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.37 2)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor rekey arm reads a record"; exit 1; }
   printf '%s' "$(strand_orphan_arm 2.78.37 2)" | grep -qF "auto-blocked:%" && { echo "selfcheck fail: pre-floor orphan arm reads a record"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }

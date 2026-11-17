@@ -1177,22 +1177,23 @@ non-positive deltas render no duration.
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
   re-block write (a cancel that re-blocks records the cancelled status the same
-  way). The ordering therefore reads EVERY verdict of the round, not the newest: it
-  fires only when ALL verdict timestamps (min, not max) are NEWER than the task's
-  newest gating FLOW RECORD (the same BLOCK-PARK RECORD FLOOR as the orphan arm —
-  rows with no block/park note at all fall back to the `updated_at` stamp; the floor's
-  pre-floor note-loss window is the same declared residual), never the `updated_at`
-  stamp alone: a benign edit after the verdict cannot mask a real re-key. That MIN ordering is also what a max() test gets wrong on any late row (a decided_at
-  past the re-block write while the applied verdict predates it): the flip→supersede gap
-  that used to produce one (a verdict CAS landing between the settle's flip and its
-  supersede sweep) is gone as a COMMITTED gap — the sweep rides the flip's transaction
-  (#467, SETTLE-SWEEP ATOMICITY), so a settle is never observable between its own flip and
-  its sweep and a throw rolls every write back. A verdict CAS landing BEFORE that
-  transaction's sweep is arbitrated like any concurrent vote (#260); once the sweep's
-  rows are locked it is refused — either way it never ends as a stranded pending row.
-  The ordering therefore still earns its MIN: it excludes the #423 re-block class, and
-  the late rows a SETTLE can still leave — the degraded path (flip committed before its
-  sweep by design) and the reviewer-removal settle's own order. The settle flip's write gate takes
+  way). The ordering therefore reads the round PER VERDICT, not as an aggregate: at and
+  above the `2.78.38` BLOCK-PARK RECORD FLOOR (#466) the arm fires when ANY verdict
+  timestamp of `max(round)` is NEWER than the task's newest gating FLOW RECORD — a round
+  still LIVE when the block landed (one vote before it, the settling vote after) is the
+  split-timing wedge (#468), and a benign edit after the verdict cannot mask a real
+  re-key. An all-older round is the #423 class (its applied verdict necessarily predates
+  the re-block record). Rows with no block/park note at all, and every row below the
+  floor, fall back to the retired MIN-vs-stamp test: the pre-floor note-loss window is
+  the same declared residual, and a pre-floor image could legally leave one verdict past
+  the stamp. That late row is the flip→supersede gap (a verdict CAS landing between the
+  settle's flip and its supersede sweep) — gone as a COMMITTED gap since the sweep rides
+  the flip's transaction (#467, SETTLE-SWEEP ATOMICITY), and at/above the floor every
+  settle path sweeps its pending rows BEFORE its re-gate writes the record, so a
+  post-record verdict there can only mean the round was live at the block. Below the
+  floor the late rows a SETTLE could still leave — the degraded path (flip committed
+  before its sweep by design) and the reviewer-removal settle's own order — are why the
+  fallback keeps the MIN test. The settle flip's write gate takes
   only an in_review-category status or a paused block whose recorded origin
   (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
   terminal home fails every branch, the round closes on the verdict row with NO
@@ -1206,18 +1207,26 @@ non-positive deltas render no duration.
   restore, which resolves the still-EXISTING terminal row and never a review path. A DIRECT owner settle is excluded by construction:
   `setStatus` moves the task out of the paused category and clears both machine
   origins in the same statement, so it leaves no origin behind; the residual
-  owner-settle shape is the machine #423 re-block above, excluded by the MIN
+  owner-settle shape is the machine #423 re-block above, excluded by the
   ordering. That is why the arm fires on a resolved `done`/`cancelled` home when no
   verdict predates the block write (the counterexample shape: `in_review` → `done`
   under a blocked task). The current-round clause (no PENDING row in `max(round)`,
-  at least one verdict row) and the MIN ordering above apply as specified; below
+  at least one verdict row) and the ordering above apply as specified; below
   the `2.78.24` record floor the WEDGE falls back to its legacy test (#430) — this
-  arm's OWN floor is `2.78.38` (BLOCK-PARK RECORD FLOOR, #466): below it the stamp
-  test stands, at and above it the flow record orders. A
-  DECLARED BOUNDARY of the MIN ordering: a MULTI-REVIEWER round split across the
-  block record (one vote before it, the settling vote after) has min(verdict) older
-  than the block record and is OUT of this arm — the split-timing class needs a
-  per-verdict record term (the same flow record) and is tracked as #468.
+  arm's OWN floor is `2.78.38` (BLOCK-PARK RECORD FLOOR, #466): below it the
+  verdict-vs-stamp MIN test stands, at and above it the ordering is PER VERDICT
+  against the flow record (#468): the arm fires when ANY verdict of `max(round)` is
+  NEWER than the newest block/park record, so a MULTI-REVIEWER round split across
+  the record (one vote before it, the settling vote after) is this wedge, not a
+  boundary. An all-older round is the legal #423 re-block (its applied verdict
+  necessarily predates the re-block record). A row carrying NO block/park note falls
+  back to the MIN-vs-stamp test, which is also the pre-floor rule: below the floor
+  the #467 flip→supersede window (its sweep atomic with the flip from 2.78.35) could
+  legally leave one verdict past the block write, and a record-less row is exactly
+  such a row until it drains. At and above the floor every settle path sweeps its
+  pending rows BEFORE its re-gate writes the record, so a post-record verdict can
+  only mean the round was LIVE when the block landed and its settle flip can never
+  land on the re-keyed terminal home.
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
