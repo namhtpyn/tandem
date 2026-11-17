@@ -851,6 +851,7 @@ describe('prod probe selfcheck', () => {
             last_run_at: '2026-11-15T00:00:00+00:00',
           },
           dead('unreachable'),
+          dead('nightly.report_v2'),
           dead('x=5m'),
           dead('a:b'),
           dead('a!b'),
@@ -876,7 +877,7 @@ describe('prod probe selfcheck', () => {
       .split('\n')
       .filter((l: string) => l.length > 0);
     // one physical line per job: the escaped newline collapsed to a space, no forged line
-    expect(lines).toHaveLength(14);
+    expect(lines).toHaveLength(15);
     expect(lines.filter((l: string) => l.startsWith('forge'))).toHaveLength(0);
     expect(out).toContain('loopdead:line forge~');
     // the crafted name renders its tokenised form and can never spell the P0 prefix
@@ -898,7 +899,8 @@ describe('prod probe selfcheck', () => {
     const ab = lines.filter((l: string) => l.startsWith('loopdead:a b'));
     expect(ab).toHaveLength(2);
     expect(new Set(ab).size).toBe(2);
-    // two names that sanitise to the same token still emit DISTINCT lines (dedupe key)
+    // two names that sanitise to the same token still emit DISTINCT lines (the dedupe-key
+    // pin lives in --selfcheck, which can call dedupe_key directly)
     const nightly = lines.filter((l: string) => l.startsWith('loopdead:nightly report'));
     expect(nightly).toHaveLength(2);
     expect(new Set(nightly).size).toBe(2);

@@ -1439,19 +1439,21 @@ non-positive deltas render no duration.
   except in a name-keyed store, where the KEY is the job's name and a blank `name` falls
   back to it; identity is the VERBATIM name (so padding never re-classifies a job as the
   probe itself or as a BRAIN job) while the interpolated DISPLAY TOKEN is sanitised first:
-  every character that is not a letter, a digit, a combining mark, a space, `.`, `_` or `-`
+  every character that is not alphanumeric (Unicode `isalnum`, so `²` counts), a combining
+  mark, a space, `.`, `_` or `-`
   — control characters, newlines, `:`, `!`, `=` included — becomes a space, runs of spaces
   collapse and the edges trim, so a name stays READABLE in any script (an accented name is
   not shredded into letter soup) while it can never carry the punctuation a level token or
   the join separator is built from; a name with nothing READABLE left (no letter or digit —
   punctuation only, or combining marks alone) renders as `<unprintable>`.
   A name the sanitiser changed carries a `~<12 letters>` discriminator of the raw name,
-  appended to the fallback too, so two jobs whose tokens collide still emit distinct lines —
+  appended to the fallback too, so two DISTINCT raw names whose tokens collide still emit
+  distinct lines (identical raw names are one identity and cannot be told apart) —
   LETTERS-ONLY because the repeat-suppression key masks long digit runs and hex ids, which
   would erase a numeric suffix and let the pair share a key; 26^12 letters puts a deliberate
   birthday pair at ~10^9 sanitised variants (the key's other normalisations are unchanged:
-  two clean names differing only in a 6+ digit run or an attempt/retry counter stay one
-  standing fault by design). Every field the record can shape — name, `state`, a schedule expression,
+  two clean names differing only in a 6+ digit run, an age (`N s/m/h`), a UUID / long hex id
+  or an attempt/retry counter stay one standing fault by design). Every field the record can shape — name, `state`, a schedule expression,
   a cause — is swept at emission of every code point a Unicode line splitter treats as a
   break (C0, DEL, C1, U+2028/U+2029), so the line count is the job count, never the record's
   content — the record is read as UTF-8 BYTES with replacement (an invalid byte degrades to
