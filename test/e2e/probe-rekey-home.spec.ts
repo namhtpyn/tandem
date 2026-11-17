@@ -253,6 +253,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const recordless = `probe-recordless-${tag}`;
       const recordlessFire = `probe-recordless-fire-${tag}`;
       const parkSplit = `probe-park-split-${tag}`;
+      const parkBorrow = `probe-park-borrow-${tag}`;
       const seedTasks = [
         // one vote BEFORE the block record, the settling vote AFTER: the split-timing
         // wedge the aggregate MIN missed (verdicts 10m + 1m, record 5m)
@@ -267,6 +268,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         { id: recordlessFire, pre: DONE, park: null, written: 5 },
         // the park path orders against its OWN record: same split shape, park origin
         { id: parkSplit, pre: null, park: DONE, written: 5 },
+        // a park whose OWN note was lost (the declared pre-floor crash residual) must not
+        // borrow an OLDER auto-blocked note: the park write is 8m, the stale block note
+        // 20m, verdicts 10m + 2m — borrowing the block note would fire a legal row
+        { id: parkBorrow, pre: null, park: DONE, written: 8 },
       ];
       for (const t of seedTasks) {
         await sql.unsafe(
@@ -291,6 +296,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedRecord(recordedLegal, 'auto-blocked: 1 subtask(s) open', 5);
       await seedRecord(masked, 'auto-blocked: 1 subtask(s) open', 5);
       await seedRecord(parkSplit, 'review parked — reconciliation needed', 5);
+      await seedRecord(parkBorrow, 'auto-blocked: 1 subtask(s) open', 20);
 
       const seedReview = async (taskId: string, status: string, decidedMinutesAgo: number | null) => {
         await sql.unsafe(
@@ -310,6 +316,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(recordlessFire, 'APPROVED', 1);
       await seedReview(parkSplit, 'APPROVED', 10);
       await seedReview(parkSplit, 'APPROVED', 1);
+      await seedReview(parkBorrow, 'APPROVED', 10);
+      await seedReview(parkBorrow, 'APPROVED', 2);
 
       const firedFor = async (strandSql: string) => {
         const rows = (await sql.unsafe(strandSql)) as Record<string, unknown>[];
@@ -332,6 +340,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(post, 'a record-less row keeps the MIN fallback: the #467 era pin').not.toContain(recordless);
       expect(post, 'the record-less fallback still fires the counterexample').toContain(recordlessFire);
       expect(post, 'the park origin orders against the park record').toContain(parkSplit);
+      expect(post, 'a park whose own note is lost must not borrow an older auto-blocked note').not.toContain(
+        parkBorrow,
+      );
     } finally {
       await sql.end();
     }
