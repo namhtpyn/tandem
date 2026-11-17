@@ -23,14 +23,18 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // terminal-by-owner shape is excluded BY CONSTRUCTION, not by a category
 // term — a DIRECT owner settle leaves the paused category and clears both origins in the
 // same statement; the residual owner-settle shape is the machine #423 re-block, excluded
-// by the ordering. That is why the arm fires on a resolved done/cancelled home when no
-// verdict predates the block write (the counterexample: in_review -> done under a blocked
-// task). Neither origin may resolve into review (a resolvable in-review home still lets
-// the flip land: the orphan arm's exclusion, mirrored), and the wedge's current-round
-// clause plus a MIN ordering — EVERY verdict of max(round) NEWER than the task's last
-// write, not just the newest — apply: the MIN test excludes the #423 re-block and the
-// #467 flip->supersede window a max() test misreads, and it is the reason the lateVerdict
-// seed below must stay silent. The arm is VERSION-independent (no image floor — a pre-guard image produces the
+// by the ordering. The counterexample is the resolved done/cancelled home under a blocked
+// task whose round carries at least one verdict NEWER than the record that made it terminal
+// (in_review -> done with the settle never applied). Neither origin may resolve into
+// review (a resolvable in-review home still lets the flip land: the orphan arm's
+// exclusion, mirrored), and the wedge's current-round clause applies. The ORDERING is
+// floor-gated: below 2.78.38 (and on a row carrying no note of the origin's kind) the
+// retired MIN test — EVERY verdict of max(round) NEWER than the task's last write, not
+// just the newest — excludes the #423 re-block and the #467 flip->supersede window a
+// max() test misreads, which is why the lateVerdict seed below must stay silent on the
+// pre-floor emission; at/above the floor ANY verdict newer than the origin's OWN record
+// is the split-timing wedge (#468), pinned by the second test. The arm is
+// VERSION-independent (no image floor — a pre-guard image produces the
 // strand too) but COLUMN-gated exactly like the orphan arm: it reads BOTH origin columns,
 // and on a one-column image it would kill the whole UNION, so it must vanish there. It is
 // pinned on the SQL that ships: the probe emits it (--strand-sql) and this spec executes
@@ -224,6 +228,127 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         fired,
         'a late verdict CAS after the re-block (#467) must not read as a re-key: the MIN ordering excludes it',
       ).not.toContain(lateVerdict);
+    } finally {
+      await sql.end();
+    }
+  });
+  test('per-verdict record ordering at and above the block-record floor (#468)', async () => {
+    // The record's OWN timestamp is the discriminator: a verdict NEWER than the record
+    // means the round was LIVE when the block/park landed. Below the floor (and for a
+    // row carrying NO record) the retired MIN-vs-write test stands, so the SAME seeds
+    // must read differently at 2.78.37 and 2.78.38.
+    const preFloor = await $`bash ${script} --strand-sql 2.78.37 2`.nothrow().quiet();
+    expect(preFloor.exitCode, preFloor.stderr.toString()).toBe(0);
+    const floored = await $`bash ${script} --strand-sql 2.78.38 2`.nothrow().quiet();
+    expect(floored.exitCode, floored.stderr.toString()).toBe(0);
+    // the per-verdict term is the floored bytes only: a pre-floor emission that carried
+    // it would fire on the #467 late-CAS class the MIN test exists to exclude
+    expect(preFloor.stdout.toString()).not.toContain(
+      'coalesce(r.decided_at, r.created_at) > (select max(m.created_at)',
+    );
+    expect(floored.stdout.toString()).toContain('coalesce(r.decided_at, r.created_at) > (select max(m.created_at)');
+
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const splitWedge = `probe-split-wedge-${tag}`;
+      const recordedLegal = `probe-recorded-legal-${tag}`;
+      const masked = `probe-record-masked-${tag}`;
+      const recordless = `probe-recordless-${tag}`;
+      const recordlessFire = `probe-recordless-fire-${tag}`;
+      const parkSplit = `probe-park-split-${tag}`;
+      const parkBorrow = `probe-park-borrow-${tag}`;
+      const seedTasks = [
+        // one vote BEFORE the block record, the settling vote AFTER: the split-timing
+        // wedge the aggregate MIN missed (verdicts 10m + 1m, record 5m)
+        { id: splitWedge, pre: DONE, park: null, written: 5 },
+        // every verdict older than the record: the legal #423 settle-then-reblock
+        { id: recordedLegal, pre: DONE, park: null, written: 5 },
+        // a LATER task write (1m) past every verdict (10m, 2m): the stamp test masks the
+        // wedge (min 10m is older than 1m), the record term (2m > 5m) does not
+        { id: masked, pre: DONE, park: null, written: 1 },
+        // NO record at all on a floored image: the MIN fallback keeps the #467-era pin
+        { id: recordless, pre: DONE, park: null, written: 5 },
+        { id: recordlessFire, pre: DONE, park: null, written: 5 },
+        // the park path orders against its OWN record: same split shape, park origin
+        { id: parkSplit, pre: null, park: DONE, written: 5 },
+        // a park whose OWN note was lost (the declared pre-floor crash residual) must not
+        // borrow an OLDER auto-blocked note: the park write is 8m, the stale block note
+        // 20m, one verdict at 10m — borrowing the block note would fire a legal row
+        { id: parkBorrow, pre: null, park: DONE, written: 8 },
+      ];
+      for (const t of seedTasks) {
+        await sql.unsafe(
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, now(), now() - ($6::int * interval '1 minute'))`,
+          [t.id, t.id, BLOCKED, t.pre, t.park, t.written],
+        );
+      }
+      const seedRecord = async (taskId: string, body: string, createdAtMinutesAgo: number) => {
+        const messageId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, author_id, body, created_at)
+           values ($1, $2, null, $3, now() - ($4::int * interval '1 minute'))`,
+          [messageId, taskId, body, createdAtMinutesAgo],
+        );
+        await sql.unsafe(
+          `insert into task_message_activities (message_id, payload) values ($1, '{"kind":"STATUS"}'::jsonb)`,
+          [messageId],
+        );
+      };
+      await seedRecord(splitWedge, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(recordedLegal, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(masked, 'auto-blocked: 1 subtask(s) open', 5);
+      await seedRecord(parkSplit, 'review parked — reconciliation needed', 5);
+      await seedRecord(parkBorrow, 'auto-blocked: 1 subtask(s) open', 20);
+
+      const seedReview = async (taskId: string, status: string, decidedMinutesAgo: number | null) => {
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, 1, $3, null, now() - interval '10 minutes',
+                   case when $4::int is null then null else now() - ($4::int * interval '1 minute') end)`,
+          [`rev-${crypto.randomUUID()}`, taskId, status, decidedMinutesAgo],
+        );
+      };
+      await seedReview(splitWedge, 'APPROVED', 10);
+      await seedReview(splitWedge, 'APPROVED', 1);
+      await seedReview(recordedLegal, 'APPROVED', 10);
+      await seedReview(masked, 'APPROVED', 10);
+      await seedReview(masked, 'APPROVED', 2);
+      await seedReview(recordless, 'APPROVED', 10);
+      await seedReview(recordless, 'APPROVED', 1);
+      await seedReview(recordlessFire, 'APPROVED', 1);
+      await seedReview(parkSplit, 'APPROVED', 10);
+      await seedReview(parkSplit, 'APPROVED', 1);
+      // ONE verdict only: under a borrow it fires (10m > the stale 20m block note), under
+      // the correct fallback it is an all-older round and stays silent — a second, newer
+      // verdict would pin the note-loss split wedge (#468's FN class) as 'legal'
+      await seedReview(parkBorrow, 'APPROVED', 10);
+
+      const firedFor = async (strandSql: string) => {
+        const rows = (await sql.unsafe(strandSql)) as Record<string, unknown>[];
+        const arm = rows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'rekeyhome');
+        expect(arm, 'the emitted SQL must carry the re-keyed-home arm').toBeTruthy();
+        return new Set(String(arm?.[1] ?? 'none').split(','));
+      };
+
+      const pre = await firedFor(preFloor.stdout.toString().trim());
+      expect(pre, 'below the floor the record is not read: the split wedge reads as the legal MIN shape').not.toContain(
+        splitWedge,
+      );
+      expect(pre, 'the stamp test fires the single post-write verdict').toContain(recordlessFire);
+      expect(pre, 'a later task write masks the wedge below the floor').not.toContain(masked);
+
+      const post = await firedFor(floored.stdout.toString().trim());
+      expect(post, 'a round SPLIT across the block record is the wedge (#468)').toContain(splitWedge);
+      expect(post, 'an all-older round is the legal #423 re-block').not.toContain(recordedLegal);
+      expect(post, 'the record term is not maskable by a later task write').toContain(masked);
+      expect(post, 'a record-less row keeps the MIN fallback: the #467 era pin').not.toContain(recordless);
+      expect(post, 'the record-less fallback still fires the counterexample').toContain(recordlessFire);
+      expect(post, 'the park origin orders against the park record').toContain(parkSplit);
+      expect(post, 'a park whose own note is lost must not borrow an older auto-blocked note').not.toContain(
+        parkBorrow,
+      );
     } finally {
       await sql.end();
     }
