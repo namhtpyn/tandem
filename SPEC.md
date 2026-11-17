@@ -1209,18 +1209,27 @@ non-positive deltas render no duration.
   OWN record — the block's `auto-blocked:` note for a `pre_block_status` home, the
   park's `review parked` note for a park home — so a MULTI-REVIEWER round split across
   that record (one vote before it, the settling vote after) is this wedge, not a
-  boundary; an all-older round is the legal #423 re-block (its applied verdict
-  necessarily predates the re-block record) OR the DECLARED false negative below: an
-  admin re-key of a status that still homes a LIVE round (in_review -> done) before the
-  task blocks — `statuses.save` refuses a re-key only while a BLOCKED task records the
-  status as a home, so the re-key lands, the later gating block records the now-terminal
-  status as `pre_block_status`, the pending verdict is refused by the terminal gate, the
-  teardown heal supersedes it, and every verdict predates the note: SQL cannot separate
-  this from the legal #423 row without the home's category AT block time, so the
-  all-older class is deliberately silent here and the pre-block-re-key strand is a
-  DECLARED false negative (#491; a record term carrying the home's category at block time
-  would close it). Below the floor the verdict-vs-stamp MIN test
-  stands. A row carrying NO note of that kind at all falls back to the same
+  boundary; an all-older round is either the legal #423 re-block (its applied verdict
+  necessarily predates the re-block record) or a RE-KEY strand, split as follows. From
+  `2.78.41` (HOME-CATEGORY RECORD FLOOR) the auto-block note's payload
+  carries the home's CATEGORY at write time (`homeCategory`, written atomically with the
+  block flip in the same transaction), and the CATEGORY TERM closes the LATE-RE-KEY
+  strand: a status re-keyed terminal while its task already sits blocked over a live
+  round (the block-state-home guard's read->upsert window, or a guard regression) — the
+  record says non-terminal while the home resolves terminal now, the round's pending turn
+  is superseded by the owner-settled teardown (`settledByOwner`), and every verdict
+  predates the note, so the ordering term is blind — that row FIRES. #423 stays silent:
+  its recorded category was already terminal at block time. A block note carrying no
+  category (pre-floor row) falls back to the ordering-only term, and the PARK half
+  carries no category record: it is OUT of the category term by declaration (its
+  ordering term is unchanged).
+  The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
+  status is re-keyed terminal BEFORE the task blocks, so the block records the
+  ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
+  same verdicts, the same superseded pending turn, the same note order). `homeCategory`
+  cannot separate it — only a record of the category the round's verdicts were decided
+  under would, and the verdict rows carry none. Below the floor the verdict-vs-stamp MIN
+  test stands. A row carrying NO note of that kind at all falls back to the same
   MIN-vs-stamp test: below the floor the #467 flip→supersede window (its sweep atomic
   with the flip from 2.78.35) could legally leave one verdict past the block write, so
   the fallback keeps the MIN test for those rows until they drain. At and above the
@@ -1229,7 +1238,7 @@ non-positive deltas render no duration.
   landed and its settle flip can never land on the re-keyed terminal home — except on the
   degraded path that skips its sweep (residual (a)), where a settled-then-re-blocked task
   can carry one; the PENDING heal signature keeps that row silent until it drains.
-  TWO DECLARED residuals the SQL cannot see, both verified empty in prod at the `2.78.40`
+  THREE DECLARED residuals the SQL cannot see, all verified empty in prod at the `2.78.40`
   deploy. (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
   the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
   path (the flip committed on the pool, the sweep skipped by design when that isolation
@@ -1244,6 +1253,10 @@ non-positive deltas render no duration.
   NEGATIVE rides the same class, the other way: a note-less row whose round was split
   across the origin write falls back to MIN and stays silent, so the split-timing class
   is only observable when the note survives (pre-floor crash or direct write only).
+  (c) The PRE-BLOCK re-key (#491): a status re-keyed terminal BEFORE its task blocks
+  records the ALREADY-terminal category, so `homeCategory` is terminal and the row is
+  byte-equivalent to the legal #423 shape; closing it needs a record of the category the
+  round's verdicts were decided under, which no row carries today.
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
