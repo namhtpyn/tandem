@@ -1431,19 +1431,29 @@ non-positive deltas render no duration.
   `release_process_group_once_empty` at WebSocket-upgrade time, raised ImportError,
   uvicorn answered the cron worker with HTTP 500, and every LLM cron died (`tandem-triage`
   30 runs, `tandem-critic` 3, the dockhand report 1 — 29h, from 11-15T18:00:15Z to the
-  11-16T23:02:15Z restart) recording only `InvalidStatus: server rejected WebSocket
+  11-16T23:02:15Z unit start) recording only `InvalidStatus: server rejected WebSocket
   connection`. The dead-man catches that only after two failed ticks and never catches a
   break confined to one lazily-imported path, so this arm reads the STATE the gateway
-  publishes: `code_sha` in its own `gateway_state.json` vs the install's `git rev-parse
-  HEAD` — equal is healthy, different is P0 (every LLM cron is dead or dying) with the
-  remedy in the line (`restart hermes-gateway.service`). The GATEWAY is the unit the cron
-  workers dial for `/api/ws`, never the dashboard (a separate process, out of scope): the
-  incident process was the gateway (pid 3851155), whose unit restarted at 23:02:15Z and
-  healed it while the dashboard kept its own older process. DECLARED BOUNDARIES (silent,
-  never a false alarm): no readable `gateway_state.json`, a `gateway_state` that is not
-  `running`, a pid that is not alive, a non-git install, a missing sha on either side, and
-  a dirty worktree at the same commit (the arm compares commits, not file bytes).
-  `--runtime-stale <state.json> <install> [proc_root]` is the unit test's seam so the
-  fixtures drive the shipped bytes; `--selfcheck` pins the fire/silence matrix, the P0
-  level and the live-pass wiring (call, append, seam dispatch, append-before-join), once
-  each.
+  publishes: `code_sha` in its own `gateway_state.json` against the install's `git
+  rev-parse --verify HEAD` — equal is healthy, different is P0 (`LLM crons may be dead or
+  dying`). A record counts as the SERVING gateway only when its `gateway_state` is
+  `running` OR `degraded` (degraded is a serving gateway with a parked platform) AND its
+  `pid` is alive at the recorded `start_time` (the same field-22 stamp, so a recycled pid
+  never attributes a stale record to a live process); candidates are the profile's own
+  state file, then the multiplexed root one, so a standalone and a multiplexed gateway are
+  both read and a stale `stopped` document is skipped instead of blinding or alarming the
+  arm. The GATEWAY is the process the cron workers dial for `/api/ws`, never the dashboard
+  (a separate process, out of scope): the outage process was the gateway (pid 2699883),
+  whose unit start at 23:02:15Z healed it while the dashboard kept its own older process.
+  The emitted line names the finding and points at this paragraph instead of embedding a
+  runnable command — a literal operator command inside an executable trips the runtime's
+  own self-guard and would block every operator run of the probe; the operator action is
+  to restart the gateway unit (`hermes gateway restart`, or `systemctl --user restart
+  hermes-gateway.service`) from a shell OUTSIDE the gateway process. DECLARED BOUNDARIES
+  (silent, never a false alarm): no readable state file, no record that is both live and
+  sha-bearing, a non-git install, an unborn HEAD, a dirty worktree at the same commit (the
+  arm compares commits, not file bytes), and the dashboard. `--runtime-stale
+  <state1[:state2]> <install> [proc_root]` is the unit test's seam so the fixtures drive
+  the shipped bytes; `--selfcheck` pins the fire/silence matrix (running AND degraded fire,
+  a recycled pid does not), the P0 prefix match, the seam dispatch end-to-end and the
+  live-pass wiring (call, append, append-before-join), once each.
