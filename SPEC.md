@@ -1424,3 +1424,21 @@ non-positive deltas render no duration.
   instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
   in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode so the unit
   test drives the shipped bytes with fixtures.
+- The RUNTIME-REFRESH arm (#487) reads the mixed-module state that killed the loop on
+  2026-11-16: code installed under a LIVE process (the unit had served since the 10-27
+  start while the 11-09 update sat on disk) leaves the running gateway holding its OLD
+  modules, so every LAZY import afterwards reads NEW files — `tui_gateway` imported
+  `release_process_group_once_empty` at WebSocket-upgrade time, raised ImportError,
+  uvicorn answered the cron worker with HTTP 500, and every LLM cron died (triage 13h,
+  critic 3 runs) recording only `InvalidStatus: server rejected WebSocket connection`.
+  The dead-man catches that only after two failed ticks and never catches a break confined
+  to one lazily-imported path, so this arm reads the STATE: the installed HEAD commit time
+  vs the serving dashboard's process start, both on the host (git tree +
+  `/proc/<MainPID>/stat` starttime against `/proc/stat` btime). Installed code NEWER than
+  the serving process is the anomaly, P0 (every LLM cron is dead or dying), and the line
+  carries the remedy (`restart hermes-dashboard.service`). The steady state, a non-git
+  install, an unresolvable serving pid and an unparseable start all stay SILENT — a
+  foreign layout never alarms. `--runtime-stale <install> [start_epoch]` is the unit
+  test's seam so the fixtures drive the shipped bytes (a HEAD older than the start fires,
+  a HEAD newer stays silent); `--selfcheck` pins the fire/silence matrix, the level and
+  the live-pass wiring exactly once.
