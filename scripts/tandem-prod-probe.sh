@@ -422,8 +422,8 @@ egress_arm_on() {
   [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
 }
 # LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
-# delivery-preflight outage (WebSocket 500) failed tandem-triage 32x and tandem-critic
-# 3x in a row for 33h while every PRODUCT arm here stayed green, and the designated
+# delivery-preflight outage (WebSocket 500) failed tandem-triage 30x and tandem-critic
+# 3x in a row for 29h while every PRODUCT arm here stayed green, and the designated
 # dead-man (the critic) is itself an LLM cron that died with the provider. The record is
 # the SCHEDULER's own cron/jobs.json, never passes.jsonl: a job that keeps ticking while
 # every run FAILS looks fresh in its trail and dead in reality, so liveness = last
@@ -689,7 +689,7 @@ PY
 # one of them: the gateway is running pre-update modules and every LLM cron is dead/dying.
 probe_level() {
   case "$1" in
-    *'loopdead:P0!:tandem-triage'*|*'loopdead:P0!:tandem-critic'*|*'runtime_stale: the gateway (pid'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
+    'runtime_stale: the gateway (pid'*|*'; runtime_stale: the gateway (pid'*|*'loopdead:P0!:tandem-triage'*|*'loopdead:P0!:tandem-critic'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
     *) echo 1 ;;
   esac
 }
@@ -733,7 +733,7 @@ if not cands or not inst:
 HEX = set("0123456789abcdef")
 def is_sha(v):
     v = str(v or "").strip().lower()
-    return v if len(v) == 40 and set(v) <= HEX else ""
+    return v if len(v) == 40 and set(v) <= HEX and set(v) != {"0"} else ""
 def alive(pid, stamp):
     # field 22 of /proc/<pid>/stat is the start (jiffies since boot); the record's own stamp
     # must match, so a recycled pid never attributes a stale record to a live process
@@ -742,22 +742,29 @@ def alive(pid, stamp):
             return int(stamp) == int(f.read().rsplit(")", 1)[1].split()[19])
     except Exception:
         return False
+def git_head():
+    try:
+        return is_sha(subprocess.run(["git", "-C", inst, "rev-parse", "--verify", "--quiet", "HEAD"],
+                                      capture_output=True, text=True, timeout=20).stdout)
+    except Exception:
+        return ""
 def installed_sha():
-    # the identity the gateway itself advertises: the install stamp written at build time;
-    # a missing/invalid stamp falls back to the checkout's HEAD
+    # mirror the PLATFORM's own resolution exactly rather than inventing a precedence: a
+    # git-source stamp whose checkout HEAD diverges is IGNORED in favour of HEAD (a hot
+    # pull or a rollback), otherwise the stamp is the identity and HEAD is the fallback.
     try:
         st = json.load(open(os.path.join(inst, "install-stamp.json")))
         if isinstance(st, dict):
             sha = is_sha(st.get("commit"))
             if sha:
+                if str(st.get("source") or "") == "git":
+                    head = git_head()
+                    if head and head != sha:
+                        return head
                 return sha
     except Exception:
         pass
-    try:
-        return is_sha(subprocess.run(["git", "-C", inst, "rev-parse", "--verify", "--quiet", "HEAD"],
-                                     capture_output=True, text=True, timeout=20).stdout)
-    except Exception:
-        return ""
+    return git_head()
 installed = installed_sha()
 if not installed:
     silent()  # no code identity to compare against: declared boundary
@@ -1183,6 +1190,7 @@ PY2
   printf '{"gateway_state": "running", "pid": 9999, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/dead.json"
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": ""}' > "$RTD/nosha.json"
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}' > "$RTD/nonhex.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "0000000000000000000000000000000000000000"}' > "$RTD/zerosha.json"
   printf '[1, 2]' > "$RTD/array.json"
   printf '{"gateway_state": "running", "pid": "4242", "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/strpid.json"
   printf '{"gateway_state": "running", "pid": true, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/boolpid.json"
@@ -1192,6 +1200,8 @@ PY2
   printf '%s' "$RTF" | grep -qF 'the unit is serving stale code' || { echo "selfcheck fail: stale runtime lost its verdict text"; exit 1; }
   printf '%s' "$RTF" | grep -qF 'SPEC RUNTIME-REFRESH' || { echo "selfcheck fail: stale runtime lost its SPEC pointer"; exit 1; }
   printf '%s' "$RTF" | grep -qF ';' && { echo "selfcheck fail: runtime line carries the join separator"; exit 1; }
+  RT_CMD_RE=$(printf '%s|%s gateway (re%s|st%s)' 'systemctl' 'hermes' 'start' 'op')
+  printf '%s' "$RTF" | grep -qE "$RT_CMD_RE" && { echo "selfcheck fail: the emitted line embeds a runnable operator command"; exit 1; }
   [ -n "$(runtime_stale "$RTD/degraded.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: degraded gateway not read as serving"; exit 1; }
   [ -n "$(runtime_stale "$RTD/strpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: numeric-string pid not read"; exit 1; }
   [ -z "$(runtime_stale "$RTD/ok.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: matching sha alarmed"; exit 1; }
@@ -1204,6 +1214,7 @@ PY2
   [ -z "$(runtime_stale "$RTD/absent.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent state alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/nosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent sha alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/nonhex.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: non-hex sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/zerosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: placeholder zero sha alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/array.json" "$RTD/r" "$RTD/proc" 2>"$RTD/arr.err")" ] || { echo "selfcheck fail: non-dict JSON alarmed"; exit 1; }
   [ -s "$RTD/arr.err" ] && { echo "selfcheck fail: non-dict JSON raised on stderr"; exit 1; }
   [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/nope" "$RTD/proc")" ] || { echo "selfcheck fail: non-git install alarmed"; exit 1; }
@@ -1215,6 +1226,12 @@ PY2
   # an install stamp is the primary identity; a checkout HEAD is the fallback
   printf '{"commit": "1111111111111111111111111111111111111111"}' > "$RTD/r/install-stamp.json"
   [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity ignored (HEAD used instead of the stamp)"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "source": "git"}' > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a stale git-source stamp was trusted over HEAD"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "source": "wheel"}' > "$RTD/r/install-stamp.json"
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a non-git stamp was ignored"; exit 1; }
+  printf '{"commit": "111111111", "source": "git"}' > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a short stamp did not fall back to HEAD"; exit 1; }
   printf '{"commit": "%s"}' "$RT_SHA" > "$RTD/r/install-stamp.json"
   [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity broke the fire path"; exit 1; }
   rm -f "$RTD/r/install-stamp.json"
@@ -1223,10 +1240,13 @@ PY2
   [ -n "$(runtime_stale "$RTD/paren.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: comm-with-paren parse broken"; exit 1; }
   [ "$(probe_level "$RTF")" = "0" ] || { echo "selfcheck fail: runtime_stale not P0"; exit 1; }
   [ "$(probe_level 'loopdead:docs-bot cause=RuntimeError: runtime_stale arm fired')" = "1" ] || { echo "selfcheck fail: a look-alike cause escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:docs-bot cause=error runtime_stale: the gateway (pid 1) booted code x')" = "1" ] || { echo "selfcheck fail: a cause-embedded prefix escalated"; exit 1; }
+  [ "$(probe_level 'runtime_stale: the gateway (pid 1) booted code x but the install is y')" = "0" ] || { echo "selfcheck fail: the arm's own line is not P0"; exit 1; }
+  [ "$(probe_level 'container: x; runtime_stale: the gateway (pid 1) booted code x')" = "0" ] || { echo "selfcheck fail: the arm after the join separator is not P0"; exit 1; }
   grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}" 2>/dev/null)' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
   grep -cxF '[ -n "$RUNTIME" ] && anom+=("$RUNTIME")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm append missing"; exit 1; }
   grep -cxF 'if [ "${1:-}" = "--runtime-stale" ]; then' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime seam dispatch changed"; exit 1; }
-  awk '/^if \[ "\$\{1:-\}" = "--selfcheck" \]/{s=NR} /^RUNTIME=\$\(runtime_stale /{a=NR} /^\[ -n "\$RUNTIME" \] && anom/{b=NR} /^LINE="\$\(IFS=/{c=NR} END{exit !(s && a && b && c && s<a && a<b && b<c)}' "$0" || { echo "selfcheck fail: the live-pass wiring is not call-then-append-then-join inside the live pass"; exit 1; }
+  awk '/^anom=\(\)$/{s=NR} /^RUNTIME=\$\(runtime_stale /{a=NR} /^\[ -n "\$RUNTIME" \] && anom/{b=NR} /^if \[ \$\{#anom\[@\]\} -eq 0 \]/{d=NR} /^LINE="\$\(IFS=/{c=NR} END{exit !(s && a && b && d && c && s<a && a<b && b<d && d<c)}' "$0" || { echo "selfcheck fail: the wiring is not call-then-append before the empty-exit inside the live pass"; exit 1; }
   # the seam refuses a missing install argument, then dispatches end-to-end
   "$0" --runtime-stale "$RTD/stale.json" >/dev/null 2>&1; [ "$?" = "2" ] || { echo "selfcheck fail: seam accepts a missing install argument"; exit 1; }
   printf '%s' "$("$0" --runtime-stale "$RTD/stale.json" "$RTD/r" "$RTD/proc" 2>/dev/null)" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: seam dispatch does not reach the arm"; exit 1; }
@@ -1860,7 +1880,7 @@ PY
 case "$CREEP2" in ''|*[!0-9]*) anom+=("creep_unreadable: skill scan failed"); CREEP2=0 ;; esac
 [ "${CREEP2:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP2 hit(s) in tandem-ops skill — critic purges (law/negation text excepted)")
 
-# 6b. LOOP LIVENESS (#485): the loop's own crons had no no-LLM arm — 33h of dead
+# 6b. LOOP LIVENESS (#485): the loop's own crons had no no-LLM arm — 29h of dead
 # triage/critic went unalerted because the product arms above watch prod, not the loop,
 # and the designated dead-man (the critic) is itself an LLM cron. See loop_liveness.
 LLERR=$(mktemp)

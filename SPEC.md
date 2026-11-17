@@ -1435,32 +1435,38 @@ non-positive deltas render no duration.
   connection`. The dead-man catches that only after two failed ticks and never catches a
   break confined to one lazily-imported path, so this arm reads the STATE the gateway
   publishes: the booted `code_sha` in its own `gateway_state.json` against the install's
-  own code identity — `install-stamp.json`'s `commit` (the source the gateway itself
-  reads), or with no valid stamp the checkout's `HEAD`. ANY live record whose sha
-  disagrees is the finding (a fresh sibling record never masks a stale one), and the
-  result is P0 (`LLM crons may be dead or dying`). A record counts as the SERVING gateway
-  only when its `gateway_state` is `running` OR `degraded` (degraded is a serving gateway
-  with a parked platform) AND its pid is alive at the SAME `start_time` stamp (field 22 of
-  `/proc/<pid>/stat`) — a recycled pid, and a record carrying no stamp, are NEVER trusted:
-  a skipped record is a false negative the arm prefers to a misattributed P0. Candidates
-  are tried in order (the profile's own state file, then the multiplexed root one), so a
-  standalone and a multiplexed gateway are both read and a stale `stopped` document is
-  skipped instead of blinding or alarming the arm. The GATEWAY is the process the cron
-  workers dial for `/api/ws`, never the dashboard (a separate process, out of scope): the
-  outage process was the gateway (pid 2699883), whose unit start at 23:02:15Z healed it
-  while the dashboard kept its own older process. The emitted line names the finding and
-  points at this paragraph instead of embedding a runnable operator command — a literal
-  operator command inside an executable trips the runtime's own self-guard and would block
-  every operator run of the probe; the operator action is to restart the gateway unit
-  (`hermes gateway restart`, or `systemctl --user restart hermes-gateway.service`) from a
-  shell OUTSIDE the gateway process. DECLARED BOUNDARIES (silent, never a false alarm): no
-  readable state file, no live record that is both stamped and sha-bearing, an install
-  with no usable stamp and no git HEAD, a dirty worktree at the same commit (the arm
-  compares commits, not file bytes), and the dashboard. `--runtime-stale
-  <state1[:state2]> <install> [proc_root]` is the unit test's seam so the fixtures drive
-  the shipped bytes; `--selfcheck` pins the fire/silence matrix (running AND degraded fire,
-  a stale record still fires behind a fresh sibling, a recycled pid does not, a record
-  without a stamp is not trusted, a boolean/float pid is not trusted, a `)` inside the
-  process comm does not shift the field index), the install-stamp identity, the P0 prefix
-  match, the seam dispatch end-to-end and the live-pass wiring (call, append,
-  append-before-join inside the live pass), once each.
+  code identity, resolved EXACTLY as the platform resolves it — a git-source
+  `install-stamp.json` whose checkout `HEAD` diverges is IGNORED in favour of `HEAD` (a hot
+  pull, a rollback), otherwise the stamp's `commit` is the identity and `HEAD` is the
+  fallback; a sha must be 40 hex and may not be the all-zero placeholder. ANY live record
+  whose sha disagrees with that identity is the finding (a fresh sibling record never masks
+  a stale one), and the result is P0 (`LLM crons may be dead or dying`). A record counts as
+  the SERVING gateway only when its `gateway_state` is `running` OR `degraded` (degraded is
+  a serving gateway with a parked platform) AND its pid is alive at the SAME `start_time`
+  stamp (field 22 of `/proc/<pid>/stat`) — a recycled pid, and a record carrying no stamp,
+  are NEVER trusted: a skipped record is a false negative the arm prefers to a
+  misattributed P0. Candidates are tried in order (the profile's own state file, then the
+  multiplexed root one), so a standalone and a multiplexed gateway are both read and a
+  stale `stopped` document is skipped instead of blinding or alarming the arm. The GATEWAY
+  is the process the cron workers dial for `/api/ws`, never the dashboard (a separate
+  process, out of scope): the outage process was the gateway (pid 2699883), whose unit
+  start at 23:02:15Z healed it while the dashboard kept its own older process. The emitted
+  line names the finding and points at this paragraph instead of embedding a runnable
+  operator command — a literal operator command inside an executable trips the runtime's
+  own self-guard and would block every operator run of the probe; the operator action is to
+  restart the gateway unit (`hermes gateway restart`, or `systemctl --user restart
+  hermes-gateway.service`) from a shell OUTSIDE the gateway process. The P0 prefix is
+  matched only at the start of the joined line or right after its separator, so a job's own
+  error text that happens to quote the arm's prefix cannot escalate its line to P0.
+  DECLARED BOUNDARIES (silent, never a false alarm): no readable state file, no live record
+  that is both stamped and sha-bearing, an install with no usable stamp and no git HEAD, a
+  dirty worktree at the same commit (the arm compares commits, not file bytes), and the
+  dashboard. `--runtime-stale <state1[:state2]> <install> [proc_root]` is the unit test's
+  seam so the fixtures drive the shipped bytes; `--selfcheck` pins the fire/silence matrix
+  (running AND degraded fire, a stale record still fires behind a fresh sibling, a recycled
+  pid does not, a record without a stamp is not trusted, a boolean/float pid is not
+  trusted, a `)` inside the process comm does not shift the field index, the zero
+  placeholder is rejected), the identity resolution (stamp honoured, a diverging git-source
+  stamp ignored, a short stamp falling back to HEAD), the absence of a runnable command in
+  the line, the P0 prefix position, the seam dispatch end-to-end and the live-pass wiring
+  (call, then append, before the empty-exit), once each.
