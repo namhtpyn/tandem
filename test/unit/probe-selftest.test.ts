@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -552,6 +552,18 @@ const FIXTURE = {
       failure_streak: 0,
       last_run_at: 'x;y',
     },
+    // a whitespace-only name IS no name: the un-watched guard keys on emptiness (#490)
+    {
+      name: ' ',
+      enabled: true,
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:55:00+00:00',
+    },
   ],
 };
 
@@ -721,7 +733,8 @@ describe('prod probe selfcheck', () => {
     // one-shot (durable claim) is not "never fired"
     expect(out).toContain('loopdead:wedged-job no next fire scheduled (state=error) - wedged');
     expect(out).not.toContain('once-inflight-job');
-    expect(lines).toHaveLength(25);
+    expect(out).toContain('loopdead_scan: unnamed enabled job');
+    expect(lines).toHaveLength(26);
     // silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
     // operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
     // inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
@@ -756,9 +769,112 @@ describe('prod probe selfcheck', () => {
       'loopdead:P0!:tandem-triage last fire =2h ago (max gap 60m)',
     );
 
+    // a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
+    const keyedFile = join(dir, 'keyed.json');
+    writeFileSync(
+      keyedFile,
+      JSON.stringify({
+        jobs: {
+          'tandem-triage': {
+            name: ' ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        },
+      }),
+    );
+    const keyed = await $`bash ${script} --loop-liveness ${keyedFile} ${now}`.nothrow().quiet();
+    expect(keyed.stdout.toString()).toContain('loopdead:P0!:tandem-triage ');
+
+    // a padded brain name is neither P0 nor silent: it is watched verbatim
+    const paddedFile = join(dir, 'padded.json');
+    writeFileSync(
+      paddedFile,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'tandem-triage ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const padded = await $`bash ${script} --loop-liveness ${paddedFile} ${now}`.nothrow().quiet();
+    expect(padded.stdout.toString()).toContain('loopdead:tandem-triage  last fire');
+    expect(padded.stdout.toString()).not.toContain('loopdead:P0!:');
+
     // an unreadable scheduler record is an ANOMALY (blind), never silence
     writeFileSync(file, 'not json');
     expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #487/#490: the RUNTIME-REFRESH arm's own dispatch seam (SPEC "Probe versioning") so
+  // these fixtures drive the SHIPPED bytes: a live gateway whose booted code differs from
+  // the install identity emits the finding; every declared boundary stays silent.
+  it('flags a live gateway serving pre-install code through its dispatch seam', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-runtime-'));
+    const inst = join(dir, 'inst');
+    const proc = join(dir, 'proc');
+    mkdirSync(join(proc, '4242'), { recursive: true });
+    mkdirSync(inst, { recursive: true });
+    // /proc/<pid>/stat field 22 is the start stamp the arm matches against the record
+    writeFileSync(
+      join(proc, '4242', 'stat'),
+      `4242 (gateway) S ${[...Array(18).fill('0'), '1000', ...Array(10).fill('0')].join(' ')}\n`,
+    );
+    const INSTALL = 'a'.repeat(40);
+    const BOOTED = 'b'.repeat(40);
+    writeFileSync(
+      join(inst, 'install-stamp.json'),
+      JSON.stringify({ commit: INSTALL, updateMechanism: 'self', payload: 'full', source: 'wheel' }),
+    );
+    const state = (body: unknown) => {
+      const f = join(dir, `state-${crypto.randomUUID()}.json`);
+      writeFileSync(f, JSON.stringify(body));
+      return f;
+    };
+    const live = { gateway_state: 'running', pid: 4242, start_time: 1000, code_sha: BOOTED };
+    const run = async (cands: string) => {
+      const p = await $`bash ${script} --runtime-stale ${cands} ${inst} ${proc}`.nothrow().quiet();
+      expect(p.exitCode, p.stderr.toString()).toBe(0);
+      return p.stdout.toString();
+    };
+
+    const fired = await run(state(live));
+    expect(fired).toContain('runtime_stale: the gateway (pid 4242) booted code bbbbbbbbb but the install is aaaaaaaaa');
+    expect(fired).toContain('SPEC RUNTIME-REFRESH');
+    expect(fired).not.toContain(';');
+    // a degraded gateway still SERVES the stale code; the matching sha is the steady state
+    expect(await run(state({ ...live, gateway_state: 'degraded' }))).toContain('runtime_stale:');
+    expect(await run(state({ ...live, code_sha: INSTALL }))).toBe('');
+    // a matching record never MASKS a stale sibling: candidates are scanned in full
+    expect(await run(`${state({ ...live, code_sha: INSTALL })}:${state(live)}`)).toContain('runtime_stale:');
+    // declared boundaries: silent, never a false alarm
+    for (const boundary of [
+      { ...live, gateway_state: 'stopped' },
+      { ...live, start_time: 999 },
+      { gateway_state: 'running', pid: 4242, code_sha: BOOTED },
+      { ...live, pid: 9999 },
+      { ...live, code_sha: '' },
+      { ...live, code_sha: '0'.repeat(40) },
+    ]) {
+      expect(await run(state(boundary))).toBe('');
+    }
+    // no charset or length rule: a short non-hex sha is still an identity
+    expect(await run(state({ ...live, code_sha: 'zzzz' }))).toContain('runtime_stale:');
+    expect(await run(join(dir, 'absent.json'))).toBe('');
+    expect(await run(state([1, 2]))).toBe('');
+    // the seam refuses a missing install argument instead of alarming on it
+    const usage = await $`bash ${script} --runtime-stale ${state(live)}`.nothrow().quiet();
+    expect(usage.exitCode).toBe(2);
+    expect(usage.stderr.toString()).toContain('usage: --runtime-stale');
     rmSync(dir, { recursive: true, force: true });
   });
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
@@ -771,6 +887,11 @@ describe('prod probe selfcheck', () => {
       ['--strand-sql', '2.78.20', '2'],
       ['--egress-sql'],
       ['--loop-liveness', livenessFixture, '1763344800'],
+      [
+        '--runtime-stale',
+        `${process.env.TMPDIR ?? '/tmp'}/probe-rt-none/state.json`,
+        `${process.env.TMPDIR ?? '/tmp'}/probe-rt-none/inst`,
+      ],
       ['--selfcheck'],
     ]) {
       const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
