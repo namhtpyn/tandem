@@ -502,6 +502,56 @@ const FIXTURE = {
       last_run_at: '2026-11-16T23:00:00+00:00',
       last_error: 'boom; loopdead:P0!:forged',
     },
+    {
+      name: 'wedged-job',
+      enabled: true,
+      state: 'error',
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T20:00:00+00:00',
+      next_run_at: null,
+    },
+    {
+      name: 'once-inflight-job',
+      enabled: true,
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+      run_claim: {
+        at: '2026-11-17T01:40:00+00:00',
+      },
+    },
+    {
+      name: 'P0!:fake',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'look alike name',
+    },
+    {
+      name: 'bad-semicolon-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: 'x;y',
+    },
   ],
 };
 
@@ -667,7 +717,11 @@ describe('prod probe selfcheck', () => {
     expect(out).toContain('loopdead:once-retired-job one-shot never fired');
     // a cause can never forge the escalation prefix (';' is sanitised)
     expect(out).toContain('cause=boom, loopdead:P0!:forged');
-    expect(lines).toHaveLength(22);
+    // a wedged recurring job (next_run_at null) can never fire again; an in-flight
+    // one-shot (durable claim) is not "never fired"
+    expect(out).toContain('loopdead:wedged-job no next fire scheduled (state=error) - wedged');
+    expect(out).not.toContain('once-inflight-job');
+    expect(lines).toHaveLength(25);
     // silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
     // operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
     // inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
