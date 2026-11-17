@@ -1,4 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { $ } from 'bun';
 import { describe, expect, it } from 'vitest';
@@ -103,11 +105,114 @@ describe('prod probe selfcheck', () => {
     expect(twoCol.stdout.toString()).toContain("select 'egressorigin'");
   });
 
+  // #485: the loop's own crons had no no-LLM arm — 33h of dead triage/critic went
+  // unalerted while every product arm stayed green (the designated dead-man, the critic,
+  // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
+  // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
+  // through the shipped dispatch mode: flipping the 2x threshold, dropping the cause
+  // string or dropping the brain-job P0 turns this red.
+  it('flags stale ticks and repeated failures from the scheduler record, P0 for the loop brain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-loop-'));
+    const jobs = {
+      jobs: [
+        {
+          name: 'tandem-prod-watch',
+          enabled: true,
+          schedule: { kind: 'interval', minutes: 10 },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T01:58:00+00:00',
+        },
+        {
+          name: 'tandem-triage',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T00:00:00+00:00',
+        },
+        {
+          name: 'tandem-critic',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 11,23 * * *' },
+          last_status: 'error',
+          failure_streak: 3,
+          last_run_at: '2026-11-16T23:00:00+00:00',
+          last_error: 'InvalidStatus: server rejected WebSocket connection: HTTP 500',
+        },
+        {
+          name: 'nightly-report',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 2 * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-16T02:00:00+00:00',
+        },
+        {
+          name: 'paused-job',
+          enabled: false,
+          schedule: { kind: 'interval', minutes: 10 },
+          last_status: 'error',
+          failure_streak: 9,
+          last_run_at: '2026-11-01T00:00:00+00:00',
+        },
+      ],
+    };
+    const file = join(dir, 'jobs.json');
+    writeFileSync(file, JSON.stringify(jobs));
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const run = async (at = now) => {
+      const proc = await $`bash ${script} --loop-liveness ${file} ${at}`.nothrow().quiet();
+      expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+      return proc.stdout.toString();
+    };
+
+    const out = await run();
+    // running-but-failing: streak >= 2 with the CAUSE carried, and the brain job is P0
+    expect(out.trim().split('\n').filter(Boolean)).toHaveLength(1);
+    expect(out).toContain('loopdead:tandem-critic failing');
+    expect(out).toContain('(interval 720m)');
+    expect(out).toContain('server rejected WebSocket connection: HTTP 500');
+    expect(out).toMatch(/ P0\n?$/);
+    // healthy hourly job at EXACTLY 2x its interval is not stale (strict boundary), a
+    // daily job 24h quiet is inside its 48h budget, the probe never witnesses itself, and
+    // a disabled job's old failure is not a live fault
+    expect(out).not.toContain('tandem-triage');
+    expect(out).not.toContain('nightly-report');
+    expect(out).not.toContain('tandem-prod-watch');
+    expect(out).not.toContain('paused-job');
+
+    // stale-tick term: 6h of silence on an hourly job
+    jobs.jobs[1].last_run_at = '2026-11-16T23:00:00+00:00';
+    writeFileSync(file, JSON.stringify(jobs));
+    const stale = await run();
+    expect(stale).toContain('loopdead:tandem-triage last tick =3h ago');
+    expect(stale).toContain('(interval 60m)');
+
+    // a single failed run is a blip, not a dead loop
+    jobs.jobs[1].last_run_at = '2026-11-17T01:50:00+00:00';
+    Object.assign(jobs.jobs[1], { last_status: 'error', failure_streak: 1, last_error: 'boom' });
+    writeFileSync(file, JSON.stringify(jobs));
+    expect(await run()).not.toContain('tandem-triage');
+
+    // an unreadable scheduler record is an ANOMALY (blind), never silence
+    writeFileSync(file, 'not json');
+    expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
     // The DEFAULT state path derives from TANDEM_PROFILE_DIR — override THAT, so a broken
     // derivation cannot pass by writing the real prod trail (an overridden PROBE_STATE
     // alone would only prove the override works).
-    for (const mode of [['--strand-sql', '2.78.20', '2'], ['--egress-sql'], ['--selfcheck']]) {
+    const livenessFixture = join(mkdtempSync(join(tmpdir(), 'probe-loop-state-')), 'jobs.json');
+    writeFileSync(livenessFixture, JSON.stringify({ jobs: [] }));
+    for (const mode of [
+      ['--strand-sql', '2.78.20', '2'],
+      ['--egress-sql'],
+      ['--loop-liveness', livenessFixture, '1763344800'],
+      ['--selfcheck'],
+    ]) {
       const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
       // TANDEM_PROBE_STATE='' as well: an inherited override would redirect any real
       // write away from the asserted path and green-light a broken derivation

@@ -421,6 +421,83 @@ egress_sql() {
 egress_arm_on() {
   [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
 }
+# LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
+# delivery-preflight outage (WebSocket 500) failed tandem-triage 32x and tandem-critic
+# 3x in a row for 33h while every PRODUCT arm here stayed green, and the designated
+# dead-man (the critic) is itself an LLM cron that died with the provider. The record is
+# the SCHEDULER's own cron/jobs.json, never passes.jsonl: a job that keeps ticking while
+# every run FAILS looks fresh in its trail and dead in reality, so liveness = last
+# SUCCESS. Two terms per enabled job, the probe excluded (it cannot witness its own
+# death): (a) a non-ok last_status at failure_streak >= 2 — running but never succeeding,
+# worded statically so a standing fault dedupes instead of re-alerting every tick; (b)
+# last_run_at older than 2x the schedule interval — the tick itself stopped. Every line
+# carries the job's last_error FIRST line (never swallow the cause) and the loop's BRAIN
+# jobs (tandem-triage / tandem-critic) are P0: their death is the loop's.
+loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
+import json, sys, datetime
+BRAIN = ("tandem-triage", "tandem-critic")
+SELF = "tandem-prod-watch"
+
+def expand(f, lo, hi):
+    vals = set()
+    try:
+        for p in str(f).split(","):
+            p = p.strip()
+            step = 1
+            if "/" in p:
+                p, s = p.split("/", 1)
+                step = int(s)
+            if p in ("*", "?"):
+                a, b = lo, hi
+            elif "-" in p:
+                a, b = (int(x) for x in p.split("-", 1))
+            else:
+                a = b = int(p)
+            vals.update(range(a, b + 1, step))
+    except ValueError:
+        return set()
+    return vals
+
+try:
+    jobs = json.load(open(sys.argv[1])).get("jobs", [])
+    if isinstance(jobs, dict):
+        jobs = list(jobs.values())
+    now = float(sys.argv[2])
+    for j in jobs:
+        name = str(j.get("name") or "")
+        if not name or name == SELF or j.get("enabled") is False:
+            continue
+        sch = j.get("schedule") or {}
+        if sch.get("kind") == "interval":
+            iv = float(sch.get("minutes") or 0)
+        else:
+            f = str(sch.get("expr") or "").split()
+            if len(f) != 5:
+                continue
+            iv = 1440.0 / max(1, len(expand(f[0], 0, 59)) * len(expand(f[1], 0, 23)))
+        if iv <= 0:
+            continue
+        status = str(j.get("last_status") or "").lower()
+        streak = int(j.get("failure_streak") or 0)
+        errs = [l for l in str(j.get("last_error") or j.get("last_failure") or "").splitlines() if l.strip()]
+        err = errs[0][:160] if errs else "no error recorded"
+        p0 = " P0" if name in BRAIN else ""
+        if status not in ("", "ok", "success", "completed", "running") and streak >= 2:
+            print("loopdead:%s failing =2+ consecutive ticks (interval %gm) last_error=%s%s" % (name, iv, err, p0))
+            continue
+        try:
+            ts = str(j.get("last_run_at") or "").replace("Z", "+00:00")
+            age = now - datetime.datetime.fromisoformat(ts).timestamp()
+        except ValueError:
+            print("loopdead:%s last_run_at unparseable (%r) - scheduler record corrupt%s" % (name, j.get("last_run_at"), p0))
+            continue
+        if age > 2 * iv * 60:
+            print("loopdead:%s last tick =%dh ago (interval %gm) last_error=%s%s" % (name, int(age / 3600), iv, err, p0))
+except Exception as e:
+    msg = ("%s: %s" % (type(e).__name__, e)).replace("\n", " ")[:160]
+    print("loopdead_scan: unreadable jobs.json (%s)" % msg)
+PY
+}
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
   [ "$(own_predicate 2.78.20 2)" != "s.category = 'in_review'" ] || { echo "selfcheck fail: own block branch"; exit 1; }
@@ -663,6 +740,49 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
   printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
+  # LOOP-LIVENESS (#485): the shipped function driven by fixtures — a flipped 2x
+  # threshold, a dropped cause string or a missing P0 marker goes red here.
+  LLT=$(mktemp -d)
+  cat > "$LLT/jobs.json" <<'FIX'
+{"jobs":[
+ {"name":"tandem-prod-watch","enabled":true,"schedule":{"kind":"interval","minutes":10},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T01:58:00+00:00"},
+ {"name":"tandem-triage","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T00:00:00+00:00"},
+ {"name":"tandem-critic","enabled":true,"schedule":{"kind":"cron","expr":"0 11,23 * * *"},"last_status":"error","failure_streak":3,"last_run_at":"2026-11-16T23:00:00+00:00","last_error":"InvalidStatus: server rejected WebSocket connection: HTTP 500"},
+ {"name":"nightly-report","enabled":true,"schedule":{"kind":"cron","expr":"0 2 * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T02:00:00+00:00"},
+ {"name":"paused-job","enabled":false,"schedule":{"kind":"interval","minutes":10},"last_status":"error","failure_streak":9,"last_run_at":"2026-11-01T00:00:00+00:00"}
+]}
+FIX
+  LLN=$(date -u -d '2026-11-17T02:00:00Z' +%s)
+  LLR=$(loop_liveness "$LLT/jobs.json" "$LLN")
+  printf '%s' "$LLR" | grep -q '^loopdead:tandem-critic failing =2+ consecutive ticks (interval 720m)' || { echo "selfcheck fail: critic streak gate"; exit 1; }
+  printf '%s' "$LLR" | grep -q 'HTTP 500' || { echo "selfcheck fail: last_error not carried"; exit 1; }
+  printf '%s' "$LLR" | grep -q '^loopdead:tandem-critic.* P0$' || { echo "selfcheck fail: brain job not P0"; exit 1; }
+  printf '%s' "$LLR" | grep -q '^loopdead:tandem-triage' && { echo "selfcheck fail: job at exactly 2x interval alerted"; exit 1; }
+  printf '%s' "$LLR" | grep -q 'nightly-report' && { echo "selfcheck fail: 24h job alerted inside 2x"; exit 1; }
+  printf '%s' "$LLR" | grep -q 'paused-job' && { echo "selfcheck fail: disabled job alerted"; exit 1; }
+  printf '%s' "$LLR" | grep -q 'tandem-prod-watch' && { echo "selfcheck fail: probe witnessed its own death"; exit 1; }
+  python3 - "$LLT/jobs.json" <<'FIX2'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+for j in d["jobs"]:
+    if j["name"] == "tandem-triage":
+        j["last_run_at"] = "2026-11-16T23:00:00+00:00"
+json.dump(d, open(p, "w"))
+FIX2
+  printf '%s' "$(loop_liveness "$LLT/jobs.json" "$LLN")" | grep -q '^loopdead:tandem-triage last tick =3h ago (interval 60m)' || { echo "selfcheck fail: stale tick term"; exit 1; }
+  printf 'not json' > "$LLT/jobs.json"
+  printf '%s' "$(loop_liveness "$LLT/jobs.json" "$LLN")" | grep -q '^loopdead_scan: unreadable jobs.json' || { echo "selfcheck fail: unreadable jobs.json silent"; exit 1; }
+  rm -rf "$LLT"
+  # WIRING pin: the live pass must CONSUME the arm (run it once, append once, surface its
+  # stderr) — deleting the pass block keeps every fixture green and ships a dead detector.
+  # Anchored at column 0 so each pin cannot match its own grep line.
+  LLC=$(grep -c '^LLOUT=' "$0" 2>/dev/null || true)
+  [ "$LLC" = "1" ] || { echo "selfcheck fail: loop-liveness pass missing ($LLC)"; exit 1; }
+  LLA=$(grep -c '^[[:space:]]*\[ -n "\$L" \] && anom' "$0" 2>/dev/null || true)
+  [ "$LLA" = "1" ] || { echo "selfcheck fail: loop-liveness append missing ($LLA)"; exit 1; }
+  LLE=$(grep -c '^\[ -s "\$LLERR" \] && anom' "$0" 2>/dev/null || true)
+  [ "$LLE" = "1" ] || { echo "selfcheck fail: loop-liveness stderr surface missing ($LLE)"; exit 1; }
   echo "ok probe selfcheck"
   exit 0
 fi
@@ -682,6 +802,13 @@ if [ "${1:-}" = "--strand-sql" ]; then
   # the arms' regression test seeds a test DB and runs these bytes (no network, no state)
   strand_sql "${2:-}" "${3:-}"
   printf '\n'
+  exit 0
+fi
+if [ "${1:-}" = "--loop-liveness" ]; then
+  # emit the liveness lines for an explicit jobs.json (+ optional now epoch): the arm's
+  # unit test drives THESE bytes with fixtures — no network, no state writes.
+  [ -n "${2:-}" ] || { echo "usage: --loop-liveness <jobs.json> [now_epoch]" >&2; exit 2; }
+  loop_liveness "$2" "${3:-$(date -u +%s)}"
   exit 0
 fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
@@ -1280,6 +1407,17 @@ PY
 [ "${CREEP:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP cron schedule(s) encode weekday/weekend cycles")
 case "$CREEP2" in ''|*[!0-9]*) anom+=("creep_unreadable: skill scan failed"); CREEP2=0 ;; esac
 [ "${CREEP2:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP2 hit(s) in tandem-ops skill — critic purges (law/negation text excepted)")
+
+# 6b. LOOP LIVENESS (#485): the loop's own crons had no no-LLM arm — 33h of dead
+# triage/critic went unalerted because the product arms above watch prod, not the loop,
+# and the designated dead-man (the critic) is itself an LLM cron. See loop_liveness.
+LLERR=$(mktemp)
+LLOUT=$(loop_liveness "$PROFILE_DIR/cron/jobs.json" 2>"$LLERR")
+[ -s "$LLERR" ] && anom+=("loopdead_stderr: $(head -1 "$LLERR" | cut -c1-160)")
+rm -f "$LLERR"
+while IFS= read -r L; do
+  [ -n "$L" ] && anom+=("$L")
+done <<< "$LLOUT"
 
 
 # 7. pending memory proposals backing up = nobody triaging the queue
