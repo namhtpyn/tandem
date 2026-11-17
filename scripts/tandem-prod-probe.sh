@@ -205,6 +205,38 @@ park_order() {
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
 }
+# HOME-CATEGORY RECORD floor (#491, 2.78.41): the gating auto-block note's payload carries
+# the recorded home's CATEGORY at write time (`homeCategory`, minted in the block's own
+# transaction), so the RE-KEYED-HOME arm can separate the legal #423 settle-then-reblock
+# (the recorded category was ALREADY terminal) from a home re-keyed terminal AFTER the
+# record (recorded non-terminal, resolves terminal now) over an all-older round — the
+# strand no ordering term can see, because every verdict predates the note. The field
+# exists only on notes written by a floored image; a pre-floor note carries no category
+# and its row falls back to the ordering term, which is all a note-less row ever had.
+# RE-DERIVE the floor for the release that actually ships the writer — never assume it.
+HOME_CATEGORY_FLOOR=2.78.41
+home_floor_met() {
+  [ "$(at_least "$HOME_CATEGORY_FLOOR" "${1:-}")" = "1" ]
+}
+# the block origin's recorded-at-block category, read from the origin's OWN newest
+# `auto-blocked:` record (never the task-wide newest gating note): a NON-terminal record
+# whose home RESOLVES terminal now means the re-key landed AFTER the record. The round
+# must be ALL-OLDER — at least one verdict and NONE newer than the record — which is the
+# legal #423 silence the term exists to break, and #423 itself never satisfies the
+# non-terminal category term. Empty below the floor and on a note-less row.
+home_category_term() {
+  home_floor_met "${1:-}" || return 1
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'auto-blocked:%%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategory' is not null and ah.payload->>'homeCategory' not in ('done', 'cancelled') and mh.created_at = %s) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > %s)" "$(block_record_ts)" "$(block_record_ts)"
+}
+# the block-origin half of the RE-KEYED-HOME arm: the per-verdict ordering term, OR the
+# category term at/above its floor. Below the floor the expression is the ordering term
+# alone, byte-identical to the pre-#491 arm.
+rekey_pre_half() {
+  local order cat
+  order=$(paused_order_any "${1:-}" "$(block_record_ts)")
+  cat=$(home_category_term "${1:-}")
+  if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
+}
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
 # parked/stranded round a legal egress or a teardown regression left behind. The note-dispatch
@@ -353,7 +385,7 @@ strand_sql() {
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(block_record_ts)")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -1077,6 +1109,24 @@ if [ "${1:-}" = "--selfcheck" ]; then
   paused_order_any 2.78.38 && { echo "selfcheck fail: floored per-verdict ordering accepted a missing record"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.37 2)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor rekey arm reads a record"; exit 1; }
   printf '%s' "$(strand_orphan_arm 2.78.37 2)" | grep -qF "auto-blocked:%" && { echo "selfcheck fail: pre-floor orphan arm reads a record"; exit 1; }
+  # HOME-CATEGORY RECORD term (#491): floor matrix, the term's own bytes, and its scope —
+  # below the floor the arm must stay byte-identical to the ordering-only shape (the field
+  # does not exist on pre-floor notes), and the term rides the BLOCK half only (the park
+  # origin carries no category record: declared boundary).
+  home_floor_met 2.78.40 && { echo "selfcheck fail: home floor met below 2.78.41"; exit 1; }
+  home_floor_met 2.78.41 || { echo "selfcheck fail: home floor off at 2.78.41"; exit 1; }
+  home_floor_met 2.78.100 || { echo "selfcheck fail: home floor off above the floor"; exit 1; }
+  home_floor_met 3.0.0 || { echo "selfcheck fail: home floor off at the next major"; exit 1; }
+  home_floor_met '' && { echo "selfcheck fail: home floor met on an empty version"; exit 1; }
+  home_floor_met guard-error && { echo "selfcheck fail: home floor met on a non-semver"; exit 1; }
+  home_floor_met 2.78.41-rc1 && { echo "selfcheck fail: home floor met on a pre-release"; exit 1; }
+  home_category_term 2.78.40 && { echo "selfcheck fail: home-category term emitted below its floor"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: home-category term lost the record read"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "not in ('done', 'cancelled')" || { echo "selfcheck fail: home-category term lost the non-terminal record test"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at) >" || { echo "selfcheck fail: home-category term lost the all-older round test"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "2" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the

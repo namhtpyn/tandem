@@ -272,9 +272,23 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db, a
           .where(and(eq(tasks.id, gateId), ne(tasks.status, BLOCKED_STATUS)))
           .returning({ id: tasks.id });
         if (rows.length === 0) return false;
-        await logActivity(gateId, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open }, exec, {
-          publish: false,
-        });
+        // HOME-CATEGORY RECORD (#491): the note carries the home's CATEGORY from the
+        // block's own transaction — the probe's RE-KEYED-HOME arm reads it to tell the
+        // legal #423 settle-then-reblock (recorded category already terminal) from a home
+        // re-keyed terminal while the task sat blocked (recorded non-terminal, resolves
+        // terminal now, its pending turn superseded by the owner-settled teardown, an
+        // all-older round). `pre` is the walk's read; the category is re-read HERE, so a
+        // re-key landing between the walk and the flip records the category the block
+        // actually committed against. A home naming no status row records null — that
+        // dangling shape belongs to the ORPHAN-HOME arm, never this field.
+        const homeCategory = (await statusCategoryMap(exec)).get(pre) ?? null;
+        await logActivity(
+          gateId,
+          `auto-blocked: ${open} subtask(s) open`,
+          { autoBlocked: true, open, homeCategory },
+          exec,
+          { publish: false },
+        );
         return true;
       };
       if (ex === db) {

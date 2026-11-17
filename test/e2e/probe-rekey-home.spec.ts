@@ -353,4 +353,131 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await sql.end();
     }
   });
+
+  // #491: the CATEGORY TERM. The home's category AT BLOCK TIME splits the LATE re-key
+  // (recorded non-terminal while the home resolves terminal now: the status was re-keyed
+  // while the task sat blocked, its pending turn superseded by the owner-settled teardown,
+  // every verdict older than the note) from the legal #423 settle (recorded category was
+  // already terminal) AND from the PRE-BLOCK re-key, which records the terminal category
+  // and stays a DECLARED false negative (#491 residual (c)). The block note carries the
+  // category from 2.78.41 (HOME-CATEGORY RECORD); the term is floored there, rides the
+  // BLOCK half only (the park origin records no category: declared boundary), and a
+  // note-less row falls back to the ordering term it always had.
+  test('home-category record splits the late re-key from the #423 settle and the pre-block residual (#491)', async () => {
+    const below = await $`bash ${script} --strand-sql 2.78.40 2`.nothrow().quiet();
+    expect(below.exitCode, below.stderr.toString()).toBe(0);
+    expect(below.stdout.toString(), 'the term must not exist below its floor').not.toContain('homeCategory');
+    const at = await $`bash ${script} --strand-sql 2.78.41 2`.nothrow().quiet();
+    expect(at.exitCode, at.stderr.toString()).toBe(0);
+    expect(at.stdout.toString()).toContain("ah.payload->>'homeCategory'");
+    expect(at.stdout.toString(), 'the term rides the block half only').not.toContain("mh.body like 'review parked");
+
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const lateRekey = `probe-homecat-rekey-${tag}`; // FIRES: recorded in_review, resolves done, all-older
+      const preBlockRekey = `probe-homecat-settle-${tag}`; // silent: the re-key predates the block, so it records done
+      const parkRecorded = `probe-homecat-park-${tag}`; // silent: the park half carries no category term
+      const noteLessOld = `probe-homecat-noteless-old-${tag}`; // silent: MIN fallback, verdict older than the stamp
+      const noteLessNew = `probe-homecat-noteless-new-${tag}`; // fires: the fallback's own counterexample
+      const recordedLive = `probe-homecat-live-${tag}`; // silent: a PENDING row in max(round)
+      const recordedDoing = `probe-homecat-doing-${tag}`; // silent: the home still resolves non-terminal
+
+      const seedTask = async (id: string, pre: string | null, park: string | null, writtenMinutesAgo: number) => {
+        await sql.unsafe(
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
+           values ($1, $2, $3, $4, $5, now(), now() - ($6::int * interval '1 minute'))`,
+          [id, id, BLOCKED, pre, park, writtenMinutesAgo],
+        );
+      };
+      const seedRecord = async (id: string, minutesAgo: number, body: string, meta: Record<string, unknown> | null) => {
+        const msgId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, author_id, body, created_at)
+           values ($1, $2, null, $3, now() - ($4::int * interval '1 minute'))`,
+          [msgId, id, body, minutesAgo],
+        );
+        await sql.unsafe('insert into task_message_activities (message_id, payload) values ($1, $2)', [
+          msgId,
+          { kind: 'STATUS', ...(meta ?? {}) },
+        ]);
+      };
+      const seedVerdict = async (id: string, minutesAgo: number, status = 'APPROVED', round = 1) => {
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, $4, $3, null, now() - ($5::int * interval '1 minute'), now() - ($5::int * interval '1 minute'))`,
+          [`rev-${crypto.randomUUID()}`, id, status, round, minutesAgo],
+        );
+      };
+
+      // the strand: the note recorded in_review, the home resolves done, every verdict older
+      await seedTask(lateRekey, DONE, null, 5);
+      await seedRecord(lateRekey, 5, 'auto-blocked: 1 subtask(s) open', {
+        autoBlocked: true,
+        open: 1,
+        homeCategory: 'in_review',
+      });
+      await seedVerdict(lateRekey, 10);
+      // the legal #423 re-block: the recorded category was ALREADY terminal
+      await seedTask(preBlockRekey, DONE, null, 5);
+      await seedRecord(preBlockRekey, 5, 'auto-blocked: 1 subtask(s) open', {
+        autoBlocked: true,
+        open: 1,
+        homeCategory: 'done',
+      });
+      await seedVerdict(preBlockRekey, 10);
+      // the park origin records no category: the term must not ride it (declared boundary)
+      await seedTask(parkRecorded, null, DONE, 5);
+      await seedRecord(parkRecorded, 5, 'review parked — infra down', { homeCategory: 'in_review' });
+      await seedVerdict(parkRecorded, 10);
+      // a note-less row keeps the ordering-only fallback: older verdict silent, newer fires
+      await seedTask(noteLessOld, DONE, null, 5);
+      await seedVerdict(noteLessOld, 10);
+      await seedTask(noteLessNew, DONE, null, 5);
+      await seedVerdict(noteLessNew, 2);
+      // the live-round clause still owns the exclusion
+      await seedTask(recordedLive, DONE, null, 5);
+      await seedRecord(recordedLive, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedVerdict(recordedLive, 10);
+      await seedVerdict(recordedLive, 4, 'PENDING');
+      // a home that still resolves non-terminal is not this shape, whatever the record says
+      await seedTask(recordedDoing, DOING, null, 5);
+      await seedRecord(recordedDoing, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedVerdict(recordedDoing, 10);
+
+      const armOf = async (probeSql: string) => {
+        const rows = (await sql.unsafe(probeSql)) as Record<string, unknown>[];
+        const arm = rows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'rekeyhome');
+        expect(arm, 'the emitted SQL must carry the re-keyed-home arm').toBeTruthy();
+        return new Set(String(arm?.[1] ?? 'none').split(','));
+      };
+
+      const pre = await armOf(below.stdout.toString().trim());
+      expect(
+        pre,
+        'below the floor the late re-key records no category and reads as the legal #423 shape',
+      ).not.toContain(lateRekey);
+      expect(pre, 'the note-less fallback is unchanged below the floor').toContain(noteLessNew);
+
+      const post = await armOf(at.stdout.toString().trim());
+      expect(post, 'a home re-keyed terminal AFTER the record over an all-older round is the strand').toContain(
+        lateRekey,
+      );
+      expect(
+        post,
+        'the PRE-BLOCK re-key records the already-terminal category and stays the DECLARED residual (#491(c))',
+      ).not.toContain(preBlockRekey);
+      expect(post, 'the park origin carries no category record: a terminal park home is not this term').not.toContain(
+        parkRecorded,
+      );
+      expect(post, 'a note-less row falls back to the ordering term: older verdict stays silent').not.toContain(
+        noteLessOld,
+      );
+      expect(post, 'a note-less row keeps the ordering fallback counterexample').toContain(noteLessNew);
+      expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(recordedLive);
+      expect(post, 'a home still resolving non-terminal is not this shape').not.toContain(recordedDoing);
+    } finally {
+      await sql.end();
+    }
+  });
 });

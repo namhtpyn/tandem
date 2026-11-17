@@ -569,12 +569,29 @@ describe('GUARDED GATING WRITE (#208)', () => {
     expect(note).toBeDefined();
     expect(note?.via).toBe('tx');
     expect(note?.publish).toBe(false);
-    expect(note?.meta).toMatchObject({ autoBlocked: true, open: 1 });
+    expect(note?.meta).toMatchObject({ autoBlocked: true, open: 1, homeCategory: 'in_review' });
     // WRITER→PROBE CONTRACT: the paused-row arms only count a record whose 1:1 payload
     // carries kind='STATUS' — a NOTE kind here silently disables the ordering term
     expect(note?.kind).toBe('STATUS');
     // own transaction: both change events fire after commit
     expect(h.publishCount).toBe(2);
+    // HOME-CATEGORY RECORD (#491): the value is the HOME's category at block time, never a
+    // constant — a re-keyed home records the category the block actually committed against,
+    // which is what separates the #423 legal settle from the re-key strand.
+    h.notes.length = 0;
+    h.childrenByParent.set('q', [{ status: STATUS.doing }]);
+    row('q', { status: STATUS.inReview });
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    await refreshParentGating('q');
+    const rekeyed = h.notes.find((n) => n.body.startsWith('auto-blocked:'));
+    expect(rekeyed?.meta).toMatchObject({ homeCategory: 'done' });
+    // a home status missing from the map records NULL, never a fabricated category
+    h.notes.length = 0;
+    h.childrenByParent.set('r', [{ status: STATUS.doing }]);
+    row('r', { status: 'ghost-status' });
+    await refreshParentGating('r');
+    const ghost = h.notes.find((n) => n.body.startsWith('auto-blocked:'));
+    expect(ghost?.meta).toMatchObject({ homeCategory: null });
   });
 
   it('the borrowed restore note rides the caller, defers its events AND its resume (#466/#479)', async () => {
