@@ -427,10 +427,11 @@ egress_arm_on() {
 # dead-man (the critic) is itself an LLM cron that died with the provider. The record is
 # the SCHEDULER's own cron/jobs.json, never passes.jsonl: a job that keeps ticking while
 # every run FAILS looks fresh in its trail and dead in reality, so liveness = last
-# SUCCESS and success includes deliverability.
+# SUCCESS and success includes deliverability and completion.
 # Terms per enabled, non-paused/non-completed job (the probe excluded — it cannot witness
 # its own death), each carrying the CAUSE (never swallowed):
-#   (a) running-but-failing: a non-ok last_status at failure_streak >= 2.
+#   (a) running-but-failing: a non-ok last_status at failure_streak >= 2. An operator
+#       cancel is NOT a failure (Hermes clears its error and keeps the streak).
 #   (a2) NOT DELIVERED: last_status = delivery_failed — Hermes counts that as a
 #       SUCCESSFUL run with failure_streak forced to 0, so without its own term a job
 #       whose every run reaches nobody is invisible. delivery_queued is IN PROGRESS (the
@@ -438,25 +439,36 @@ egress_arm_on() {
 #   (b) stale fire: the last fire stamp older than 2x the job's own MAX schedule gap.
 #       The stamp is last_dispatch.dispatched_at when present (a long run in flight is not
 #       a dead loop), else last_run_at; a job that never ran has no baseline and stays
-#       silent. The gap is the longest interval between consecutive fires, not the mean
-#       cadence — a business-hours or weekday cron must not alert on its overnight /
-#       weekend gap.
+#       silent.
+#   (b2) dispatched but never completing: fires keep advancing while last_run_at sits
+#       beyond 4x the gap — a hung run or a wedged handoff, the same "runs but lands
+#       nowhere" class as (a2).
 #   (c) a schedule whose gap cannot be derived is an anomaly, never silence: an
 #       un-watched job is not a green one.
-# Worded statically and the repeat-suppression key masks volatile cause tails, so a
-# standing fault alerts once instead of every 10-min tick. The loop's BRAIN jobs
+# The gap is the LONGEST legitimate gap between two fires, never the mean cadence, and it
+# is enumerated exactly over an 8-year day horizon from the cron fields (union semantics
+# when day-of-month AND day-of-week are both restricted, named months/weekdays, dom 29-31
+# reality). Worded statically and the repeat-suppression key masks volatile cause tails,
+# so a standing fault alerts once instead of every 10-min tick. The loop's BRAIN jobs
 # (tandem-triage / tandem-critic) are P0: their death is the loop's.
 loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
-import json, re, sys, datetime
+import datetime, json, re, sys
 BRAIN = ("tandem-triage", "tandem-critic")
 SELF = "tandem-prod-watch"
-OK_STATUS = {"", "ok", "success", "completed", "delivery_queued"}
+OK_STATUS = {"ok", "success", "completed", "cancelled", "delivery_queued"}
 EXC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning)\b")
+NAMES = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+         "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+         "SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
+HORIZON_DAYS = 8 * 366 + 1
 
 def expand(f, lo, hi):
+    f = str(f)
+    for name, val in NAMES.items():
+        f = re.sub(r"\b%s\b" % name, str(val), f, flags=re.I)
     vals = set()
     try:
-        for p in str(f).split(","):
+        for p in f.split(","):
             p = p.strip()
             step = 1
             if "/" in p:
@@ -478,15 +490,6 @@ def expand(f, lo, hi):
         return set()
     return vals
 
-def max_spread(vals, period, unit):
-    """Longest gap between consecutive selections of a repeating cycle, in `unit`."""
-    v = sorted(vals)
-    if not v:
-        return 0
-    gaps = [b - a for a, b in zip(v, v[1:])]
-    gaps.append(v[0] + period - v[-1])
-    return max(gaps) * unit
-
 def max_gap_minutes(sch):
     """Longest legitimate gap between two fires, in minutes (0 = underivable)."""
     kind = str(sch.get("kind") or "")
@@ -502,26 +505,35 @@ def max_gap_minutes(sch):
     mi, hr = expand(f[0], 0, 59), expand(f[1], 0, 23)
     if not mi or not hr:
         return 0.0
-    times = sorted(h * 60 + m for h in hr for m in mi)  # exact minute-of-day fire times
-    intraday = max([y - x for x, y in zip(times, times[1:])] + [times[0] + 1440 - times[-1]])
-    dom, mon, dow = f[2], f[3], f[4]
-    day_span = 1
-    if dom not in ("*", "?"):
-        d = expand(dom, 1, 31)
-        if not d:
-            return 0.0
-        day_span = max_spread(d, 31, 1)
-    elif dow not in ("*", "?"):
-        w = expand(dow, 0, 7)
-        if not w:
-            return 0.0
-        day_span = max_spread(w, 7, 1)
-    if mon not in ("*", "?"):
-        m = expand(mon, 1, 12)
-        if not m:
-            return 0.0
-        day_span *= max_spread(m, 12, 1)
-    return (day_span - 1) * 1440 + intraday
+    times = sorted(h * 60 + m for h in hr for m in mi)
+    dom_s = None if f[2] in ("*", "?") else expand(f[2], 1, 31)
+    mon_s = None if f[3] in ("*", "?") else expand(f[3], 1, 12)
+    dow_s = None if f[4] in ("*", "?") else expand(f[4], 0, 7)
+    if (dom_s is not None and not dom_s) or (mon_s is not None and not mon_s) or (dow_s is not None and not dow_s):
+        return 0.0
+    if dow_s is not None and 7 in dow_s:  # cron 0 and 7 are both Sunday
+        dow_s = (dow_s - {7}) | {0}
+    day = datetime.date(2024, 1, 1)
+    fire_days = []
+    for _ in range(HORIZON_DAYS):
+        if mon_s is None or day.month in mon_s:
+            wd = (day.weekday() + 1) % 7  # python Mon=0 -> cron Sun=0
+            if dom_s is not None and dow_s is not None:
+                ok = day.day in dom_s or wd in dow_s  # cron fires on the UNION
+            elif dom_s is not None:
+                ok = day.day in dom_s
+            elif dow_s is not None:
+                ok = wd in dow_s
+            else:
+                ok = True
+            if ok:
+                fire_days.append(day)
+        day += datetime.timedelta(days=1)
+    if not fire_days:
+        return 0.0
+    gaps = [(b - a).days * 1440 - times[-1] + times[0] for a, b in zip(fire_days, fire_days[1:])]
+    wrap = ((fire_days[0] + datetime.timedelta(days=HORIZON_DAYS)) - fire_days[-1]).days * 1440 - times[-1] + times[0]
+    return float(max(gaps + [wrap]))
 
 def stamp(v):
     d = datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
@@ -530,11 +542,11 @@ def stamp(v):
     return d.timestamp()
 
 def cause_of(j, prefer):
-    """First MEANINGFUL line: an exception-class line, else a 'reason:' line, else the
-    first non-title line — the scheduler's own prompt title ('# Cron Job: …') is not a cause."""
+    """First MEANINGFUL line: an exception-class line, else a 'reason'/'failed' line, else
+    the first line that is not the scheduler's prompt title ('# Cron Job: …')."""
     for key in prefer:
         raw = j.get(key)
-        if isinstance(raw, dict) and key == "last_fire_error":
+        if key == "last_fire_error" and isinstance(raw, dict):
             raw = raw.get("detail")
         lines = [re.sub(r"\s+", " ", l).strip() for l in str(raw or "").splitlines() if l.strip()]
         lines = [l for l in lines if not l.startswith("#")]
@@ -567,7 +579,9 @@ def one(j, now, name):
     if str(sch.get("kind") or "") == "once":
         if j.get("last_run_at") or status in ("ok", "success", "completed"):
             return None
-        if sch.get("run_at") and now > stamp(sch["run_at"]) + 3600:
+        if not sch.get("run_at"):
+            return "loopdead:%s unsupported schedule (once without run_at) un-watched%s" % (name, p0)
+        if now > stamp(sch["run_at"]) + 3600:  # an hour of grace: the fire may be in flight
             return "loopdead:%s one-shot never fired (run_at %s) cause=%s%s" % (
                 name, sch["run_at"], cause, p0)
         return None
@@ -584,6 +598,11 @@ def one(j, now, name):
     if tick is not None and now - tick > 2 * iv * 60:
         return "loopdead:%s last fire %s ago (max gap %gm) cause=%s%s" % (
             name, age_text(now - tick), iv, cause, p0)
+    if tick is not None and j.get("last_run_at") not in (None, ""):
+        done = stamp(j["last_run_at"])
+        if now - done > 4 * iv * 60:
+            return "loopdead:%s dispatched but no completion for %s (max gap %gm) cause=%s%s" % (
+                name, age_text(now - done), iv, cause, p0)
     return None
 
 try:
@@ -868,8 +887,8 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
   # LOOP-LIVENESS (#485): the shipped function driven by fixtures — every term, every
   # silence, the cause selection and the escalation token are pinned; a flipped
-  # threshold, a lost self-exclusion, a dropped cause or a mean-cadence regression goes
-  # red here.
+  # threshold, a lost self-exclusion, a mean-cadence or union-semantics regression, or a
+  # dropped cause goes red here.
   LLT=$(mktemp -d)
   cat > "$LLT/jobs.json" <<'FIX'
 {"jobs":[
@@ -882,16 +901,25 @@ if [ "${1:-}" = "--selfcheck" ]; then
  {"name":"single-failure-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"error","failure_streak":1,"last_run_at":"2026-11-17T01:45:00+00:00","last_error":"blip"},
  {"name":"undelivered-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_failed","failure_streak":0,"last_run_at":"2026-11-17T01:30:00+00:00","last_error":"run completed","last_delivery_error":"discord: channel not found"},
  {"name":"queued-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_queued","failure_streak":0,"last_run_at":"2026-11-17T01:45:00+00:00"},
+ {"name":"queued-streak-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"delivery_queued","failure_streak":2,"last_run_at":"2026-11-17T01:45:00+00:00"},
+ {"name":"cancelled-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"cancelled","failure_streak":5,"last_run_at":"2026-11-17T01:45:00+00:00"},
  {"name":"never-run-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":null,"failure_streak":0,"last_run_at":null},
  {"name":"inflight-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_dispatch":{"dispatched_at":"2026-11-17T01:59:00+00:00"}},
+ {"name":"no-completion-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T20:00:00+00:00","last_dispatch":{"dispatched_at":"2026-11-17T01:59:00+00:00"}},
  {"name":"stale-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_error":"last successful run"},
  {"name":"interval-job","enabled":true,"schedule":{"kind":"interval","minutes":10},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T01:35:00+00:00"},
  {"name":"title-cause-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_error":"# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom"},
  {"name":"fire-error-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-16T23:00:00+00:00","last_dispatch":{"dispatched_at":"2026-11-16T23:00:00+00:00"},"last_fire_error":{"detail":"dispatch handoff missed the fire window"}},
  {"name":"monthly-drill","enabled":true,"schedule":{"kind":"cron","expr":"0 3 1 * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-01T03:05:00+00:00"},
  {"name":"quarterly-job","enabled":true,"schedule":{"kind":"cron","expr":"0 3 1 */3 *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-10-01T03:05:00+00:00"},
+ {"name":"annual-job","enabled":true,"schedule":{"kind":"cron","expr":"0 9 * 2 *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-02-28T09:00:00+00:00"},
+ {"name":"named-month-job","enabled":true,"schedule":{"kind":"cron","expr":"0 9 1 JAN *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-01-01T09:05:00+00:00"},
  {"name":"weekday-job","enabled":true,"schedule":{"kind":"cron","expr":"0 4 * * 1-5"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-13T04:05:00+00:00"},
+ {"name":"six-field-job","enabled":true,"schedule":{"kind":"cron","expr":"0 0 9 * * 1-5"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-10T09:00:00+00:00"},
+ {"name":"union-job","enabled":true,"schedule":{"kind":"cron","expr":"0 9 1 * 1"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-10-25T09:00:00+00:00"},
  {"name":"once-job","enabled":true,"schedule":{"kind":"once","run_at":"2026-11-17T00:00:00+00:00"},"last_status":null,"failure_streak":0,"last_run_at":null},
+ {"name":"once-recent-job","enabled":true,"schedule":{"kind":"once","run_at":"2026-11-17T01:45:00+00:00"},"last_status":null,"failure_streak":0,"last_run_at":null},
+ {"name":"once-norunat-job","enabled":true,"schedule":{"kind":"once"},"last_status":null,"failure_streak":0,"last_run_at":null},
  {"name":"unsupported-job","enabled":true,"schedule":{"kind":"cron","expr":"0 0 * *"},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-17T01:00:00+00:00"},
  {"name":"paused-state-job","enabled":true,"state":"paused","schedule":{"kind":"interval","minutes":10},"last_status":"ok","failure_streak":0,"last_run_at":"2026-11-01T00:00:00+00:00"},
  {"name":"bad-record-job","enabled":true,"schedule":{"kind":"cron","expr":"0 * * * *"},"last_status":"ok","failure_streak":0,"last_run_at":"not-a-time"}
@@ -902,24 +930,32 @@ FIX
   # (a) running-but-failing at EXACTLY streak 2, cause carried, brain job P0
   printf '%s\n' "$LLR" | grep -qxF 'loopdead:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0' || { echo "selfcheck fail: critic streak gate"; exit 1; }
   printf '%s\n' "$LLR" | grep -qxF 'loopdead:streak2-job failing >=2 consecutive ticks cause=boom' || { echo "selfcheck fail: streak=2 boundary"; exit 1; }
-  # (a2) delivery_failed = run landed and reached nobody; the DELIVERY cause wins, and a
-  # queued delivery is in progress, not a fault
+  # (a2) delivery_failed = run landed and reached nobody; the DELIVERY cause wins
   printf '%s\n' "$LLR" | grep -qxF 'loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found' || { echo "selfcheck fail: delivery term"; exit 1; }
-  # (b) stale fire: dispatch stamp is the baseline, age in minutes under an hour
+  # (b) stale fire: dispatch stamp is the baseline, sub-hour ages in minutes
   printf '%s\n' "$LLR" | grep -qxF 'loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run' || { echo "selfcheck fail: stale fire term"; exit 1; }
   printf '%s\n' "$LLR" | grep -qxF 'loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded' || { echo "selfcheck fail: sub-hour age"; exit 1; }
-  # cause selection: the scheduler's prompt title is not a cause; last_fire_error is one
+  # (b2) fires keep advancing but nothing completes
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:no-completion-job dispatched but no completion for =6h (max gap 60m) cause=no error recorded' || { echo "selfcheck fail: no-completion term"; exit 1; }
+  # cause selection: the prompt title is not a cause; last_fire_error is one
   printf '%s\n' "$LLR" | grep -qF 'loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom' || { echo "selfcheck fail: cause skips the title line"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'cause=dispatch handoff missed the fire window' || { echo "selfcheck fail: last_fire_error cause"; exit 1; }
-  # (c) a one-shot that never fired, an underivable schedule and a corrupt record are
-  # anomalies — and one corrupt record never blinds the rest of the scan
-  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
-  printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
+  # gap derivation: union(dom,dow) semantics, seconds-first exprs, political months; one
+  # corrupt record never blinds the rest of the scan
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:union-job last fire =545h ago (max gap 10080m)' || { echo "selfcheck fail: dom/dow union gap"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:six-field-job last fire =161h ago (max gap 4320m)' || { echo "selfcheck fail: six-field expr"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-record-job record invalid' || { echo "selfcheck fail: bad record not isolated"; exit 1; }
-  # silences: healthy hourly inside 2x, 24h inside 48h, a single failure, queued delivery,
-  # disabled, paused state, never-run, in-flight, the dom monthly and quarterly drifts, the
-  # weekday cron's weekend gap, and the probe itself
-  for QUIET in tandem-triage nightly-report single-failure-job queued-job paused-job paused-state-job never-run-job inflight-job monthly-drill quarterly-job weekday-job tandem-prod-watch; do
+  # (c) one-shots and underivable schedules are anomalies, never silence
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched' || { echo "selfcheck fail: once without run_at silent"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
+  # exactly these 14 lines: silence on a healthy record is as load-bearing as the alert
+  LLC2=$(printf '%s\n' "$LLR" | grep -c '^loopdead:')
+  [ "$LLC2" = "14" ] || { echo "selfcheck fail: expected 14 lines, got $LLC2"; exit 1; }
+  # silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
+  # operator cancel, disabled, paused state, never-run, in-flight, the dom/quarterly/annual
+  # drifts, named months, the weekday weekend gap, a one-shot inside its grace, and the probe
+  for QUIET in tandem-triage nightly-report single-failure-job queued-job queued-streak-job cancelled-job paused-job paused-state-job never-run-job inflight-job monthly-drill quarterly-job annual-job named-month-job weekday-job once-recent-job tandem-prod-watch; do
     printf '%s\n' "$LLR" | grep -q "loopdead:$QUIET" && { echo "selfcheck fail: $QUIET alerted on a healthy record"; exit 1; }
   done
   # boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at 2x
@@ -938,8 +974,8 @@ FIX
   [ "$(probe_level 'loopdead:j cause=word P0RT')" = "1" ] || { echo "selfcheck fail: P0RT escalated"; exit 1; }
   # WIRING pins: the live pass must CONSUME the arm (run once, append once, surface its
   # stderr, take its level from the shipped function) and the dedupe key must mask
-  # volatile cause tails — deleting any of those keeps the fixtures green and ships a
-  # dead, screaming or mute detector. Anchored at column 0 so no pin matches its own grep.
+  # volatile cause tails and ages — deleting any of those keeps the fixtures green and
+  # ships a dead, screaming or mute detector. Anchored so no pin matches its own grep.
   LLC=$(grep -c '^LLOUT=$(loop_liveness "$PROFILE_DIR/cron/jobs.json" 2>"$LLERR")' "$0" 2>/dev/null || true)
   [ "$LLC" = "1" ] || { echo "selfcheck fail: loop-liveness pass missing ($LLC)"; exit 1; }
   LLA=$(grep -c '^[[:space:]]*\[ -n "\$L" \] && anom' "$0" 2>/dev/null || true)
@@ -950,6 +986,8 @@ FIX
   [ "$LLV" = "1" ] || { echo "selfcheck fail: level not taken from probe_level ($LLV)"; exit 1; }
   LLM=$(grep -c "s/request_id=\[^ ;\]\*/request_id=<id>/g" "$0" 2>/dev/null || true)
   [ "$LLM" = "1" ] || { echo "selfcheck fail: cause-tail masking missing ($LLM)"; exit 1; }
+  LLM2=$(grep -c '^KEY=.*s/=\[0-9\]+\[mh\](\[^a-z0-9\]|\$)/=<age>' "$0" 2>/dev/null || true)
+  [ "$LLM2" = "1" ] || { echo "selfcheck fail: age masking missing ($LLM2)"; exit 1; }
   echo "ok probe selfcheck"
   exit 0
 fi
@@ -1605,7 +1643,7 @@ if [ ${#anom[@]} -eq 0 ]; then
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
 # Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
-KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/=[0-9]+m([^a-z0-9]|$)/=<age>m\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g')
+KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+[mh]([^a-z0-9]|$)/=<age>\1/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g')
 if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0
