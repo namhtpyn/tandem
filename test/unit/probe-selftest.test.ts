@@ -109,9 +109,9 @@ describe('prod probe selfcheck', () => {
   // unalerted while every product arm stayed green (the designated dead-man, the critic,
   // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
   // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
-  // through the shipped dispatch mode: flipping the 2x threshold, dropping the cause
-  // string or dropping the brain-job P0 turns this red.
-  it('flags stale ticks and repeated failures from the scheduler record, P0 for the loop brain', async () => {
+  // through the shipped dispatch mode; every term, every silence and the cause path are
+  // pinned here (mutation-proved red in the shipping pass).
+  it('flags stale fires, repeated failures and undelivered runs from the scheduler record', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'probe-loop-'));
     const jobs = {
       jobs: [
@@ -121,7 +121,7 @@ describe('prod probe selfcheck', () => {
           schedule: { kind: 'interval', minutes: 10 },
           last_status: 'ok',
           failure_streak: 0,
-          last_run_at: '2026-11-17T01:58:00+00:00',
+          last_run_at: '2026-11-16T22:00:00+00:00',
         },
         {
           name: 'tandem-triage',
@@ -130,6 +130,7 @@ describe('prod probe selfcheck', () => {
           last_status: 'ok',
           failure_streak: 0,
           last_run_at: '2026-11-17T00:00:00+00:00',
+          last_dispatch: { dispatched_at: '2026-11-17T02:00:00+00:00' },
         },
         {
           name: 'tandem-critic',
@@ -156,6 +157,83 @@ describe('prod probe selfcheck', () => {
           failure_streak: 9,
           last_run_at: '2026-11-01T00:00:00+00:00',
         },
+        {
+          name: 'streak2-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'failed',
+          failure_streak: 2,
+          last_run_at: '2026-11-17T01:30:00+00:00',
+          last_error: 'boom',
+        },
+        {
+          name: 'undelivered-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'delivery_failed',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T01:30:00+00:00',
+          last_delivery_error: 'discord: channel not found',
+        },
+        {
+          name: 'never-run-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: null,
+          failure_streak: 0,
+          last_run_at: null,
+        },
+        {
+          name: 'inflight-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-16T23:00:00+00:00',
+          last_dispatch: { dispatched_at: '2026-11-17T01:59:00+00:00' },
+        },
+        {
+          name: 'stale-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-16T23:00:00+00:00',
+          last_error: 'last successful run',
+        },
+        {
+          name: 'monthly-drill',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 3 1 * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-01T03:05:00+00:00',
+        },
+        {
+          name: 'unsupported-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 0 * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-17T01:00:00+00:00',
+        },
+        {
+          name: 'paused-state-job',
+          enabled: true,
+          state: 'paused',
+          schedule: { kind: 'interval', minutes: 10 },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: '2026-11-01T00:00:00+00:00',
+        },
+        {
+          name: 'bad-record-job',
+          enabled: true,
+          schedule: { kind: 'cron', expr: '0 * * * *' },
+          last_status: 'ok',
+          failure_streak: 0,
+          last_run_at: 'not-a-time',
+        },
       ],
     };
     const file = join(dir, 'jobs.json');
@@ -168,39 +246,51 @@ describe('prod probe selfcheck', () => {
     };
 
     const out = await run();
-    // running-but-failing: streak >= 2 with the CAUSE carried, and the brain job is P0
-    expect(out.trim().split('\n').filter(Boolean)).toHaveLength(1);
-    expect(out).toContain('loopdead:tandem-critic failing');
-    expect(out).toContain('(interval 720m)');
-    expect(out).toContain('server rejected WebSocket connection: HTTP 500');
-    expect(out).toMatch(/ P0\n?$/);
-    // healthy hourly job at EXACTLY 2x its interval is not stale (strict boundary), a
-    // daily job 24h quiet is inside its 48h budget, the probe never witnesses itself, and
-    // a disabled job's old failure is not a live fault
-    expect(out).not.toContain('tandem-triage');
-    expect(out).not.toContain('nightly-report');
-    expect(out).not.toContain('tandem-prod-watch');
-    expect(out).not.toContain('paused-job');
+    const lines = out.trim().split('\n').filter(Boolean);
+    // running-but-failing at exactly streak 2, with the CAUSE carried
+    expect(lines.find((l) => l.startsWith('loopdead:tandem-critic'))).toBe(
+      'loopdead:tandem-critic failing =2+ consecutive ticks (interval 720m) cause=InvalidStatus: server rejected WebSocket connection: HTTP 500 P0',
+    );
+    expect(out).toContain('loopdead:streak2-job failing =2+ consecutive ticks (interval 60m) cause=boom');
+    // delivery_failed = the run landed but reached nobody: its own term and its own cause
+    expect(out).toContain(
+      'loopdead:undelivered-job run ok but NOT DELIVERED (interval 60m) cause=discord: channel not found',
+    );
+    // stale fire uses the dispatch stamp as the baseline: a long run in flight is no fault
+    expect(out).toContain('loopdead:stale-job last fire =3h ago (interval 60m) cause=last successful run');
+    expect(out).not.toContain('inflight-job');
+    // one corrupt record is isolated, never fatal to the rest of the scan
+    expect(out).toContain('loopdead:bad-record-job record invalid');
+    // an underivable schedule is an anomaly, not silence
+    expect(out).toContain('loopdead:unsupported-job unsupported schedule');
+    // silences: healthy hourly inside 2x, 24h job inside 48h, disabled, paused state,
+    // never-run (no baseline), the probe itself, and a dom-based monthly job inside 60d
+    for (const quiet of [
+      'tandem-triage',
+      'nightly-report',
+      'paused-job',
+      'paused-state-job',
+      'never-run-job',
+      'tandem-prod-watch',
+      'monthly-drill',
+    ]) {
+      expect(out).not.toContain(quiet);
+    }
+    // only the four real faults are reported (no duplicate lines per job)
+    expect(lines).toHaveLength(6);
 
-    // stale-tick term: 6h of silence on an hourly job
-    jobs.jobs[1].last_run_at = '2026-11-16T23:00:00+00:00';
-    writeFileSync(file, JSON.stringify(jobs));
-    const stale = await run();
-    expect(stale).toContain('loopdead:tandem-triage last tick =3h ago');
-    expect(stale).toContain('(interval 60m)');
-
-    // a single failed run is a blip, not a dead loop
-    jobs.jobs[1].last_run_at = '2026-11-17T01:50:00+00:00';
-    Object.assign(jobs.jobs[1], { last_status: 'error', failure_streak: 1, last_error: 'boom' });
-    writeFileSync(file, JSON.stringify(jobs));
-    expect(await run()).not.toContain('tandem-triage');
+    // boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at
+    // 2x (silent) and one minute later it is stale (strict >, not >=)
+    expect(await run(String(Date.parse('2026-11-17T04:00:00Z') / 1000))).not.toContain('tandem-triage');
+    expect(await run(String(Date.parse('2026-11-17T04:01:00Z') / 1000))).toContain(
+      'loopdead:tandem-triage last fire =2h ago (interval 60m)',
+    );
 
     // an unreadable scheduler record is an ANOMALY (blind), never silence
     writeFileSync(file, 'not json');
     expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
     rmSync(dir, { recursive: true, force: true });
   });
-
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
     // The DEFAULT state path derives from TANDEM_PROFILE_DIR — override THAT, so a broken
     // derivation cannot pass by writing the real prod trail (an overridden PROBE_STATE
