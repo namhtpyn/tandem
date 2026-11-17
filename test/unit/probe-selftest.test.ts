@@ -789,6 +789,27 @@ describe('prod probe selfcheck', () => {
     const keyed = await $`bash ${script} --loop-liveness ${keyedFile} ${now}`.nothrow().quiet();
     expect(keyed.stdout.toString()).toContain('loopdead:P0!:tandem-triage ');
 
+    // a padded brain name is neither P0 nor silent: it is watched verbatim
+    const paddedFile = join(dir, 'padded.json');
+    writeFileSync(
+      paddedFile,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'tandem-triage ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const padded = await $`bash ${script} --loop-liveness ${paddedFile} ${now}`.nothrow().quiet();
+    expect(padded.stdout.toString()).toContain('loopdead:tandem-triage  last fire');
+    expect(padded.stdout.toString()).not.toContain('loopdead:P0!:');
+
     // an unreadable scheduler record is an ANOMALY (blind), never silence
     writeFileSync(file, 'not json');
     expect(await run()).toContain('loopdead_scan: unreadable jobs.json');

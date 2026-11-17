@@ -1185,9 +1185,15 @@ FIX
   # a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
   printf '{"jobs": {"tandem-triage": {"name": " ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}}}' > "$LLT/keyed.json"
   printf '%s\n' "$(loop_liveness "$LLT/keyed.json" "$LLN")" | grep -qF 'loopdead:P0!:tandem-triage ' || { echo "selfcheck fail: keyed fallback lost to a whitespace name"; exit 1; }
-  # any other name is VERBATIM: a padded brain name is not the brain job (never P0)
+  # any other name is VERBATIM: a padded brain name is not the brain job (never P0) and
+  # must still be WATCHED under its own label (a silence here is a dead-man hole)
   printf '{"jobs": [{"name": "tandem-triage ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/padded.json"
-  printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")" | grep -qF 'loopdead:P0!:' && { echo "selfcheck fail: padded brain name escalated"; exit 1; }
+  RTP=$(printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")")
+  case "$RTP" in
+    *'loopdead:P0!:'*) echo "selfcheck fail: padded brain name escalated"; exit 1 ;;
+    *'loopdead:tandem-triage  last fire'*) : ;;
+    *) echo "selfcheck fail: padded job fell out of the scan (silence)"; exit 1 ;;
+  esac
   # the join separator never appears inside a line, even in record text
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-semicolon-job record invalid' || { echo "selfcheck fail: semicolon record missing"; exit 1; }
   printf '%s\n' "$LLR" | grep -qE 'bad-semicolon-job[^;]*;' && { echo "selfcheck fail: separator leaked into a line"; exit 1; }  # (c) one-shots and underivable schedules are anomalies, never silence
