@@ -321,10 +321,17 @@ strand_sql() {
   # older auto-blocked note. A round still LIVE when that note landed (one vote in, the
   # settling vote after) is the split-timing wedge the aggregate MIN test missed, and a
   # record ordering cannot be masked by a later task write. Every settle path at/above
-  # the floor sweeps its pending rows BEFORE its re-gate, so a post-note verdict cannot be
-  # the #467 late-CAS window on a floored row (closed by 2.78.35's atomic sweep): it means
-  # the round was open at the block. Below the floor the retired MIN-vs-stamp test stands,
-  # and a row carrying NO note of that kind falls back to it. TWO DECLARED residuals this
+  # the floor THAT LANDS ITS SWEEP supersedes its pending rows BEFORE its re-gate, so a
+  # post-note verdict cannot be the #467 late-CAS window on a floored row (closed by
+  # 2.78.35's atomic sweep): it means the round was open at the block — except on the
+  # degraded path that skips its sweep (residual (a)). An ALL-OLDER round is the legal
+  # #423 re-block OR a DECLARED false negative: an admin re-key of a status that still
+  # homes a LIVE round (in_review -> done) before the task blocks leaves every verdict
+  # older than the note while the round can never be applied (statuses.save refuses a
+  # re-key only while a BLOCKED task records the home); SQL cannot separate that from
+  # #423 without the home's category AT block time, so the class is deliberately silent
+  # (#491). Below the floor the retired MIN-vs-stamp test stands, and a
+  # row carrying NO note of that kind falls back to it. TWO DECLARED residuals this
   # SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a floored probe
   # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
   # flip->supersede crash window, and at ANY version the degraded settle path (flip

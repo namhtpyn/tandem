@@ -1179,10 +1179,11 @@ non-positive deltas render no duration.
   re-block write (a cancel that re-blocks records the cancelled status the same
   way). The ordering is PER VERDICT, not an aggregate, from the `2.78.38`
   BLOCK-PARK RECORD FLOOR (#466): ANY verdict of `max(round)` newer than the ORIGIN'S
-  OWN record is the split-timing wedge (#468), an all-older round is the #423 class
-  (its applied verdict necessarily predates the re-block record). The arm bullet below
+  OWN record is the split-timing wedge (#468); an all-older round is the #423 class or
+  the pre-block-re-key boundary the arm bullet declares (its applied verdict predates the
+  re-block record in the legal class). The arm bullet below
   states the record exactly, the note-less/pre-floor MIN fallback and the two
-  era-bounded residuals this SQL cannot see. The settle flip's write gate takes
+  declared residuals this SQL cannot see. The settle flip's write gate takes
   only an in_review-category status or a paused block whose recorded origin
   (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
   terminal home fails every branch, the round closes on the verdict row with NO
@@ -1209,14 +1210,25 @@ non-positive deltas render no duration.
   park's `review parked` note for a park home — so a MULTI-REVIEWER round split across
   that record (one vote before it, the settling vote after) is this wedge, not a
   boundary; an all-older round is the legal #423 re-block (its applied verdict
-  necessarily predates the re-block record). Below the floor the verdict-vs-stamp MIN
-  test stands. A row carrying NO note of that kind at all falls back to the same
+  necessarily predates the re-block record) OR the DECLARED false negative below: an
+  admin re-key of a status that still homes a LIVE round (in_review -> done) before the
+  task blocks — `statuses.save` refuses a re-key only while a BLOCKED task records the
+  status as a home, so the re-key lands, the later gating block records the now-terminal
+  status as `pre_block_status`, the pending verdict is refused by the terminal gate, the
+  teardown heal supersedes it, and every verdict predates the note: SQL cannot separate
+  this from the legal #423 row without the home's category AT block time, so the
+  all-older class is deliberately silent here and the pre-block-re-key strand is a
+  DECLARED false negative (#491; a record term carrying the home's category at block time
+  would close it). Below the floor the verdict-vs-stamp MIN test
+  stands. A row carrying NO note of that kind at all falls back to the same
   MIN-vs-stamp test: below the floor the #467 flip→supersede window (its sweep atomic
   with the flip from 2.78.35) could legally leave one verdict past the block write, so
   the fallback keeps the MIN test for those rows until they drain. At and above the
-  floor every settle path sweeps its pending rows BEFORE its re-gate writes the note,
-  so a post-note verdict can only mean the round was LIVE when the block landed and its
-  settle flip can never land on the re-keyed terminal home.
+  floor every settle path THAT LANDS ITS SWEEP supersedes its pending rows BEFORE its
+  re-gate writes the note, so a post-note verdict means the round was LIVE when the block
+  landed and its settle flip can never land on the re-keyed terminal home — except on the
+  degraded path that skips its sweep (residual (a)), where a settled-then-re-blocked task
+  can carry one; the PENDING heal signature keeps that row silent until it drains.
   TWO DECLARED residuals the SQL cannot see, both verified empty in prod at the `2.78.40`
   deploy. (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
   the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
