@@ -1198,8 +1198,9 @@ non-positive deltas render no duration.
   origins in the same statement, so it leaves no origin behind; the residual
   owner-settle shape is the machine #423 re-block above, excluded by the
   ordering. The counterexample shape is the resolved `done`/`cancelled` home under a
-  blocked task whose round carries no verdict older than the record that made it
-  terminal (an `in_review` home re-keyed to `done` with the settle never applied). The
+  blocked task whose round carries at least one verdict NEWER than the record that made
+  it terminal (one vote before it, the settling vote after, is this same wedge; an
+  `in_review` home re-keyed to `done` with the settle never applied). The
   current-round clause (no PENDING row in `max(round)`, at least one verdict row) and
   the ordering above apply as specified; below the `2.78.24` record floor the WEDGE
   falls back to its legacy test (#430). THIS arm's own floor is `2.78.38` (BLOCK-PARK
@@ -1216,14 +1217,18 @@ non-positive deltas render no duration.
   floor every settle path sweeps its pending rows BEFORE its re-gate writes the note,
   so a post-note verdict can only mean the round was LIVE when the block landed and its
   settle flip can never land on the re-keyed terminal home.
-  TWO DECLARED, ERA-BOUNDED residuals the SQL cannot see, both producer-free at/above
-  their floors and verified empty in prod at the `2.78.40` deploy: (a) a floored probe
-  cannot era-gate a ROW, so a pre-floor #467 late CAS on a note-carrying row reads as
-  the wedge; (b) `block_record_ts`/`park_record_ts` read the newest note of that KIND,
-  never tied to the episode that set the origin, so a row whose CURRENT episode note
-  was lost to a pre-floor crash and that still carries an EARLIER same-kind note orders
-  against the older record — a legal #423 row can then read as the wedge. Both need a
-  pre-`2.78.38` note-loss crash; no writer at/above the floor can produce either.
+  TWO DECLARED residuals the SQL cannot see, both verified empty in prod at the `2.78.40`
+  deploy. (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
+  the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
+  path (the flip committed on the pool, the sweep skipped by design when that isolation
+  transaction fails) — can leave a post-note verdict that reads as the wedge; while the
+  PENDING heal signature survives, the arm's current-round clause keeps such a row
+  silent, so the residue only surfaces once it drains (rare: a failed isolation
+  transaction AND a verdict CAS inside the window). (b) `block_record_ts`/`park_record_ts`
+  read the newest note of that KIND, never tied to the episode that set the origin, so a
+  row whose CURRENT episode note was lost to a pre-`2.78.38` crash and that still carries
+  an EARLIER same-kind note orders against the older record — a legal #423 row can then
+  read as the wedge (pre-floor crash or direct write only).
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
@@ -1261,10 +1266,11 @@ non-positive deltas render no duration.
   scan filters `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park,
   and the wedge arm's ownership predicate excludes every parked row. The alert therefore
   names the PARK as the owner's own resolution: the verdict is already recorded, so the
-  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose, unlike the re-key arm's MIN — a
-  multi-reviewer round split across the park write (a vote before it, the closing vote
-  after) is this same owed-flip shape, and the re-key arm's late-row class has no
-  analogue here (a park whose home resolves into review can always land its flip).
+  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose (the re-key arm is per-verdict from its floor
+  and MIN below it) — a multi-reviewer round split across the park write (a vote before
+  it, the closing vote after) is this same owed-flip shape, and the re-key arm's
+  terminal-home late-row class has no analogue here (a park whose home resolves into
+  review can always land its flip).
   VERSION-independent as an arm above its column floor but COLUMN-gated at the two-column
   gate plus the 2.78.37 column floor (the arm reads `referral_target_id`, shipped there;
   a missing column would kill the whole UNION, #325) and PAUSED-scoped; the live pass

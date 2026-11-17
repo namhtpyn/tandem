@@ -324,14 +324,17 @@ strand_sql() {
   # the floor sweeps its pending rows BEFORE its re-gate, so a post-note verdict cannot be
   # the #467 late-CAS window on a floored row (closed by 2.78.35's atomic sweep): it means
   # the round was open at the block. Below the floor the retired MIN-vs-stamp test stands,
-  # and a row carrying NO note of that kind falls back to it. TWO DECLARED, ERA-BOUNDED
-  # residuals this SQL cannot see (both producer-free at/above their floors, verified 0
-  # rows in prod at the 2.78.40 deploy): (a) a floored probe cannot era-gate a ROW (a
-  # pre-floor note is byte-identical), so a pre-floor #467 late CAS on a note-carrying row
-  # reads as the wedge; (b) the record is the NEWEST note of that kind, never tied to the
-  # episode that set the origin, so a row whose CURRENT note was lost to a pre-floor crash
-  # and that still carries an EARLIER same-kind note orders against the older record — a
-  # legal #423 row can read as the wedge. A direct
+  # and a row carrying NO note of that kind falls back to it. TWO DECLARED residuals this
+  # SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a floored probe
+  # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
+  # flip->supersede crash window, and at ANY version the degraded settle path (flip
+  # committed on the pool, sweep skipped by design when its isolation tx fails) — can
+  # leave a post-note verdict that reads as the wedge; the PENDING heal signature keeps
+  # it silent until it drains, so the residue is rare (failed isolation tx AND a verdict
+  # CAS in the window); (b) the record is the NEWEST note of that kind, never tied to the
+  # episode that set the origin, so a row whose CURRENT note was lost to a pre-2.78.38
+  # crash and that still carries an EARLIER same-kind note orders against the older
+  # record — a legal #423 row can read as the wedge (pre-floor crash or direct write). A direct
   # owner settle clears both origins in the same statement, so the residual owner-settle
   # shape is that machine re-block, excluded by the all-older test. The current-round
   # clause is mirrored from the orphan arm. Per-column resolve,
@@ -368,9 +371,10 @@ strand_sql() {
   # note ON THE TASK, so a row whose CURRENT park note never landed can be ordered against
   # an EARLIER park episode's note — pre-floor crash or direct write only, the declared
   # residual. MAX, not
-  # MIN — a multi-reviewer round split across the park write (a vote before, the closing
-  # vote after) is this same owed-flip shape, and a park whose home resolves in-review can
-  # always land its flip, so the re-key arm's late-row MIN case has no analogue here. The
+  # MIN (the re-key arm is per-verdict from its floor and MIN below it) — a multi-reviewer
+  # round split across the park write (a vote before, the closing vote after) is this same
+  # owed-flip shape, and a park whose home resolves in-review can always land its flip, so
+  # the re-key arm's terminal-home late-row case has no analogue here. The
   # alert names the park as the owner's own resolution: the verdict is already recorded, so
   # the repair is a status move, never a re-arm.
   # COLUMN FLOOR 2.78.37: the arm reads referral_target_id (shipped there) besides the

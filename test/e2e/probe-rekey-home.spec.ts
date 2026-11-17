@@ -24,7 +24,7 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // term — a DIRECT owner settle leaves the paused category and clears both origins in the
 // same statement; the residual owner-settle shape is the machine #423 re-block, excluded
 // by the ordering. The counterexample is the resolved done/cancelled home under a blocked
-// task whose round carries no verdict older than the record that made it terminal
+// task whose round carries at least one verdict NEWER than the record that made it terminal
 // (in_review -> done with the settle never applied). Neither origin may resolve into
 // review (a resolvable in-review home still lets the flip land: the orphan arm's
 // exclusion, mirrored), and the wedge's current-round clause applies. The ORDERING is
