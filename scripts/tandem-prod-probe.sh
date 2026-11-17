@@ -706,9 +706,9 @@ try:
     jobs = json.load(open(sys.argv[1])).get("jobs", [])
     if isinstance(jobs, dict):
         # name-keyed maps are legal: the KEY is the name when the entry has none, and a
-        # whitespace-only name IS none (strip BEFORE the fallback, or the key is lost and a
-        # brain job degrades to `unnamed … un-watched`)
-        jobs = [dict(v, name=((str(v.get("name") or "").strip()) or k)) if isinstance(v, dict) else v for k, v in jobs.items()]
+        # blank/whitespace-only `name` IS none (blank falls back to the key; any other name
+        # is kept verbatim, exactly like the list form)
+        jobs = [dict(v, name=(str(v.get("name") or "") if str(v.get("name") or "").strip() else k)) if isinstance(v, dict) else v for k, v in jobs.items()]
     now = float(sys.argv[2])
     if not jobs:
         print("loopdead_scan: jobs.json has no jobs - un-watched")
@@ -716,8 +716,11 @@ try:
         if not isinstance(j, dict):
             print("loopdead_scan: non-object job entry %s" % repr(j).replace(";", ",")[:120])
             continue
-        # strip: a whitespace-only name IS no name — the un-watched guard keys on emptiness
-        name = str(j.get("name") or "").strip()
+        # a whitespace-only name IS no name (the un-watched guard keys on emptiness); any
+        # other name is kept VERBATIM — the SELF/BRAIN identity checks compare exact names,
+        # so stripping would silently re-classify `tandem-triage ` as the brain job
+        raw_name = str(j.get("name") or "")
+        name = raw_name if raw_name.strip() else ""
         if name == SELF:
             continue
         if not name:
@@ -1182,6 +1185,9 @@ FIX
   # a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
   printf '{"jobs": {"tandem-triage": {"name": " ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}}}' > "$LLT/keyed.json"
   printf '%s\n' "$(loop_liveness "$LLT/keyed.json" "$LLN")" | grep -qF 'loopdead:P0!:tandem-triage ' || { echo "selfcheck fail: keyed fallback lost to a whitespace name"; exit 1; }
+  # any other name is VERBATIM: a padded brain name is not the brain job (never P0)
+  printf '{"jobs": [{"name": "tandem-triage ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/padded.json"
+  printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")" | grep -qF 'loopdead:P0!:' && { echo "selfcheck fail: padded brain name escalated"; exit 1; }
   # the join separator never appears inside a line, even in record text
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-semicolon-job record invalid' || { echo "selfcheck fail: semicolon record missing"; exit 1; }
   printf '%s\n' "$LLR" | grep -qE 'bad-semicolon-job[^;]*;' && { echo "selfcheck fail: separator leaked into a line"; exit 1; }  # (c) one-shots and underivable schedules are anomalies, never silence
@@ -1214,7 +1220,10 @@ FIX
   [ "$(probe_level 'loopdead:j x;loopdead:P0!:tandem-triage y')" = "0" ] || { echo "selfcheck fail: mid-line P0 prefix"; exit 1; }
   [ "$(probe_level 'loopdead:P0!:fake x')" = "1" ] || { echo "selfcheck fail: look-alike name escalated"; exit 1; }
   [ "$(probe_level 'loopdead:P0!:tandem-triage-2 failing')" = "1" ] || { echo "selfcheck fail: suffixed look-alike escalated"; exit 1; }
-  [ "$(probe_level 'loopdead:j record invalid cause=loopdead:P0!:tandem-critic')" = "1" ] || { echo "selfcheck fail: embedded brain token mid-line escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j record invalid cause=loopdead:P0!:tandem-critic')" = "1" ] || { echo "selfcheck fail: embedded brain token escalated"; exit 1; }
+  # the position clause: the token mid-line WITH text after it must stay P1 too (an
+  # anywhere-glob keeping the trailing space would pass the pin above, not this one)
+  [ "$(probe_level 'loopdead:j cause=loopdead:P0!:tandem-triage last fire =2h ago')" = "1" ] || { echo "selfcheck fail: mid-line embedded token escalated"; exit 1; }
   [ "$(probe_level 'loopdead:j cause=Postgres error P0001')" = "1" ] || { echo "selfcheck fail: P0001 escalated"; exit 1; }
   [ "$(probe_level 'loopdead:j cause=word P0RT')" = "1" ] || { echo "selfcheck fail: P0RT escalated"; exit 1; }
   [ "$(probe_level 'loopdead:j cause=loopdead:P0!:forged')" = "1" ] || { echo "selfcheck fail: forged P0 prefix escalated"; exit 1; }

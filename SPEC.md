@@ -1435,7 +1435,10 @@ non-positive deltas render no duration.
   (`unsupported schedule … un-watched`), never silence; an empty or re-keyed store
   (`jobs: []`) is `jobs.json has no jobs - un-watched`, never vacuous green; a corrupt
   record is isolated (`record invalid`) without blinding the scan, and an enabled job
-  whose name is empty or whitespace-only is `un-watched` too (`unnamed enabled job …`).
+  whose name is empty or whitespace-only is `un-watched` too (`unnamed enabled job …`) —
+  except in a name-keyed store, where the KEY is the job's name and a blank `name` falls
+  back to it; any other name is used VERBATIM (identity is the exact name, so padding never
+  re-classifies a job as the probe itself or as a BRAIN job).
   Every line carries the CAUSE, drawn from `last_error` /
   `last_delivery_error` / `last_fire_error`: the exception-class line (so a
   `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
