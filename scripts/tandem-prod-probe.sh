@@ -513,6 +513,17 @@ loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
 import datetime, json, re, sys
 BRAIN = ("tandem-triage", "tandem-critic")
 SELF = "tandem-prod-watch"
+TOKEN_RE = re.compile(r"[^A-Za-z0-9 ._-]+")
+SPACES_RE = re.compile(r" {2,}")
+
+def display(n):
+    # The DISPLAY token only, never identity: every char outside [A-Za-z0-9 ._-]
+    # (control chars, newline/tab, ':', '!', '=') becomes a space, runs collapse,
+    # edges trim; a name with nothing printable left renders as <unprintable>.
+    # The raw name stays the identity key, so padding still classifies verbatim.
+    out = SPACES_RE.sub(" ", TOKEN_RE.sub(" ", n)).strip()
+    return out or "<unprintable>"
+
 OK_STATUS = {"ok", "success", "completed", "cancelled", "delivery_queued"}
 EXC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning)\b")
 NAMES = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
@@ -728,14 +739,16 @@ try:
                 print("loopdead_scan: unnamed enabled job (%s) - un-watched" % repr(j.get("schedule")).replace(";", ",")[:120])
             continue
         try:
-            line = one(j, now, name)
+            line = one(j, now, display(name))
         except Exception as e:
             line = "loopdead:%s record invalid (%s: %s)" % (
-                name, type(e).__name__, str(e).replace("\n", " ")[:120])
+                display(name), type(e).__name__, str(e).replace("\n", " ")[:120])
         if line:
             line = line.replace(";", ",")  # the join separator must never appear in a line
-            if name in BRAIN:
-                line = line.replace("loopdead:", "loopdead:P0!:", 1)
+            # the escalation prefix is chosen by the job's IDENTITY, never spelled by its
+            # rendered name (the display token cannot carry ':' or '!', so a non-brain name
+            # can never produce 'loopdead:P0!:')
+            line = ("loopdead:P0!:" if name in BRAIN else "loopdead:") + line[len("loopdead:"):]
             print(line)
 except Exception as e:
     msg = ("%s: %s" % (type(e).__name__, e)).replace("\n", " ")[:160]
@@ -751,11 +764,23 @@ PY
 # terminated by a space — a look-alike name with a suffix (tandem-triage-2), record text or
 # an error cause embedding the token stays P1 (#490; every emitted line is ';'-sanitised,
 # so a separator can only be the join).
+# SEGMENT LAW (#493): the level is the MAX over the ';'-joined segments, and a segment that
+# starts 'loopdead:' is classified by its own identity token ONLY — its payload (a job name,
+# a cause, record text) never matches a loose P0 phrase, so `loopdead:j cause=db unreachable`
+# is P1 while a genuine `db: unreachable` segment in the same join still pages.
 probe_level() {
-  case "$1" in
-    'runtime_stale: the gateway (pid'*|*';runtime_stale: the gateway (pid'*|'loopdead:P0!:tandem-triage '*|*';loopdead:P0!:tandem-triage '*|'loopdead:P0!:tandem-critic '*|*';loopdead:P0!:tandem-critic '*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) echo 0 ;;
-    *) echo 1 ;;
-  esac
+  local rest="$1" seg lvl=1
+  while [ -n "$rest" ]; do
+    seg="${rest%%;*}"
+    if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*;}"; fi
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    case "$seg" in
+      'loopdead:P0!:tandem-triage '*|'loopdead:P0!:tandem-critic '*) lvl=0; break ;;
+      'loopdead:'*) continue ;;
+      'runtime_stale: the gateway (pid'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) lvl=0; break ;;
+    esac
+  done
+  echo "$lvl"
 }
 # RUNTIME-REFRESH (#487, 2026-11-17): the gateway ADVERTISES the code it booted
 # (`code_sha`, `pid`, `start_time` in gateway_state.json). An install that lands under a
@@ -1185,15 +1210,31 @@ FIX
   # a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
   printf '{"jobs": {"tandem-triage": {"name": " ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}}}' > "$LLT/keyed.json"
   printf '%s\n' "$(loop_liveness "$LLT/keyed.json" "$LLN")" | grep -qF 'loopdead:P0!:tandem-triage ' || { echo "selfcheck fail: keyed fallback lost to a whitespace name"; exit 1; }
-  # any other name is VERBATIM: a padded brain name is not the brain job (never P0) and
-  # must still be WATCHED under its own label (a silence here is a dead-man hole)
+  # identity is VERBATIM, the DISPLAY token is sanitised (#493): a padded brain name is not
+  # the brain job (never P0) and must still be WATCHED under its own token (silence = dead-man hole)
   printf '{"jobs": [{"name": "tandem-triage ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/padded.json"
   RTP=$(printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")")
   case "$RTP" in
     *'loopdead:P0!:'*) echo "selfcheck fail: padded brain name escalated"; exit 1 ;;
-    *'loopdead:tandem-triage  last fire'*) : ;;
+    *'loopdead:tandem-triage last fire'*) : ;;
     *) echo "selfcheck fail: padded job fell out of the scan (silence)"; exit 1 ;;
   esac
+  # #493: the display token never carries ':' '!' '=' or a control character, so a crafted
+  # name can neither forge a second physical line nor spell the P0 token; the P0 prefix is
+  # chosen by identity alone, and a loopdead segment's payload never reaches a loose P0 phrase.
+  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
+  RTC=$(printf '%s\n' "$(loop_liveness "$LLT/crafted.json" "$LLN")")
+  [ "$(printf '%s\n' "$RTC" | grep -c '^loopdead:')" = "5" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^forge' && { echo "selfcheck fail: newline name forged a physical line"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q 'loopdead:P0 tandem-triage last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
+  printf '%s\n' "$RTC" | grep 'P0 tandem-triage' | grep -qF 'P0!:' && { echo "selfcheck fail: crafted name spelled the P0 token"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q 'loopdead:<unprintable> last fire' || { echo "selfcheck fail: all-punctuation name lost its fallback token"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q 'loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: real brain death lost its P0 token"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep 'P0 tandem-triage')")" = "1" ] || { echo "selfcheck fail: crafted P0 name escalated"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep 'unreachable last fire')")" = "1" ] || { echo "selfcheck fail: letters-only P0 phrase name escalated"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTC" | grep 'P0!:tandem-triage')")" = "0" ] || { echo "selfcheck fail: brain death not P0"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=db unreachable')" = "1" ] || { echo "selfcheck fail: a cause forged a loose P0 phrase"; exit 1; }
+  [ "$(probe_level 'loopdead:j last fire;db: unreachable')" = "0" ] || { echo "selfcheck fail: a genuine db P0 lost to the segment rule"; exit 1; }
   # the join separator never appears inside a line, even in record text
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-semicolon-job record invalid' || { echo "selfcheck fail: semicolon record missing"; exit 1; }
   printf '%s\n' "$LLR" | grep -qE 'bad-semicolon-job[^;]*;' && { echo "selfcheck fail: separator leaked into a line"; exit 1; }  # (c) one-shots and underivable schedules are anomalies, never silence

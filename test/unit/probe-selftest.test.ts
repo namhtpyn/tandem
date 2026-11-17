@@ -789,7 +789,8 @@ describe('prod probe selfcheck', () => {
     const keyed = await $`bash ${script} --loop-liveness ${keyedFile} ${now}`.nothrow().quiet();
     expect(keyed.stdout.toString()).toContain('loopdead:P0!:tandem-triage ');
 
-    // a padded brain name is neither P0 nor silent: it is watched verbatim
+    // a padded brain name is neither P0 nor silent: identity stays verbatim, the display
+    // token is sanitised (#493) — watched under its trimmed label, never as the brain job
     const paddedFile = join(dir, 'padded.json');
     writeFileSync(
       paddedFile,
@@ -807,12 +808,80 @@ describe('prod probe selfcheck', () => {
       }),
     );
     const padded = await $`bash ${script} --loop-liveness ${paddedFile} ${now}`.nothrow().quiet();
-    expect(padded.stdout.toString()).toContain('loopdead:tandem-triage  last fire');
+    expect(padded.stdout.toString()).toContain('loopdead:tandem-triage last fire');
     expect(padded.stdout.toString()).not.toContain('loopdead:P0!:');
 
     // an unreadable scheduler record is an ANOMALY (blind), never silence
     writeFileSync(file, 'not json');
     expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #493: the job name is DISPLAY-sanitised before interpolation while identity stays
+  // verbatim — a newline cannot forge a physical line, the token charset cannot spell the
+  // P0 prefix (or any loose P0 phrase), an all-punctuation name keeps a fallback label, and
+  // the P0 token is emitted for the identity-matched brain job alone.
+  it('tokenises job names for display and derives the P0 prefix from identity', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-name-'));
+    const file = join(dir, 'crafted.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'P0!:tandem-triage',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+          {
+            name: 'line\nforge',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+          {
+            name: '!!!',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+          {
+            name: 'tandem-triage',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'error',
+            failure_streak: 3,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`.nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const out = proc.stdout.toString();
+    const lines: string[] = out
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    // one physical line per job: the escaped newline collapsed to a space, no forged line
+    expect(lines).toHaveLength(4);
+    expect(lines.filter((l: string) => l.startsWith('forge'))).toHaveLength(0);
+    expect(out).toContain('loopdead:line forge last fire');
+    // the crafted name renders its tokenised form and can never spell the P0 prefix
+    expect(out).toContain('loopdead:P0 tandem-triage last fire');
+    expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).not.toContain('P0!:');
+    // an all-punctuation name keeps a stable label instead of an empty one
+    expect(out).toContain('loopdead:<unprintable> last fire');
+    // the identity branch alone emits the P0 prefix: exactly one line, the real brain job
+    expect(lines.filter((l: string) => l.startsWith('loopdead:P0!:'))).toHaveLength(1);
+    expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
     rmSync(dir, { recursive: true, force: true });
   });
   // #487/#490: the RUNTIME-REFRESH arm's own dispatch seam (SPEC "Probe versioning") so
