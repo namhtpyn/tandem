@@ -1437,8 +1437,33 @@ non-positive deltas render no duration.
   record is isolated (`record invalid`) without blinding the scan, and an enabled job
   whose name is empty or whitespace-only is `un-watched` too (`unnamed enabled job …`) —
   except in a name-keyed store, where the KEY is the job's name and a blank `name` falls
-  back to it; any other name is used VERBATIM (identity is the exact name, so padding never
-  re-classifies a job as the probe itself or as a BRAIN job).
+  back to it; identity is the VERBATIM name (so padding never re-classifies a job as the
+  probe itself or as a BRAIN job) while the interpolated DISPLAY TOKEN is sanitised first:
+  every character that is not alphanumeric (Unicode `isalnum`, so `²` counts), a combining
+  mark, a space, `.`, `_` or `-`
+  — control characters, newlines, `:`, `!`, `=` included — becomes a space, runs of spaces
+  collapse and the edges trim, so a name stays READABLE in any script (an accented name is
+  not shredded into letter soup) while it can never carry the punctuation a level token or
+  the join separator is built from; a name with nothing READABLE left (no letter or digit —
+  punctuation only, or combining marks alone) renders as `<unprintable>`.
+  A name the sanitiser changed carries a `~<12 letters>` discriminator of the raw name,
+  appended to the fallback too, so two DISTINCT raw names whose tokens collide still emit
+  distinct lines (identical raw names are one identity and cannot be told apart) —
+  LETTERS-ONLY because the repeat-suppression key masks long digit runs and hex ids, which
+  would erase a numeric suffix and let the pair share a key; 26^12 letters puts a deliberate
+  birthday pair at ~10^9 sanitised variants (the key's other normalisations are unchanged:
+  two clean names differing only in a 6+ digit run, an age (`N s/m/h`), a UUID / long hex id
+  or an attempt/retry counter stay one standing fault by design). Every field the record can shape — name, `state`, a schedule expression,
+  a cause — is swept at emission of every code point a Unicode line splitter treats as a
+  break (C0, DEL, C1, U+2028/U+2029), so the line count is the job count, never the record's
+  content — the record is read as UTF-8 BYTES with replacement (an invalid byte degrades to
+  U+FFFD and the scan still reports the job, where a locale-decoded text read would raise
+  and blind every job); emission is TOTAL and LOCALE-PROOF (UTF-8 bytes go straight to the stream, so a
+  lone surrogate is escaped and a non-UTF-8 locale cannot abort the scan before later jobs,
+  the brain ones included) and lossless for quoted record text (the sweep maps breaks, it
+  does not collapse spaces). Only the sanitised token is rendered, so a name
+  can neither forge a second physical line nor spell the `P0!:` escalation prefix, and that
+  prefix is emitted by the identity branch alone, never composed from the rendered name.
   Every line carries the CAUSE, drawn from `last_error` /
   `last_delivery_error` / `last_fire_error`: the exception-class line (so a
   `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
@@ -1451,7 +1476,12 @@ non-positive deltas render no duration.
   (`…tandem-triage-2`), a `P0001`, a `P0RT` or an embedded token in record text or after
   `cause=` stays P1
   (every emitted line is `;`-sanitised, so the join separator never appears inside one) — and causes are `;`-sanitised on the way out so no error text can forge the escalation
-  prefix; the repeat-suppression key masks
+  prefix. An alert line is P0 when ANY of its `;`-joined segments is P0, and a segment that
+  starts `loopdead:` or `loopdead_scan:` is classified by its own identity token ALONE: a
+  job name, a `state`, a cause or any other payload inside such a segment never matches a
+  loose P0 phrase (a job named `unreachable`, or `cause=db unreachable`, stays P1), while a
+  genuine `db: unreachable` segment in the same join still pages; the caller's own
+  three-or-more-anomaly override is unchanged. The repeat-suppression key masks
   volatile cause tails (`request_id=` / `trace=` / UUIDs / long hex ids / long digit runs /
   attempt counters) and every age (`=<n>m` and `=<n>h`) so a standing fault alerts once
   instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
