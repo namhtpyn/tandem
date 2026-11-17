@@ -341,7 +341,11 @@ strand_sql() {
   # CAS in the window); (b) the record is the NEWEST note of that kind, never tied to the
   # episode that set the origin, so a row whose CURRENT note was lost to a pre-2.78.38
   # crash and that still carries an EARLIER same-kind note orders against the older
-  # record — a legal #423 row can read as the wedge (pre-floor crash or direct write). A direct
+  # record — a legal #423 row can read as the wedge (pre-floor crash or direct write);
+  # (c) a FALSE NEGATIVE in the same note-loss class: a note-less row whose round was
+  # split across the origin write (live at the write, the settling vote after) falls back
+  # to MIN and stays SILENT — the split-timing class this term exists for is only
+  # observable when the note survives (pre-floor crash or direct write only). A direct
   # owner settle clears both origins in the same statement, so the residual owner-settle
   # shape is that machine re-block, excluded by the all-older test. The current-round
   # clause is mirrored from the orphan arm. Per-column resolve,
@@ -981,6 +985,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$REKEY_FLOW" | grep -qF "m.body like 'auto-blocked:%'" || { echo "selfcheck fail: floored rekey arm lost the block origin's own record"; exit 1; }
   printf '%s' "$REKEY_FLOW" | grep -qF "m.body like 'review parked %'" || { echo "selfcheck fail: floored rekey arm lost the park origin's own record"; exit 1; }
   printf '%s' "$REKEY_FLOW" | grep -qF "or ((t.park_from_status is not null and exists" || { echo "selfcheck fail: floored rekey arm lost the per-origin branch"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF " or m.body like" && { echo "selfcheck fail: rekey arm borrows the task-wide flow record"; exit 1; }
   printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor per-verdict ordering reads a record"; exit 1; }
   printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "exists (select 1 from task_reviews" && { echo "selfcheck fail: pre-floor per-verdict ordering lost the MIN test"; exit 1; }
   printf '%s' "$(paused_order_any 2.78.38 '(select 1)')" | grep -qF "exists (select 1 from task_reviews" || { echo "selfcheck fail: floored per-verdict ordering lost the verdict term"; exit 1; }

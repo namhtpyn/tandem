@@ -274,7 +274,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         { id: parkSplit, pre: null, park: DONE, written: 5 },
         // a park whose OWN note was lost (the declared pre-floor crash residual) must not
         // borrow an OLDER auto-blocked note: the park write is 8m, the stale block note
-        // 20m, verdicts 10m + 2m — borrowing the block note would fire a legal row
+        // 20m, one verdict at 10m — borrowing the block note would fire a legal row
         { id: parkBorrow, pre: null, park: DONE, written: 8 },
       ];
       for (const t of seedTasks) {
@@ -320,8 +320,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedReview(recordlessFire, 'APPROVED', 1);
       await seedReview(parkSplit, 'APPROVED', 10);
       await seedReview(parkSplit, 'APPROVED', 1);
+      // ONE verdict only: under a borrow it fires (10m > the stale 20m block note), under
+      // the correct fallback it is an all-older round and stays silent — a second, newer
+      // verdict would pin the note-loss split wedge (#468's FN class) as 'legal'
       await seedReview(parkBorrow, 'APPROVED', 10);
-      await seedReview(parkBorrow, 'APPROVED', 2);
 
       const firedFor = async (strandSql: string) => {
         const rows = (await sql.unsafe(strandSql)) as Record<string, unknown>[];
