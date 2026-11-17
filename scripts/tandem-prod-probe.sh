@@ -705,8 +705,10 @@ def one(j, now, name):
 try:
     jobs = json.load(open(sys.argv[1])).get("jobs", [])
     if isinstance(jobs, dict):
-        # name-keyed maps are legal: the KEY is the name when the entry has none
-        jobs = [dict(v, name=v.get("name") or k) if isinstance(v, dict) else v for k, v in jobs.items()]
+        # name-keyed maps are legal: the KEY is the name when the entry has none, and a
+        # whitespace-only name IS none (strip BEFORE the fallback, or the key is lost and a
+        # brain job degrades to `unnamed … un-watched`)
+        jobs = [dict(v, name=((str(v.get("name") or "").strip()) or k)) if isinstance(v, dict) else v for k, v in jobs.items()]
     now = float(sys.argv[2])
     if not jobs:
         print("loopdead_scan: jobs.json has no jobs - un-watched")
@@ -737,10 +739,10 @@ except Exception as e:
     print("loopdead_scan: unreadable jobs.json (%s)" % msg)
 PY
 }
-# LEVEL: P0 for a SPACE-DELIMITED P0 token anywhere in the joined anomaly line — a cause
-# string like `P0001` or a word like `P0RT` must never escalate the probe — plus the
-# explicit P0 classes and the pre-existing infra phrases other arms emit. runtime_stale is
-# one of them: the gateway is running pre-update modules and every LLM cron is dead/dying.
+# LEVEL: P0 for the probe's explicit P0 classes and the pre-existing infra phrases other
+# arms emit; a cause string like `P0001` or a word like `P0RT` must never escalate it.
+# runtime_stale is one of those classes: the gateway is running pre-update modules and
+# every LLM cron is dead/dying.
 # The brain prefix (loopdead:P0!:tandem-triage / :tandem-critic) is a LINE PREFIX: it only
 # escalates at line start or immediately after the ';' join separator, with the job name
 # terminated by a space — a look-alike name with a suffix (tandem-triage-2), record text or
@@ -1177,13 +1179,17 @@ FIX
   printf '%s\n' "$(loop_liveness "$LLT/empty.json" "$LLN")" | grep -qF 'jobs.json has no jobs - un-watched' || { echo "selfcheck fail: empty store green"; exit 1; }
   # a whitespace-only name IS no name — the un-watched guard keys on emptiness
   printf '%s\n' "$LLR" | grep -qF 'loopdead_scan: unnamed enabled job' || { echo "selfcheck fail: whitespace-only job name watched"; exit 1; }
+  # a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
+  printf '{"jobs": {"tandem-triage": {"name": " ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}}}' > "$LLT/keyed.json"
+  printf '%s\n' "$(loop_liveness "$LLT/keyed.json" "$LLN")" | grep -qF 'loopdead:P0!:tandem-triage ' || { echo "selfcheck fail: keyed fallback lost to a whitespace name"; exit 1; }
   # the join separator never appears inside a line, even in record text
   printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-semicolon-job record invalid' || { echo "selfcheck fail: semicolon record missing"; exit 1; }
   printf '%s\n' "$LLR" | grep -qE 'bad-semicolon-job[^;]*;' && { echo "selfcheck fail: separator leaked into a line"; exit 1; }  # (c) one-shots and underivable schedules are anomalies, never silence
   printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF 'loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched' || { echo "selfcheck fail: once without run_at silent"; exit 1; }
   printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
-  # exactly these 25 lines: silence on a healthy record is as load-bearing as the alert
+  # exactly these 25 'loopdead:' lines (the unnamed-job scan line is separate): silence on
+  # a healthy record is as load-bearing as the alert
   LLC2=$(printf '%s\n' "$LLR" | grep -c '^loopdead:')
   [ "$LLC2" = "25" ] || { echo "selfcheck fail: expected 25 lines, got $LLC2"; exit 1; }
   # silences: inside 2x, a single failure, queued delivery (even with a stale streak), an

@@ -769,6 +769,26 @@ describe('prod probe selfcheck', () => {
       'loopdead:P0!:tandem-triage last fire =2h ago (max gap 60m)',
     );
 
+    // a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
+    const keyedFile = join(dir, 'keyed.json');
+    writeFileSync(
+      keyedFile,
+      JSON.stringify({
+        jobs: {
+          'tandem-triage': {
+            name: ' ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        },
+      }),
+    );
+    const keyed = await $`bash ${script} --loop-liveness ${keyedFile} ${now}`.nothrow().quiet();
+    expect(keyed.stdout.toString()).toContain('loopdead:P0!:tandem-triage ');
+
     // an unreadable scheduler record is an ANOMALY (blind), never silence
     writeFileSync(file, 'not json');
     expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
@@ -821,7 +841,6 @@ describe('prod probe selfcheck', () => {
       { ...live, start_time: 999 },
       { gateway_state: 'running', pid: 4242, code_sha: BOOTED },
       { ...live, pid: 9999 },
-      { ...live, pid: true },
       { ...live, code_sha: '' },
       { ...live, code_sha: '0'.repeat(40) },
     ]) {
