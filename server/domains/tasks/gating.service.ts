@@ -15,6 +15,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
+import { AfterCommitQueue } from './after-commit';
 import {
   logActivity as publishActivity,
   dispatchAiReviewTurns,
@@ -120,12 +121,20 @@ type GatingRow = {
   parkRearmAfter: Date | null;
 };
 
+/** #479: the post-commit queue lives in its own module so callers and tests share it */
+export { AfterCommitQueue } from './after-commit';
+export type { AfterCommit } from './after-commit';
+
 /** the unblock arm (#208/#202/#365/#419): restore a row whose children all landed
  *  terminal. A park the LADDER does not own (a decision-class park, or a FINAL park
  *  past the ladder) is the round's own stop while its round is live — it is withheld
  *  for the owner, never dissolved by an automatic restore. Returns 'restored' (the
  *  write landed), 'lost' (a concurrent writer owns the outcome) or 'withheld'. */
-async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restored' | 'lost' | 'withheld'> {
+async function restoreUnblocked(
+  cur: GatingRow,
+  ex: DbExecutor,
+  afterCommit?: AfterCommitQueue,
+): Promise<'restored' | 'lost' | 'withheld'> {
   const d = asDb(ex);
   // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
   // recorded pre-park status even with no pre_block_status — pure parks stranded here
@@ -179,16 +188,39 @@ async function restoreUnblocked(cur: GatingRow, ex: DbExecutor): Promise<'restor
     { publish: ex === db },
   );
   // unblock-resume parity (#202) + #365 + #419: replay a restored LADDER park's turn,
-  // settle a restore that lands in-review with no live voter (leaf helper)
-  await resumeRestoredRound(cur.id, ladderOwns, known.get(restore));
+  // settle a restore that lands in-review with no live voter (leaf helper).
+  // BORROWED-RESTORE DEFERRAL (#479): these side effects are NOT transactional, so on a
+  // borrowed executor they must not fire before the caller commits — a rollback would
+  // leave a settle/dispatch no restore row backs. Classification is keyed on the
+  // EXECUTOR, never on the collector's presence: an own-pool call that happens to pass a
+  // collector still keeps the immediate order (its guarded write already committed).
+  const resume = () => resumeRestoredRound(cur.id, ladderOwns, known.get(restore));
+  if (ex === db) await resume();
+  else {
+    // the entry guard already refused a queue-less borrow; kept explicit so the
+    // deferral can never silently fall back to running pre-commit
+    if (!afterCommit) throw new Error('restoreUnblocked: borrowed restore without a collector (#479)');
+    afterCommit.defer(resume);
+  }
   return 'restored';
 }
 
 /**
  * recompute the auto-block for every ancestor of this task. Call after ANY status
  * change on a task (its own transition may release or tighten its parents' gates).
+ *
+ * BORROWED-RESTORE DEFERRAL (#479): a caller may pass its open transaction as `ex` —
+ * it then MUST also pass the `afterCommit` collector it will drain once the transaction
+ * commits. An unblock restore hands its non-transactional resume work back through it
+ * instead of running pre-commit, so a rollback can never leave a settle or a dispatch
+ * behind. Own-pool calls (no `ex`) keep the immediate order; a borrowed call without a
+ * collector is a contract error, refused before any read or write. The collector is a
+ * caller obligation: drain every closure after commit (confirmProposal does).
  */
-export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
+export async function refreshParentGating(taskId: string, ex: DbExecutor = db, afterCommit?: AfterCommitQueue) {
+  if (ex !== db && !afterCommit) {
+    throw new Error('refreshParentGating: a borrowed executor requires an afterCommit collector (#479)');
+  }
   const d = asDb(ex);
   const terminal = await terminalStatusIds(ex);
   // gate the task itself, then every ancestor; guard against cycles defensively
@@ -263,7 +295,7 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       // outcome and the walk stops (the winner re-gates itself). A WITHHELD park is not
       // a lost race — the row is still blocked and counts in its parent's open set, so
       // the walk continues and the ancestors re-derive (#419).
-      if ((await restoreUnblocked(cur, ex)) === 'lost') break;
+      if ((await restoreUnblocked(cur, ex, afterCommit)) === 'lost') break;
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({
