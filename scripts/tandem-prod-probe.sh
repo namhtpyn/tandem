@@ -694,28 +694,34 @@ probe_level() {
   esac
 }
 # RUNTIME-REFRESH (#487, 2026-11-17): the gateway ADVERTISES the code it booted
-# (`code_sha` + `pid` + `start_time` in gateway_state.json). An install that lands under a
+# (`code_sha`, `pid`, `start_time` in gateway_state.json). An install that lands under a
 # LIVE gateway — the 2026-11-15 incident: files written 17:55:20Z, two minutes AFTER the
 # 17:53:50Z gateway start — leaves the process holding its OLD modules while every LAZY
 # import reads the NEW files, so the first lazily-imported module whose shape changed
 # raises ImportError: `tui_gateway` imported `release_process_group_once_empty` at
 # WebSocket-upgrade time, uvicorn answered the cron worker's /api/ws upgrade with HTTP 500,
 # and every LLM cron died (`tandem-triage` 30 runs, `tandem-critic` 3, the dockhand report
-# 1 — 29h, 18:00:15Z to the 23:02:15Z restart) recording only `InvalidStatus: server
+# 1 — 29h, 18:00:15Z to the 23:02:15Z unit start) recording only `InvalidStatus: server
 # rejected WebSocket connection`. The dead-man (loop-liveness) catches that only AFTER two
 # failed ticks and cannot catch a break confined to one lazily-imported path. This arm
-# reads the STATE the gateway itself publishes: the booted `code_sha` vs the install's
-# `git rev-parse --verify HEAD` — equal is healthy, different is P0 carrying the remedy.
-# A record is the SERVING gateway only when its state is `running` OR `degraded` (degraded
-# is a serving gateway with a parked platform, per the gateway's own drainable-state set)
-# AND its pid is alive at the SAME start_time (a recycled pid is not the gateway). The
-# candidates are tried in order (the profile's own state file, then the multiplexed root
-# one), so a standalone profile gateway and a multiplexed gateway are both read, and a
-# stale `stopped` document is skipped instead of blinding or alarming the arm.
-# DECLARED BOUNDARIES (silent, never a false alarm): no readable state file, no record
-# that is both live and sha-bearing, a non-git install, a dirty worktree at the same
-# commit (the arm compares commits, not file bytes), and the DASHBOARD unit (a separate
-# process, out of scope).
+# reads the STATE the gateway itself publishes and compares the booted `code_sha` with the
+# install's own code identity — `install-stamp.json`'s `commit` (the same source the
+# gateway reads) or, with no valid stamp, the checkout's HEAD. ANY live record whose sha
+# disagrees is the finding: a fresh sibling record never masks a stale one. A record
+# counts as serving only when its `gateway_state` is `running` OR `degraded` (degraded is
+# a serving gateway with a parked platform) AND its pid is alive at the SAME `start_time`
+# stamp — a recycled pid, or a record carrying no stamp, is never trusted (a skipped
+# record is a false negative the arm prefers to a misattributed P0). Candidates are tried
+# in order (the profile's own state file, then the multiplexed root one), so a standalone
+# and a multiplexed gateway are both read and a stale `stopped` document is skipped
+# instead of blinding or alarming the arm. DECLARED BOUNDARIES (silent, never a false
+# alarm): no readable state file, no live record that is both stamped and sha-bearing, a
+# non-git install with no usable stamp, a dirty worktree at the same commit (the arm
+# compares commits, not file bytes), and the DASHBOARD unit (a separate process, out of
+# scope). The emitted line names the finding and points at SPEC's RUNTIME-REFRESH
+# paragraph instead of embedding a runnable operator command — a literal operator command
+# inside an executable trips the runtime's own self-guard and would block every operator
+# run of this probe.
 runtime_stale() {  # $1 = ':'-separated state candidates, $2 = install dir, $3 = proc root
   python3 - "${1:-}" "${2:-}" "${3:-}" <<'PY'
 import json, os, subprocess, sys
@@ -729,54 +735,65 @@ def is_sha(v):
     v = str(v or "").strip().lower()
     return v if len(v) == 40 and set(v) <= HEX else ""
 def alive(pid, stamp):
-    # the record's start_time is /proc/<pid>/stat field 22 (jiffies since boot); a recycled
-    # pid carries a different one, so pid reuse never attributes a stale record to a live
-    # process. A record without a start_time is trusted by pid alone (nothing to compare).
+    # field 22 of /proc/<pid>/stat is the start (jiffies since boot); the record's own stamp
+    # must match, so a recycled pid never attributes a stale record to a live process
     try:
         with open(os.path.join(proc, str(pid), "stat")) as f:
-            got = int(f.read().rsplit(")", 1)[1].split()[19])
+            return int(stamp) == int(f.read().rsplit(")", 1)[1].split()[19])
     except Exception:
         return False
+def installed_sha():
+    # the identity the gateway itself advertises: the install stamp written at build time;
+    # a missing/invalid stamp falls back to the checkout's HEAD
     try:
-        return stamp is None or int(stamp) == got
+        st = json.load(open(os.path.join(inst, "install-stamp.json")))
+        if isinstance(st, dict):
+            sha = is_sha(st.get("commit"))
+            if sha:
+                return sha
     except Exception:
-        return False
-served = None
+        pass
+    try:
+        return is_sha(subprocess.run(["git", "-C", inst, "rev-parse", "--verify", "--quiet", "HEAD"],
+                                     capture_output=True, text=True, timeout=20).stdout)
+    except Exception:
+        return ""
+installed = installed_sha()
+if not installed:
+    silent()  # no code identity to compare against: declared boundary
+stale = None
 for sf in [c for c in cands.split(":") if c]:
     try:
         st = json.load(open(sf))
     except Exception:
         continue
+    if not isinstance(st, dict):
+        continue  # valid JSON of the wrong shape is a skipped record, never a crash
     if str(st.get("gateway_state") or "") not in ("running", "degraded"):
         continue
+    raw = st.get("pid")
+    if isinstance(raw, bool):
+        continue
     try:
-        pid = int(st.get("pid"))
+        pid = int(raw)
     except Exception:
         continue
-    if pid <= 0 or not alive(pid, st.get("start_time")):
+    if str(raw).strip() != str(pid) or pid < 2:
+        continue
+    if not alive(pid, st.get("start_time")):
         continue
     booted = is_sha(st.get("code_sha"))
     if not booted:
         continue
-    served = (pid, booted)
-    break
-if not served:
+    if booted != installed:
+        stale = (pid, booted)
+        break  # ANY live record that disagrees is the finding: a fresh sibling never masks it
+if not stale:
     silent()
-try:
-    installed = is_sha(subprocess.run(["git", "-C", inst, "rev-parse", "--verify", "--quiet", "HEAD"],
-                                      capture_output=True, text=True, timeout=20).stdout)
-except Exception:
-    silent()  # not a git install / git absent: declared boundary
-if not installed:
-    silent()
-pid, booted = served
-if booted != installed:
-    # The remedy is deliberately NOT a runnable command string: a literal operator command
-    # inside an executable trips the runtime's own self-guard, which would block every
-    # operator run of this probe. SPEC's RUNTIME-REFRESH paragraph carries the command.
-    print("runtime_stale: the gateway (pid %d) booted code %s but the install is %s - "
-          "the unit is serving stale code (mixed modules can fail lazy imports, LLM crons "
-          "may be dead or dying). See SPEC RUNTIME-REFRESH" % (pid, booted[:9], installed[:9]))
+pid, booted = stale
+print("runtime_stale: the gateway (pid %d) booted code %s but the install is %s - "
+      "the unit is serving stale code (mixed modules can fail lazy imports, LLM crons "
+      "may be dead or dying). See SPEC RUNTIME-REFRESH" % (pid, booted[:9], installed[:9]))
 PY
 }
 if [ "${1:-}" = "--runtime-stale" ]; then
@@ -1131,13 +1148,15 @@ FIX
   [ "$LLU" = "1" ] || { echo "selfcheck fail: uuid masking missing ($LLU)"; exit 1; }
   # RUNTIME-REFRESH arm (#487): the shipped function is driven with fixtures through every
   # branch — a booted sha DIFFERENT from the install FIRES from a running AND from a
-  # degraded record (degraded still serves cron), the SAME sha is the steady state and stays
-  # silent, and a stopped record, a recycled pid (start_time mismatch), a dead pid, an
-  # absent state file, an absent sha, an unborn HEAD and a non-git install each stay SILENT.
-  # The line carries no ';' join separator and names the working command; the level is P0
-  # on the arm's OWN prefix only (a look-alike cause string stays P1); the live pass
-  # consumes the arm (call, then append) BEFORE the anomaly line is joined; the seam is
-  # dispatched end-to-end and refuses a missing install argument.
+  # degraded record, and a stale record still fires when a FRESH live sibling precedes it
+  # (no masking); the SAME sha is the steady state and stays silent; and a stopped record,
+  # a recycled pid, a record with no start_time, a dead pid, an absent state file, an
+  # absent sha, a 40-char non-hex sha, an unborn HEAD, a non-dict JSON document and a
+  # non-git install each stay SILENT. The line carries no ';' join separator and names the
+  # finding plus the SPEC pointer (never a runnable command); the level is P0 on the arm's
+  # OWN prefix only (a look-alike cause string stays P1); the live pass consumes the arm
+  # (call, then append) BEFORE the anomaly line is joined; the seam refuses a missing
+  # install argument and is dispatched end-to-end AFTER its own pin.
   RTD=$(mktemp -d 2>/dev/null) || { echo "selfcheck fail: mktemp for the runtime fixture"; exit 1; }
   mkdir -p "$RTD/r" "$RTD/proc/4242" "$RTD/proc/7777"
   git init -q "$RTD/r" 2>/dev/null
@@ -1147,44 +1166,70 @@ FIX
     git -C "$RTD/r" commit -q --no-gpg-sign --allow-empty -m fixture 2>/dev/null
   RT_SHA=$(git -C "$RTD/r" rev-parse HEAD)
   [ -n "$RT_SHA" ] || { echo "selfcheck fail: fixture git unusable"; exit 1; }
-  python3 - "$RTD/proc/4242/stat" 1000 <<'PY2'
+  python3 - "$RTD/proc/4242/stat" 1000 4242 <<'PY2'
 import sys
-open(sys.argv[1], "w").write("4242 (gateway) S " + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
+open(sys.argv[1], "w").write("%s (gateway) S " % sys.argv[3] + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
+PY2
+  python3 - "$RTD/proc/7777/stat" 3000 7777 <<'PY2'
+import sys
+open(sys.argv[1], "w").write("%s (hermes) dashboard) x) S " % sys.argv[3] + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
 PY2
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stale.json"
   printf '{"gateway_state": "degraded", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/degraded.json"
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "%s"}' "$RT_SHA" > "$RTD/ok.json"
   printf '{"gateway_state": "stopped", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stopped.json"
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 999, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/reused.json"
+  printf '{"gateway_state": "running", "pid": 4242, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/nostamp.json"
   printf '{"gateway_state": "running", "pid": 9999, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/dead.json"
   printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": ""}' > "$RTD/nosha.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}' > "$RTD/nonhex.json"
+  printf '[1, 2]' > "$RTD/array.json"
+  printf '{"gateway_state": "running", "pid": "4242", "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/strpid.json"
+  printf '{"gateway_state": "running", "pid": true, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/boolpid.json"
+  printf '{"gateway_state": "running", "pid": 4242.0, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/floatpid.json"
   RTF=$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")
   printf '%s' "$RTF" | grep -qF 'runtime_stale: the gateway (pid 4242) booted code 111111111 but the install is ' || { echo "selfcheck fail: stale runtime silent or mislabelled"; exit 1; }
   printf '%s' "$RTF" | grep -qF 'the unit is serving stale code' || { echo "selfcheck fail: stale runtime lost its verdict text"; exit 1; }
   printf '%s' "$RTF" | grep -qF 'SPEC RUNTIME-REFRESH' || { echo "selfcheck fail: stale runtime lost its SPEC pointer"; exit 1; }
   printf '%s' "$RTF" | grep -qF ';' && { echo "selfcheck fail: runtime line carries the join separator"; exit 1; }
   [ -n "$(runtime_stale "$RTD/degraded.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: degraded gateway not read as serving"; exit 1; }
+  [ -n "$(runtime_stale "$RTD/strpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: numeric-string pid not read"; exit 1; }
   [ -z "$(runtime_stale "$RTD/ok.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: matching sha alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/stopped.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: stopped gateway alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/reused.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: recycled pid alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/nostamp.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: unstamped record trusted"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/boolpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: boolean pid trusted"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/floatpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: float pid trusted"; exit 1; }
   [ -z "$(runtime_stale "$RTD/dead.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: dead pid alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/absent.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent state alarmed"; exit 1; }
   [ -z "$(runtime_stale "$RTD/nosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/nonhex.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: non-hex sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/array.json" "$RTD/r" "$RTD/proc" 2>"$RTD/arr.err")" ] || { echo "selfcheck fail: non-dict JSON alarmed"; exit 1; }
+  [ -s "$RTD/arr.err" ] && { echo "selfcheck fail: non-dict JSON raised on stderr"; exit 1; }
   [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/nope" "$RTD/proc")" ] || { echo "selfcheck fail: non-git install alarmed"; exit 1; }
   mkdir -p "$RTD/unborn"; git init -q "$RTD/unborn" 2>/dev/null
   [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/unborn" "$RTD/proc")" ] || { echo "selfcheck fail: unborn HEAD alarmed"; exit 1; }
-  # candidate order: a skipped `stopped` document never blinds the next candidate
-  [ -n "$(runtime_stale "$RTD/stopped.json:$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: fallback candidate ignored"; exit 1; }
-  printf '%s' "$(runtime_stale "$RTD/stale.json:$RTD/ok.json" "$RTD/r" "$RTD/proc")" | grep -qF 'booted code 111111111' || { echo "selfcheck fail: first live candidate did not win"; exit 1; }
-  # seam dispatch end-to-end (drives the shipped bytes and the usage guard)
-  printf '%s' "$("$0" --runtime-stale "$RTD/stale.json" "$RTD/r" "$RTD/proc" 2>/dev/null)" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: seam dispatch does not reach the arm"; exit 1; }
-  "$0" --runtime-stale "$RTD/stale.json" >/dev/null 2>&1; [ "$?" = "2" ] || { echo "selfcheck fail: seam accepts a missing install argument"; exit 1; }
+  # a fresh live record must never mask a stale live sibling (two serving gateways)
+  printf '%s' "$(runtime_stale "$RTD/ok.json:$RTD/stale.json" "$RTD/r" "$RTD/proc")" | grep -qF 'booted code 111111111' || { echo "selfcheck fail: a fresh live record masked a stale sibling"; exit 1; }
+  printf '%s' "$(runtime_stale "$RTD/stale.json:$RTD/ok.json" "$RTD/r" "$RTD/proc")" | grep -qF 'booted code 111111111' || { echo "selfcheck fail: stale-first ordering broke"; exit 1; }
+  # an install stamp is the primary identity; a checkout HEAD is the fallback
+  printf '{"commit": "1111111111111111111111111111111111111111"}' > "$RTD/r/install-stamp.json"
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity ignored (HEAD used instead of the stamp)"; exit 1; }
+  printf '{"commit": "%s"}' "$RT_SHA" > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity broke the fire path"; exit 1; }
+  rm -f "$RTD/r/install-stamp.json"
+  # a comm containing ')' must not shift the field index
+  printf '{"gateway_state": "running", "pid": 7777, "start_time": 3000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/paren.json"
+  [ -n "$(runtime_stale "$RTD/paren.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: comm-with-paren parse broken"; exit 1; }
   [ "$(probe_level "$RTF")" = "0" ] || { echo "selfcheck fail: runtime_stale not P0"; exit 1; }
   [ "$(probe_level 'loopdead:docs-bot cause=RuntimeError: runtime_stale arm fired')" = "1" ] || { echo "selfcheck fail: a look-alike cause escalated"; exit 1; }
-  grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
+  grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}" 2>/dev/null)' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
   grep -cxF '[ -n "$RUNTIME" ] && anom+=("$RUNTIME")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm append missing"; exit 1; }
   grep -cxF 'if [ "${1:-}" = "--runtime-stale" ]; then' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime seam dispatch changed"; exit 1; }
-  awk '/^RUNTIME=\$\(runtime_stale /{a=NR} /^\[ -n "\$RUNTIME" \] && anom/{b=NR} /^LINE="\$\(IFS=/{c=NR} END{exit !(a && b && c && a<b && b<c)}' "$0" || { echo "selfcheck fail: the append is not between the call and the line join"; exit 1; }
+  awk '/^if \[ "\$\{1:-\}" = "--selfcheck" \]/{s=NR} /^RUNTIME=\$\(runtime_stale /{a=NR} /^\[ -n "\$RUNTIME" \] && anom/{b=NR} /^LINE="\$\(IFS=/{c=NR} END{exit !(s && a && b && c && s<a && a<b && b<c)}' "$0" || { echo "selfcheck fail: the live-pass wiring is not call-then-append-then-join inside the live pass"; exit 1; }
+  # the seam refuses a missing install argument, then dispatches end-to-end
+  "$0" --runtime-stale "$RTD/stale.json" >/dev/null 2>&1; [ "$?" = "2" ] || { echo "selfcheck fail: seam accepts a missing install argument"; exit 1; }
+  printf '%s' "$("$0" --runtime-stale "$RTD/stale.json" "$RTD/r" "$RTD/proc" 2>/dev/null)" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: seam dispatch does not reach the arm"; exit 1; }
   rm -rf "$RTD"
   echo "ok probe selfcheck"
   exit 0
@@ -1230,7 +1275,7 @@ else
 fi
 
 # 0. runtime refresh (#487): installed code newer than the serving process = mixed modules
-RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}")
+RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}" 2>/dev/null)
 [ -n "$RUNTIME" ] && anom+=("$RUNTIME")
 
 # 1. container health + image
