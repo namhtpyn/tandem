@@ -838,6 +838,48 @@ describe('borrowed-restore deferral (#479)', () => {
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
 
+  it('reports a late verdict beside a live pending row (both facts, not an either/or)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    h.postVerdict = true;
+    await refreshParentGating('p');
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      liveRound: true,
+      lateVerdict: true,
+    });
+  });
+
+  it('a WORKING-home re-key records both the home category and the demoted landing', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.doing });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // #88 demotion
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      recordedCategory: 'in_review',
+      homeCategory: 'working',
+      landingCategory: 'backlog',
+    });
+  });
+
+  it('a dangling recorded home with a live round records the strand (homeCategory null)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: 'ghost-home' });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // resolveRestoreTarget fallback
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      recordedCategory: 'in_review',
+      homeCategory: null,
+      landingCategory: 'backlog',
+    });
+  });
+
   it('a PARKED restore never runs the strand detector (the park half is out by declaration)', async () => {
     row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);

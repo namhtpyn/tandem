@@ -169,7 +169,7 @@ async function restoreUnblocked(
   // must not be re-labelled by half a record).
   let strand: {
     recordedCategory: string;
-    homeCategory: string;
+    homeCategory: string | null;
     landingCategory: string;
     liveRound: boolean;
     lateVerdict: boolean;
@@ -198,7 +198,7 @@ async function restoreUnblocked(
         ) {
           strand = {
             recordedCategory: blockRecord.category,
-            homeCategory: nonNull(homeCategory),
+            homeCategory: homeCategory ?? null,
             landingCategory: nonNull(landingCategory),
             liveRound,
             lateVerdict: postRecordVerdict,
@@ -240,7 +240,7 @@ async function restoreUnblocked(
     await logActivity(
       cur.id,
       strand
-        ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} was re-keyed to ${strand.homeCategory}; restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
+        ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} ${strand.homeCategory === null ? 'no longer resolves' : `was re-keyed to ${strand.homeCategory}`}; restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
         : `unblocked: all subtasks terminal → ${restore}`,
       {
         autoUnblocked: true,

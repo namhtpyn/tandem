@@ -91,7 +91,10 @@ export type RestoreStrandInput = {
   /** the category the recorded home (pre_block_status) carries NOW — the re-key test's
    *  second term, mirroring the RE-KEYED-HOME arm. Never derived from the landing status:
    *  a WORKING home legally demotes to to-do (#88), so comparing against the landing would
-   *  misread every demotion as a re-key. */
+   *  misread every demotion as a re-key. `undefined` = the recorded home no longer
+   *  resolves (deleted under the block — the ghost-race producer the SPEC declares for
+   *  ORPHAN-HOME; the live-decision variant lands here, ORPHAN-HOME covers the no-PENDING
+   *  variant, so the two arms split the shape by declaration). */
   homeCategory: string | undefined;
   /** the category the restore actually lands on (resolveRestoreTarget already applied) */
   landingCategory: string | undefined;
@@ -103,17 +106,18 @@ export type RestoreStrandInput = {
 
 /** The detector's contract (SPEC "Probe versioning", RESTORE-STRAND): a restore that lands
  *  a task OUTSIDE the in-review category while its recorded block home was re-keyed
- *  (recorded category ≠ the home's CURRENT category) AND the task carries a live review
- *  decision (a PENDING row, or a verdict newer than the record) is a strand — the review
- *  was requested and can never land. Every legal shape is excluded: #423's
- *  settle-then-reblock records the already-terminal category, a manual terminal move keeps
- *  the category it blocks from, a legal working-home demotion records the home it blocks
- *  from (equal), and an in-view restore re-enters the flow. */
+ *  (recorded category ≠ the home's CURRENT category) or no longer resolves AND the task
+ *  carries a live review decision (a PENDING row, or a verdict newer than the record) is a
+ *  strand — the review was requested and can never land. Every legal shape is excluded:
+ *  #423's settle-then-reblock records the already-terminal category, a manual terminal move
+ *  keeps the category it blocks from, a legal working-home demotion records the home it
+ *  blocks from (equal), a faithful status re-home keeps the category, and an in-view
+ *  restore re-enters the flow. */
 export function isRestoreStrand(input: RestoreStrandInput): boolean {
+  const homeChanged = input.homeCategory === undefined || input.homeCategory !== input.recordedCategory;
   return (
     input.recordedCategory !== null &&
-    input.homeCategory !== undefined &&
-    input.homeCategory !== input.recordedCategory &&
+    homeChanged &&
     input.landingCategory !== undefined &&
     input.landingCategory !== CATEGORY.IN_REVIEW &&
     (input.liveRound || input.postRecordVerdict)

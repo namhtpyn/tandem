@@ -58,7 +58,11 @@ describe('restore-strand detector (#500)', () => {
     expect(isRestoreStrand({ ...base, recordedCategory: null })).toBe(false);
   });
 
-  it('stays silent when the recorded home no longer resolves (dangling home is the ORPHAN-HOME arm)', () => {
-    expect(isRestoreStrand({ ...base, homeCategory: undefined })).toBe(false);
+  it('fires when the recorded home no longer resolves and a live decision waits', () => {
+    expect(isRestoreStrand({ ...base, homeCategory: undefined })).toBe(true);
+  });
+
+  it('stays silent when the recorded home is gone and no review decision waits', () => {
+    expect(isRestoreStrand({ ...base, homeCategory: undefined, liveRound: false })).toBe(false);
   });
 });
