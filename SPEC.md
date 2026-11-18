@@ -1257,10 +1257,13 @@ non-positive deltas render no duration.
   carries no record and stays silent — the declared residual below `2.78.43`. The park half's
   DECLARED residual (audit #506): a verdict that landed BEFORE the park — a settle throw in
   review, or a lost settle while blocked — is ordered against the park record only, so when
-  no PENDING row survives it is silent (a surviving PENDING row keeps the live-round term
-  firing). The anchor IS derivable — a park note whose `fromStatus` differs from
-  `park_from_status` superseded a block, so the newest block note is that episode's record
-  — but the term does not read it yet. #423 stays
+  no PENDING reviewer row survives it is silent (a surviving PENDING REVIEWER row keeps the
+  live-round term firing; a VOID row, `reviewer_id` NULL, is not live). The anchor IS
+  derivable — a park note whose `fromStatus` differs from `park_from_status` superseded a
+  block, so the newest block note is that episode's record — with one caveat a future term
+  must handle: a `statuses.remove` re-home rewrites `park_from_status` while the note keeps
+  the dead `fromStatus`, so the derivation must also see that no status delete re-homed the
+  park since. The term does not read `fromStatus` yet. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal

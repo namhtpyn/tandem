@@ -261,6 +261,31 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     expect(parkedPreFloorAfter?.status, 'the record-less park still restores into its recorded home').toBe(
       parkedPreFloor.statusId,
     );
+
+    // 4d. the NEWEST park note is the record (#502 r5): a flapping reviewer leaves several
+    // `review parked` notes (one per ladder re-fire). Seed an OLDER record-less note on a
+    // re-keyed, live-round task whose CURRENT park note is floored — an oldest-first read
+    // would return the record-less note, stay silent, and disable the park half for every
+    // re-parked task; the newest-note read fires.
+    const parkedMulti = await seedParked('PARKMULTI', { liveRound: true, rekey: true });
+    await sql.unsafe(
+      `with m as (
+         insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'review parked — earlier episode', now() - interval '30 minutes')
+         returning id
+       )
+       insert into task_message_activities (message_id, payload)
+       select id, $3 from m`,
+      [`park-old-${parkedMulti.id}`, parkedMulti.id, { kind: 'STATUS', reviewParked: true }],
+    );
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedMulti.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    const multiRecords = await strandRecord(parkedMulti.id);
+    expect(multiRecords, 'the newest park note is the record, not the oldest').toHaveLength(1);
+    expect(multiRecords[0]!.payload).toMatchObject({ reviewStrand: true, recordedCategory: 'in_review' });
   } finally {
     // the per-test fixture sweeps tasks AFTER this block, but status removal refuses while
     // any task still references the status — remove this spec's rows first (tag-scoped),
