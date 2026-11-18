@@ -255,6 +255,12 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       ).status(),
     ).toBe(200);
     expect(await strandRecord(parkedPreFloor.id), 'a pre-floor park note is the declared residual').toHaveLength(0);
+    const parkedPreFloorAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [parkedPreFloor.id])) as Array<{ status: string }>
+    )[0];
+    expect(parkedPreFloorAfter?.status, 'the record-less park still restores into its recorded home').toBe(
+      parkedPreFloor.statusId,
+    );
   } finally {
     // the per-test fixture sweeps tasks AFTER this block, but status removal refuses while
     // any task still references the status — remove this spec's rows first (tag-scoped),

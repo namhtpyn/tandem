@@ -968,5 +968,8 @@ describe('borrowed-restore deferral (#479)', () => {
     h.roundLive = true;
     await refreshParentGating('p');
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+    // the control proves the restore LANDED in-review, not merely that it stayed silent
+    // (a withheld/bailed restore would also write no strand)
+    expect(h.notes.find((n) => n.meta.parkResumed === true)?.meta.restored).toBe(STATUS.inReview);
   });
 });

@@ -1247,9 +1247,16 @@ non-positive deltas render no duration.
   (`park_from_status`) carries NOW, with the same live-round / post-record-verdict
   decision and the same landing test (a restore that lands outside the
   `in_review` category), so a status re-keyed while its task sat parked over a live round
-  FIRES; a legal park restore (home still in-review, or unresolvable and therefore
+  FIRES (a LADDER-owned park — a decision or FINAL park is the round's own stop and is
+  withheld by the ladder rule, never dissolved by an automatic restore); a legal park
+  restore (home still in-review, or unresolvable and therefore
   falling back to in-review) writes no strand, and a pre-floor park note carries no
-  record and stays silent — the declared residual below `2.78.43`. #423 stays
+  record and stays silent — the declared residual below `2.78.43`. The park half's
+  DECLARED residual (audit #506): a verdict that landed while the task was BLOCKED and
+  whose settle flip was lost, then parked (the park records the home afresh), is ordered
+  against the park record only — so a pre-park verdict under a home re-keyed during the
+  park is silent; separating it needs an EPISODE-scoped anchor (whether the newest block
+  record belongs to the park's own gating episode), which no record declares yet. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
@@ -1313,7 +1320,8 @@ non-positive deltas render no duration.
   and the recorded park home is `park_from_status` — #502) the app reads
   the newest floored record's `homeCategory` and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
-  older owed vote, #445 — or a verdict NEWER than the block record) as ADVISORY evidence
+  older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
+  the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
   on the pool before the write — a failed evidence read is logged and never blocks the
   restore — and reads the DECISIVE categories inside the restore's transaction immediately
   before the guarded write, so the target follows the category map the write is about to
