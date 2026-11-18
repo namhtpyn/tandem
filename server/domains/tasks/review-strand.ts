@@ -17,19 +17,25 @@ import { taskMessageActivities, taskMessages, taskReviews } from '../../db/schem
 /** A home CATEGORY recorded on a gating note at write time + when that note landed. */
 export type HomeRecord = { category: string; at: Date };
 
-/** The block note's record — same shape, named for the half that reads it. */
-export type BlockHomeRecord = HomeRecord;
+/** The block note's record — same shape, but the category can be NULL: a floored note
+ *  whose block committed against a home that already named no `task_statuses` row (the
+ *  ghost-task race) recorded the ABSENCE, which is a record, not a missing one (#503). */
+export type BlockHomeRecord = { category: string | null; at: Date };
 
 const VERDICT_STATUSES = [REVIEW_STATUS.APPROVED, REVIEW_STATUS.CHANGE_REQUESTED, REVIEW_STATUS.REJECTED];
 
-/** The newest `auto-blocked:` note carrying a home CATEGORY (HOME-CATEGORY RECORD FLOOR,
- *  2.78.41). A pre-floor note carries no category and returns null — the detector stays
- *  silent on it, exactly like the probe arm's pre-floor fallback (the row is the declared
- *  #491 residual and must not be re-labelled by half a record). */
+/** The newest `auto-blocked:` note carrying a home record (HOME-CATEGORY RECORD FLOOR,
+ *  2.78.41; GHOST-AT-BLOCK TERM FLOOR, 2.78.44, #503). A pre-floor note carries no
+ *  `homeCategory` KEY at all and returns null — the detector stays silent on it, exactly
+ *  like the probe arm's pre-floor fallback (the row is the declared #491 residual and must
+ *  not be re-labelled by half a record). A floored note whose value is NULL returns a
+ *  record with `category: null`: the home was already a ghost at block time. An EMPTY
+ *  value is treated as no record (the probe's `<> ''` guard), never as a ghost. */
 export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Promise<BlockHomeRecord | null> {
   const rows = await asDb(ex)
     .select({
       category: sql<string | null>`${taskMessageActivities.payload}->>'homeCategory'`,
+      keyed: sql<boolean>`jsonb_exists(${taskMessageActivities.payload}, 'homeCategory')`,
       at: taskMessages.createdAt,
     })
     .from(taskMessages)
@@ -44,7 +50,7 @@ export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Pro
     .orderBy(desc(taskMessages.createdAt))
     .limit(1);
   const row = rows[0];
-  if (!row || row.category === null || row.category === '') return null;
+  if (!row || !row.keyed || row.category === '') return null;
   return { category: row.category, at: row.at };
 }
 
@@ -111,8 +117,14 @@ export async function hasLiveReviewRow(taskId: string, ex: DbExecutor): Promise<
 }
 
 export type RestoreStrandInput = {
-  /** the block record's category; null (no floored record) disables the detector */
+  /** the block record's category; null with `ghostAtBlock: false` (no floored record at
+   *  all) disables the detector */
   recordedCategory: string | null;
+  /** the block record IS floored and names NO category: the block committed against a
+   *  home that already named no `task_statuses` row (the ghost-task race). The re-key
+   *  test is satisfied by construction — there is no recorded category a current home
+   *  could match (#503, GHOST-AT-BLOCK TERM floor 2.78.44). */
+  ghostAtBlock: boolean;
   /** the category the recorded home (pre_block_status) carries NOW — the re-key test's
    *  second term, mirroring the RE-KEYED-HOME arm. Never derived from the landing status:
    *  a WORKING home legally demotes to to-do (#88), so comparing against the landing would
@@ -133,15 +145,19 @@ export type RestoreStrandInput = {
  *  a task OUTSIDE the in-review category while its recorded block home was re-keyed
  *  (recorded category ≠ the home's CURRENT category) or no longer resolves AND the task
  *  carries a live review decision (a PENDING row, or a verdict newer than the record) is a
- *  strand — the review was requested and can never land. Every legal shape is excluded:
- *  #423's settle-then-reblock records the already-terminal category, a manual terminal move
- *  keeps the category it blocks from, a legal working-home demotion records the home it
- *  blocks from (equal), a faithful status re-home keeps the category, and an in-view
- *  restore re-enters the flow. */
+ *  strand — the review was requested and can never land. A FLOORED record that names NO
+ *  category (the block committed against a ghost home) satisfies the re-key test by
+ *  construction — there is no recorded value a current home could match (#503). Every
+ *  legal shape is excluded: #423's settle-then-reblock records the already-terminal
+ *  category, a manual terminal move keeps the category it blocks from, a legal
+ *  working-home demotion records the home it blocks from (equal), a faithful status
+ *  re-home keeps the category, and an in-view restore re-enters the flow. */
 export function isRestoreStrand(input: RestoreStrandInput): boolean {
-  const homeChanged = input.homeCategory === undefined || input.homeCategory !== input.recordedCategory;
+  const recorded = input.recordedCategory !== null || input.ghostAtBlock;
+  const homeChanged =
+    input.ghostAtBlock || input.homeCategory === undefined || input.homeCategory !== input.recordedCategory;
   return (
-    input.recordedCategory !== null &&
+    recorded &&
     homeChanged &&
     input.landingCategory !== undefined &&
     input.landingCategory !== CATEGORY.IN_REVIEW &&

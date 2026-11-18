@@ -166,7 +166,8 @@ async function restoreUnblocked(
   // the category the write actually commits against (the block arm's own rule).
   let evidence: {
     originStatusId: string;
-    recordedCategory: string;
+    recordedCategory: string | null;
+    ghostAtBlock: boolean;
     liveRound: boolean;
     lateVerdict: boolean;
   } | null = null;
@@ -183,7 +184,16 @@ async function restoreUnblocked(
         // report BOTH facts: the strand is an OR, but the record's `lateVerdict` must be
         // true whenever a verdict landed after the block, even beside a live pending row
         const lateVerdict = await hasVerdictAfter(cur.id, homeRecord.at, db);
-        evidence = { originStatusId: evidenceOrigin, recordedCategory: homeRecord.category, liveRound, lateVerdict };
+        evidence = {
+          originStatusId: evidenceOrigin,
+          recordedCategory: homeRecord.category,
+          // #503: the block record is FLOORED and names NO category — the block committed
+          // against a home that already named no task_statuses row (the ghost-task race).
+          // Only a block record can carry null (the park record returns null instead).
+          ghostAtBlock: homeRecord.category === null,
+          liveRound,
+          lateVerdict,
+        };
       }
     } catch (e) {
       log.warn(`gating: restore-strand detector failed for task ${cur.id}:`, e instanceof Error ? e.message : e);
@@ -212,7 +222,8 @@ async function restoreUnblocked(
     // the detector's decision uses the flip-time map (the block arm's rule: the record
     // carries the category the write actually committed against)
     let strand: {
-      recordedCategory: string;
+      recordedCategory: string | null;
+      ghostAtBlock: boolean;
       homeCategory: string | null;
       landingCategory: string;
       liveRound: boolean;
@@ -224,6 +235,7 @@ async function restoreUnblocked(
       if (
         isRestoreStrand({
           recordedCategory: evidence.recordedCategory,
+          ghostAtBlock: evidence.ghostAtBlock,
           homeCategory,
           landingCategory,
           liveRound: evidence.liveRound,
@@ -232,6 +244,7 @@ async function restoreUnblocked(
       ) {
         strand = {
           recordedCategory: evidence.recordedCategory,
+          ghostAtBlock: evidence.ghostAtBlock,
           homeCategory: homeCategory ?? null,
           landingCategory: nonNull(landingCategory),
           liveRound: evidence.liveRound,
@@ -256,7 +269,9 @@ async function restoreUnblocked(
     await logActivity(
       cur.id,
       strand
-        ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} ${strand.homeCategory === null ? 'no longer resolves' : `was re-keyed to ${strand.homeCategory}`}; restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
+        ? strand.ghostAtBlock
+          ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND (ghost-at-block): the block recorded no home category (its home already named no status); restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
+          : `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} ${strand.homeCategory === null ? 'no longer resolves' : `was re-keyed to ${strand.homeCategory}`}; restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
         : `unblocked: all subtasks terminal → ${restore}`,
       {
         autoUnblocked: true,
@@ -266,6 +281,7 @@ async function restoreUnblocked(
           ? {
               reviewStrand: true,
               recordedCategory: strand.recordedCategory,
+              ghostAtBlock: strand.ghostAtBlock,
               homeCategory: strand.homeCategory,
               landingCategory: strand.landingCategory,
               liveRound: strand.liveRound,
