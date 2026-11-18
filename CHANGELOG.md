@@ -1,3 +1,39 @@
+## [2.78.41](https://github.com/namhtpyn/tandem/compare/v2.78.40...v2.78.41) (2026-11-18)
+
+
+### Bug Fixes
+
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r1 — delivery term, dispatch baseline, per-job isolation, cause masking ([7df0f7b](https://github.com/namhtpyn/tandem/commit/7df0f7bf2f1099f9f405f6673f02391d228052c5))
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r2 — mid-line P0 token, max-gap derivation, cause selection, once jobs ([915b305](https://github.com/namhtpyn/tandem/commit/915b305b2fed96b333a8c04dcfcde3cd7a3f5bd7))
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r3 — exact fire-day gap enumeration, cancelled/queued, no-completion term ([105ab92](https://github.com/namhtpyn/tandem/commit/105ab9281ca1cf77b4fca1ccb6e2255767357d21))
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r4 — overdue term, measured 12h floor, unforgeable P0 prefix ([3dc79b1](https://github.com/namhtpyn/tandem/commit/3dc79b1ca1c6e38b497dcc3e31cea08303465b51))
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r5 — intra-day gaps, retired one-shots, traceback causes, forgery-proof prefix ([4c84ae8](https://github.com/namhtpyn/tandem/commit/4c84ae86e1a324ba18bf490c1569b6fcad9507f4))
+* [#485](https://github.com/namhtpyn/tandem/issues/485) r6 — empty-store blind spot, wedged next_run_at, in-flight one-shot, exact-name escalation ([e0ee16f](https://github.com/namhtpyn/tandem/commit/e0ee16f4dda06313e212bb33f71034065a667185))
+* **probe:** [#468](https://github.com/namhtpyn/tandem/issues/468) per-verdict record ordering closes the split-timing re-key gap ([669986b](https://github.com/namhtpyn/tandem/commit/669986b1dd0f183ca5cd18a408e91eea5152345b)), closes [#423](https://github.com/namhtpyn/tandem/issues/423) [#467](https://github.com/namhtpyn/tandem/issues/467) [#423](https://github.com/namhtpyn/tandem/issues/423) [#467-era](https://github.com/namhtpyn/tandem/issues/467-era)
+* **probe:** [#468](https://github.com/namhtpyn/tandem/issues/468) r1 — order each origin against its OWN record; state the era residual ([556fb8e](https://github.com/namhtpyn/tandem/commit/556fb8eaa4b47faa4abbd7041b2b20ff2878a0ed)), closes [#467](https://github.com/namhtpyn/tandem/issues/467)
+* **probe:** [#468](https://github.com/namhtpyn/tandem/issues/468) r5 — pin the borrow regression; declare the note-loss split false negative ([c118f2b](https://github.com/namhtpyn/tandem/commit/c118f2bf371ba8673536ffbd376c0544026fbcdb))
+* **probe:** [#485](https://github.com/namhtpyn/tandem/issues/485) no-LLM loop-liveness arm — the loop's own crons had no dead-man ([c7e849c](https://github.com/namhtpyn/tandem/commit/c7e849c8f939b97dffc81a209b9377c3e8ae1bb5))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r2 — production proc parse driven by fixtures, unit argv pinned, delimited line, honest facts ([84f5607](https://github.com/namhtpyn/tandem/commit/84f560771dc49b646a8349573850ca48c3892f77))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r3 — read the gateway's ADVERTISED code_sha, not a time heuristic ([0fd62c0](https://github.com/namhtpyn/tandem/commit/0fd62c09ee6e69454ce05e81e3e6ff671e2867f2))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r4 — serving-state set, start_time pid guard, candidate fallback, no runnable command ([1a1388f](https://github.com/namhtpyn/tandem/commit/1a1388f997eb76a736586e1dd2d0437a547f0d2e))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r5 — any live mismatch fires, stamped pids only, install-stamp identity, non-dict safety ([d990d45](https://github.com/namhtpyn/tandem/commit/d990d455624b07ca108a6c5b525ea9afa40af53d))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r6 — platform-exact identity resolution, zero-sha placeholder, prefix position, wiring anchored to the live pass ([bfbe92a](https://github.com/namhtpyn/tandem/commit/bfbe92a9c4461b44bab0bba0d177aaa99a98f575))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) r7 — separator-accurate P0 anchor, platform-exact stamp gate, stderr surfaced ([ebfcb6f](https://github.com/namhtpyn/tandem/commit/ebfcb6f1ed2ab93c7b883c2a485f7818c9dfa810))
+* **probe:** [#487](https://github.com/namhtpyn/tandem/issues/487) runtime-refresh arm — a stale gateway holding pre-update modules is P0 ([a6e01ca](https://github.com/namhtpyn/tandem/commit/a6e01ca206e932d5604ba6a7fe8d19661e90a39e))
+* **probe:** [#490](https://github.com/namhtpyn/tandem/issues/490) anchor the brain P0 prefix and strip job names (SPEC parity) ([43abb46](https://github.com/namhtpyn/tandem/commit/43abb4609173d0e34526d7e004035f7eebc0d991))
+* **probe:** [#490](https://github.com/namhtpyn/tandem/issues/490) r2 — keyed fallback survives a whitespace name; drop a vacuous pid pin ([7a84b5d](https://github.com/namhtpyn/tandem/commit/7a84b5d832c6ef513d8763ac5e3d0491e9e44d63))
+* **probe:** [#490](https://github.com/namhtpyn/tandem/issues/490) r3 — verbatim names, keyed-store rule in SPEC, position pin for the P0 anchor ([6408588](https://github.com/namhtpyn/tandem/commit/6408588fd3ff45b32f5c94b58cf4a5c23dce91db))
+* **probe:** [#490](https://github.com/namhtpyn/tandem/issues/490) r4 — two-sided padded-name pin (never P0, never silent) in selfcheck and unit ([e832742](https://github.com/namhtpyn/tandem/commit/e83274238c7225f198b736893f82062d6bd4b244))
+* **probe:** [#491](https://github.com/namhtpyn/tandem/issues/491) r4 — the term tests recorded-vs-CURRENT category, not a hand-coded terminal list ([9a1eb7d](https://github.com/namhtpyn/tandem/commit/9a1eb7d7c4266cde8e87be68a15dc34c45de7bf9))
+* **probe:** [#491](https://github.com/namhtpyn/tandem/issues/491) record the home's category at block time and close the late-re-key gap ([57fc461](https://github.com/namhtpyn/tandem/commit/57fc461ae20eed90c253f65fb8b4d4911f1a8f91)), closes [#423](https://github.com/namhtpyn/tandem/issues/423)
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r2 — line-integrity sweep, display-collision discriminator, scan shield ([778f027](https://github.com/namhtpyn/tandem/commit/778f027eaf9ed7dd1381116aea9aa755d3882772))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r3 — all break classes swept, total emission, letters-only discriminator ([4bf6bad](https://github.com/namhtpyn/tandem/commit/4bf6bad76e017e262eb584f936095b56369b76f6))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r4 — readable non-ASCII tokens, lossless sweep, non-vacuous pins ([2e1463b](https://github.com/namhtpyn/tandem/commit/2e1463b1cd7061a5e2d5c3ea4c325fc556387ba6))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r5 — locale-proof byte emission, 12-letter discriminator, strict prefix ([5dfc72e](https://github.com/namhtpyn/tandem/commit/5dfc72ed8990d321609089a0c4f6e04c3fd93f33))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r6 — bytes-read record, readable-fallback rule, pin the guard edges ([5aa557f](https://github.com/namhtpyn/tandem/commit/5aa557f8b72c0644f4a909b40098beaca550cd00))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) r7 — alphanumeric wording, distinct-name scope, '.'/'_' pins ([cb65efd](https://github.com/namhtpyn/tandem/commit/cb65efdf9e6c7adfc8a66383389dc675bcf95436))
+* **probe:** [#493](https://github.com/namhtpyn/tandem/issues/493) tokenise job names for display and derive the P0 prefix from identity ([e271fc1](https://github.com/namhtpyn/tandem/commit/e271fc10ea2b9fe38793855445ef4e39bf4b9bf3))
+
 ## [2.78.40](https://github.com/namhtpyn/tandem/compare/v2.78.39...v2.78.40) (2026-11-17)
 
 
