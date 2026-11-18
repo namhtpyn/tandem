@@ -205,6 +205,41 @@ park_order() {
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
 }
+# HOME-CATEGORY RECORD floor (#491, 2.78.41): the gating auto-block note's payload carries
+# the recorded home's CATEGORY at write time (`homeCategory`, minted in the block's own
+# transaction), so the RE-KEYED-HOME arm can separate the legal #423 settle-then-reblock
+# (the recorded category was ALREADY terminal) from a home re-keyed terminal AFTER the
+# record (recorded non-terminal, resolves terminal now) over an all-older round — the
+# strand no ordering term can see, because every verdict predates the note. The field
+# exists only on notes written by a floored image; a pre-floor note carries no category
+# and its row falls back to the ordering term, which is all a note-less row ever had.
+# RE-DERIVE the floor for the release that actually ships the writer — never assume it.
+HOME_CATEGORY_FLOOR=2.78.41
+home_floor_met() {
+  [ "$(at_least "$HOME_CATEGORY_FLOOR" "${1:-}")" = "1" ]
+}
+# the block origin's recorded-at-block category, read from the origin's OWN newest
+# `auto-blocked:` record (never the task-wide newest gating note): a recorded category
+# that DIFFERS from the category the recorded home carries NOW means the home was re-keyed
+# AFTER the record — every legal block records the category its home had at write time, so
+# the equality is what separates the legal classes (#423's settle, a hold-landing block)
+# from the strand. A terminal->terminal re-key (done -> cancelled) is the same term. The
+# round must be DECIDED (at least one verdict); when one is newer than the record the
+# ordering term fires first, so no ordering conjunct is needed here. Empty below the floor
+# and on a note-less row; a null or empty record never fires.
+home_category_term() {
+  home_floor_met "${1:-}" || return 1
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'auto-blocked:%%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategory' is not null and ah.payload->>'homeCategory' <> '' and not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory') and mh.created_at = %s) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))" "$(block_record_ts)"
+}
+# the block-origin half of the RE-KEYED-HOME arm: the per-verdict ordering term, OR the
+# category term at/above its floor. Below the floor the expression is the ordering term
+# alone, byte-identical to the pre-#491 arm.
+rekey_pre_half() {
+  local order cat
+  order=$(paused_order_any "${1:-}" "$(block_record_ts)")
+  cat=$(home_category_term "${1:-}")
+  if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
+}
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
 # parked/stranded round a legal egress or a teardown regression left behind. The note-dispatch
@@ -304,11 +339,12 @@ strand_sql() {
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
-  # heals read it as owner-settled. TERMINAL-only on purpose: a re-key INTO a non-terminal
-  # category is, from the SQL, indistinguishable from the DECLARED legal class (a
-  # hold-landing repair round re-opened on a ready/working status, then gating-blocked:
-  # the block legally records a non-review home and a later verdict closes the round), so
-  # that sub-shape is OUT of this arm and named in SPEC (r1 boundary, #435). A terminal
+  # heals read it as owner-settled. TERMINAL-only is a DECLARED SCOPE boundary, not a SQL
+  # impossibility: a hold-landing repair round re-opened on a ready/working status and then
+  # gating-blocked legally records a non-review home whose category MATCHES the one it
+  # resolves, so `homeCategory` would separate it from a re-key into a NON-terminal
+  # category — that wider term is OUT of this arm and tracked as #496 (SPEC states the
+  # boundary). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
   # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
@@ -325,14 +361,22 @@ strand_sql() {
   # post-note verdict cannot be the #467 late-CAS window on a floored row (closed by
   # 2.78.35's atomic sweep): it means the round was open at the block — except on the
   # degraded path that skips its sweep (residual (a)). An ALL-OLDER round is the legal
-  # #423 re-block OR a DECLARED false negative: an admin re-key of a status that still
-  # homes a LIVE round (in_review -> done) before the task blocks leaves every verdict
-  # older than the note while the round can never be applied (statuses.save refuses a
-  # re-key only while a BLOCKED task records the home); SQL cannot separate that from
-  # #423 without the home's category AT block time, so the class is deliberately silent
-  # (#491). Below the floor the retired MIN-vs-stamp test stands, and a
-  # row carrying NO note of that kind falls back to it. TWO DECLARED residuals this
-  # SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a floored probe
+  # #423 re-block, the LATE re-key the category term below FIRES on, or the PRE-BLOCK
+  # re-key it cannot see (residual (c)). LATE re-key (#491, floor 2.78.41): a status
+  # re-keyed terminal while its task already sits BLOCKED over a live round (the
+  # block-state-home guard's read->upsert window, or a guard regression) — the block's
+  # note records the NON-terminal category it read, the home resolves terminal now, the
+  # pending turn is superseded by the owner-settled teardown and every verdict predates
+  # the note, so the ordering term is blind and `home_category_term` fires. PRE-BLOCK
+  # re-key (residual (c)): re-keyed BEFORE the task blocks, so the note records the
+  # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
+  # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
+  # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
+  # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
+  # residuals this SQL cannot see — (a) and (b) verified 0 rows in prod at the 2.78.40
+  # deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is indistinguishable
+  # from #423 by declaration): (a) a
+  # floored probe
   # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
   # flip->supersede crash window, and at ANY version the degraded settle path (flip
   # committed on the pool, sweep skipped by design when its isolation tx fails) — can
@@ -345,7 +389,12 @@ strand_sql() {
   # A NOTE-LOSS FALSE NEGATIVE rides the same class, the other way: a note-less row
   # whose round was split across the origin write (live at the write, the settling vote
   # after) falls back to MIN and stays SILENT — the split-timing class this term exists
-  # for is only observable when the note survives (pre-floor crash or direct write only). A direct
+  # for is only observable when the note survives (pre-floor crash or direct write only);
+  # (c) the PRE-BLOCK re-key: the home was re-keyed BEFORE the block, so its record's
+  # category is terminal and the row is SQL-identical to #423 — the category term cannot
+  # see it, and splitting it needs a record that no row carries (the home's identity at
+  # the round's verdict time, not its category — at verdict time both shapes read
+  # in_review). A direct
   # owner settle clears both origins in the same statement, so the residual owner-settle
   # shape is that machine re-block, excluded by the all-older test. The current-round
   # clause is mirrored from the orphan arm. Per-column resolve,
@@ -353,7 +402,7 @@ strand_sql() {
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(block_record_ts)")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -1077,6 +1126,25 @@ if [ "${1:-}" = "--selfcheck" ]; then
   paused_order_any 2.78.38 && { echo "selfcheck fail: floored per-verdict ordering accepted a missing record"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.37 2)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor rekey arm reads a record"; exit 1; }
   printf '%s' "$(strand_orphan_arm 2.78.37 2)" | grep -qF "auto-blocked:%" && { echo "selfcheck fail: pre-floor orphan arm reads a record"; exit 1; }
+  # HOME-CATEGORY RECORD term (#491): floor matrix, the term's own bytes, and its scope —
+  # below the floor the arm must stay byte-identical to the ordering-only shape (the field
+  # does not exist on pre-floor notes), and the term rides the BLOCK half only (the park
+  # origin carries no category record: declared boundary).
+  home_floor_met 2.78.40 && { echo "selfcheck fail: home floor met below 2.78.41"; exit 1; }
+  home_floor_met 2.78.41 || { echo "selfcheck fail: home floor off at 2.78.41"; exit 1; }
+  home_floor_met 2.78.100 || { echo "selfcheck fail: home floor off above the floor"; exit 1; }
+  home_floor_met 3.0.0 || { echo "selfcheck fail: home floor off at the next major"; exit 1; }
+  home_floor_met '' && { echo "selfcheck fail: home floor met on an empty version"; exit 1; }
+  home_floor_met guard-error && { echo "selfcheck fail: home floor met on a non-semver"; exit 1; }
+  home_floor_met 2.78.41-rc1 && { echo "selfcheck fail: home floor met on a pre-release"; exit 1; }
+  home_category_term 2.78.40 && { echo "selfcheck fail: home-category term emitted below its floor"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: home-category term lost the record read"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory')" || { echo "selfcheck fail: home-category term lost the recorded-vs-current category test"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at)" && { echo "selfcheck fail: home-category term carries a dead ordering conjunct"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "ah.payload->>'homeCategory' <> ''" || { echo "selfcheck fail: home-category term lost the empty-record guard"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "3" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
