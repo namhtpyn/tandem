@@ -1366,9 +1366,12 @@ non-positive deltas render no duration.
   that lands OUTSIDE `in_review` over a live review decision writes the same strand record,
   its payload carrying `ghostAtBlock: true` and `recordedCategory: null` and its body
   suffixed `REVIEW STRAND (ghost-at-block)`. A block note with NO `homeCategory` KEY
-  (pre-floor note) returns no record and stays silent — the #491-era residual — and
-  ORPHAN-HOME's no-PENDING variant is unchanged: the two arms still split the ghost shape
-  by decision state. The detector only RECORDS; a strand can never block the restore.
+  (pre-floor note) returns no record and stays silent — the #491-era residual — and an
+  EMPTY value is likewise not a record (the probe's `<> ''` guard), never a ghost.
+  ORPHAN-HOME's no-PENDING variant is unchanged; it overlaps this term on a DECIDED ghost
+  (ORPHAN-HOME surfaces the paused row, this record surfaces the restore), while the
+  live-PENDING ghost stays exclusive to this term. The detector only RECORDS; a strand can
+  never block the restore.
   Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
   category, a manual terminal/working move keeps the category it blocks from, a legal
   hold-landing block records the category it resolves, a faithful status re-home keeps the
