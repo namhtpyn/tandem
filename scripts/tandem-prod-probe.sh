@@ -224,8 +224,9 @@ home_floor_met() {
 # AFTER the record — every legal block records the category its home had at write time, so
 # the equality is what separates the legal classes (#423's settle, a hold-landing block)
 # from the strand. A terminal->terminal re-key (done -> cancelled) is the same term. The
-# round must be DECIDED (at least one verdict); when one is newer than the record the
-# ordering term fires first, so no ordering conjunct is needed here. Empty below the floor
+# round must be DECIDED (at least one verdict); on the TERMINAL half a verdict newer than the
+# record makes the ordering term fire first, so no ordering conjunct is needed here — and the
+# NON-terminal half adds none at all (its rule is the equality alone, #496). Empty below the floor
 # and on a note-less row; a null or empty record never fires.
 home_category_term() {
   home_floor_met "${1:-}" || return 1
@@ -239,6 +240,29 @@ rekey_pre_half() {
   order=$(paused_order_any "${1:-}" "$(block_record_ts)")
   cat=$(home_category_term "${1:-}")
   if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
+}
+# NON-TERMINAL LATE RE-KEY half (#496, floor 2.78.41): the same recorded-vs-resolved
+# category term on a home that resolves NON-terminal (backlog/ready/working/paused/
+# waiting_answer; in_review is excluded by the arm's own origin exclusion and re-stated
+# here) — the block
+# recorded a category its home no longer carries, i.e. the status was RE-KEYED while the
+# task sat blocked at it (the same statuses.save read->upsert window / guard regression the
+# terminal half reads). The landing consequence differs: the settle flip is not the victim
+# (a non-terminal home is not refused), the RESTORE is — resolveRestoreTarget reads the new
+# category, demotes a WORKING target to to-do and restores any other non-terminal category
+# into that status, so the task lands outside the review flow when its children close, with
+# settledByOwner false and the park heals park-only. Only the RECORD
+# separates it from a legal block: every legal block records the category its home carried
+# (the hold-landing class records the one it RESOLVES, so it stays silent), and no ordering
+# term is needed or used — a round closed before or after the note reads the same way here,
+# and an already-applied round under a later re-key is the declared look-alike (#500 names
+# the live-round variant this term cannot see). Empty below the floor and on a note-less
+# row, so the pre-floor SQL stays byte-identical.
+rekey_nonterminal_half() {
+  local cat
+  cat=$(home_category_term "${1:-}")
+  [ -n "$cat" ] || return 1
+  printf " or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review')) and %s))" "$cat"
 }
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
@@ -339,12 +363,11 @@ strand_sql() {
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
-  # heals read it as owner-settled. TERMINAL-only is a DECLARED SCOPE boundary, not a SQL
-  # impossibility: a hold-landing repair round re-opened on a ready/working status and then
-  # gating-blocked legally records a non-review home whose category MATCHES the one it
-  # resolves, so `homeCategory` would separate it from a re-key into a NON-terminal
-  # category — that wider term is OUT of this arm and tracked as #496 (SPEC states the
-  # boundary). A terminal
+  # heals read it as owner-settled. The TERMINAL resolve is the arm's original scope; from
+  # 2.78.41 (#496) the block half ALSO reads a NON-terminal resolve that the record splits —
+  # a hold-landing repair round re-opened on a ready/working status and then gating-blocked
+  # legally records a non-review home whose category MATCHES the one it resolves, so the
+  # equality is the discriminator there too (no ordering term applies to that half). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
   # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
@@ -372,7 +395,7 @@ strand_sql() {
   # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
   # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
   # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
-  # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
+  # stands, and a row carrying NO note of that kind falls back to it. FOUR DECLARED
   # residuals this SQL cannot see — (a) and (b) verified 0 rows in prod at the 2.78.40
   # deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is indistinguishable
   # from #423 by declaration): (a) a
@@ -402,7 +425,7 @@ strand_sql() {
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")$(rekey_nonterminal_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -522,6 +545,30 @@ egress_sql() {
 # selfcheck owns its truth table — a flipped literal can no longer ship a dead arm.
 egress_arm_on() {
   [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
+}
+# RESTORE-STRAND (#500, floor 2.78.42): the RE-KEYED-HOME arm's live-round clause cannot
+# see a status re-keyed while its task sits BLOCKED over a LIVE round (a PENDING row on a
+# blocked task is legal — waiting-answer holds), and a verdict that lands after the record
+# is visible only while the row is still PAUSED. Both strands drop at the RESTORE: the
+# children land, `resolveRestoreTarget` resolves the re-keyed home, and the task leaves the
+# review flow with its decision still owed. The gating restore decides at that moment (the
+# one read that sees the recorded category, the landing category and the round together)
+# and carries the verdict on its OWN unblock record — `reviewStrand` in the note's 1:1
+# kind='STATUS' payload, atomic with the note. This arm only surfaces that record: the
+# body prefix + payload are single-writer (only gating's restore writes them), so a free
+# text note can neither forge nor suppress the alert. Pre-floor images write no such
+# record — the arm is inert below its floor, and the SPEC's declared residual stands there.
+RESTORE_STRAND_FLOOR=2.78.42
+restore_strand_floor_met() {
+  [ "$(at_least "$RESTORE_STRAND_FLOOR" "${1:-}")" = "1" ]
+}
+restore_strand_sql() {
+  restore_strand_floor_met "${1:-}" || return 0
+  # Two aggregates over ONE scan: record ids for dedupe (a repeat strand on the SAME task
+  # must change the set and alert again) and task ids for the operator. The 120-day bound
+  # keeps the arm off a full-history scan on a table with no created_at-only index; older
+  # records have already alerted and stay as audit rows on the task.
+  printf "%s" "select 'restorestrand', coalesce(string_agg(x.mid, ',' order by x.mid), 'none') as ids, coalesce(string_agg(distinct x.tid, ',' order by x.tid), 'none') as task_ids from (select m.id as mid, m.task_id as tid from task_messages m join task_message_activities a on a.message_id = m.id where m.body like 'unblocked: all subtasks terminal → %' and a.payload->>'kind' = 'STATUS' and a.payload->>'autoUnblocked' = 'true' and a.payload->>'reviewStrand' = 'true' and m.created_at > now() - interval '120 days') x"
 }
 # LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
 # delivery-preflight outage (WebSocket 500) failed tandem-triage 30x and tandem-critic
@@ -1144,9 +1191,51 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(home_category_term 2.78.41)" | grep -qF "ah.payload->>'homeCategory' <> ''" || { echo "selfcheck fail: home-category term lost the empty-record guard"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
-  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "3" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "6" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
+  # NON-TERMINAL half (#496): the same floor and the block half only; its rule is the
+  # recorded-vs-resolved EQUALITY alone (no ordering conjunct — adding one is a regression,
+  # the legal hold-landing class records the category it resolves).
+  rekey_nonterminal_half 2.78.40 && { echo "selfcheck fail: non-terminal half emitted below the home floor"; exit 1; }
+  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "o.category not in ('done', 'cancelled', 'in_review')" || { echo "selfcheck fail: non-terminal half lost its resolve clause"; exit 1; }
+  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: non-terminal half lost the category record"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "o.category not in ('done', 'cancelled', 'in_review')" && { echo "selfcheck fail: non-terminal half on a pre-floor arm"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "o.category not in ('done', 'cancelled', 'in_review')" | wc -l)" = "1" ] || { echo "selfcheck fail: non-terminal half not emitted exactly once"; exit 1; }
+  # CONSUMER-FIRST wiring: the half must land as an OR branch of the arm's origin clause,
+  # not as a detached conjunct (a detached AND would narrow the TERMINAL half instead)
+  printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF ")) or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review'))" || { echo "selfcheck fail: non-terminal half not wired as an OR branch"; exit 1; }
+  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "decided_at" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
+  # RESTORE-STRAND arm (#500, floor 2.78.42): CONSUMER-FIRST — the arm is only shippable if
+  # the live pass reads its label AND the selfcheck pins the gate, the single-writer record
+  # predicates and the alert wiring (an emit-only arm is a detector that never runs).
+  restore_strand_floor_met 2.78.41 && { echo "selfcheck fail: restore-strand arm on below its floor"; exit 1; }
+  restore_strand_floor_met 2.78.42 || { echo "selfcheck fail: restore-strand arm off at its floor"; exit 1; }
+  restore_strand_floor_met 2.78.100 || { echo "selfcheck fail: restore-strand arm off above the floor"; exit 1; }
+  restore_strand_floor_met 3.0.0 || { echo "selfcheck fail: restore-strand arm off at the next major"; exit 1; }
+  restore_strand_floor_met '' && { echo "selfcheck fail: restore-strand arm on with no version"; exit 1; }
+  restore_strand_floor_met 2.78.42-rc1 && { echo "selfcheck fail: restore-strand arm on for a pre-release"; exit 1; }
+  [ -z "$(restore_strand_sql 2.78.41)" ] || { echo "selfcheck fail: restore-strand SQL emitted below its floor"; exit 1; }
+  RSTRAND=$(restore_strand_sql 2.78.42)
+  printf '%s' "$RSTRAND" | grep -qF "select 'restorestrand'" || { echo "selfcheck fail: restore-strand arm missing"; exit 1; }
+  [ "$(printf '%s' "$RSTRAND" | grep -oF "select 'restorestrand'" | wc -l)" = "1" ] || { echo "selfcheck fail: restore-strand arm emitted twice"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "m.body like 'unblocked: all subtasks terminal → %'" || { echo "selfcheck fail: restore-strand arm lost the single-writer body"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'kind' = 'STATUS'" || { echo "selfcheck fail: restore-strand arm lost the payload-kind predicate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'autoUnblocked' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the restore identity"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'reviewStrand' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the detector record predicate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF 'as ids' || { echo "selfcheck fail: restore-strand arm lost the dedupe id aggregate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF 'as task_ids' || { echo "selfcheck fail: restore-strand arm lost the task-id aggregate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "interval '120 days'" || { echo "selfcheck fail: restore-strand arm lost the scan bound"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*RSSQL=\$\(restore_strand_sql' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand arm call missing from the live pass"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*anom\+=\("restorestrand: a restore left a live review decision' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand alert line missing"; exit 1; }
+  grep -qF 'anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] [$RDISC]' "$0" || { echo "selfcheck fail: restore-strand alert lost the letters-only dedupe discriminator"; exit 1; }
+  RDA=$(printf '%s' rec-a | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+  RDB=$(printf '%s' rec-b | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+  D1C=$(dedupe_key "restorestrand: home [00000000-0000-0000-0000-000000000000] [$RDA] — round cannot land")
+  D2C=$(dedupe_key "restorestrand: home [00000000-0000-0000-0000-000000000000] [$RDB] — round cannot land")
+  [ -n "$D1C" ] && [ "$D1C" != "$D2C" ] || { echo "selfcheck fail: restore-strand dedupe discriminator collides"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*echo "\$RSIDS" > "\$PROBE_STATE/restorestrand\.alerted"' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand dedupe write missing"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*for rid in \$\(echo "\$RSIDS" \| tr' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand unseen-id loop missing"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
   # note-dispatch bounce produces the shape legally (a send on a parked task), so the arm
   # must be ABSENT there — a misattributed alert on a pre-fix image is worse than silence.
@@ -1592,6 +1681,14 @@ if [ "${1:-}" = "--strand-sql" ]; then
   # emit the exact 5f strand SQL for an explicit (version, origin-column-count) pair:
   # the arms' regression test seeds a test DB and runs these bytes (no network, no state)
   strand_sql "${2:-}" "${3:-}"
+  printf '\n'
+  exit 0
+fi
+if [ "${1:-}" = "--restore-strand-sql" ]; then
+  # emit the RESTORE-STRAND arm (#500) for an explicit image version — empty below its
+  # floor. Same contract as --strand-sql: the regression test seeds the record and runs
+  # these exact bytes against a test DB (no network, no probe state).
+  restore_strand_sql "${2:-}"
   printf '\n'
   exit 0
 fi
@@ -2052,15 +2149,16 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/orphanhome.alerted"
     fi
     printf '%s\n' "${ORPHANHOME:-none}" > "$PROBE_STATE/orphanhome.prev"
-    # (f2) rekey home: a block/park whose recorded origin RESOLVES to a TERMINAL home the
-    # category was re-keyed under after the block recorded it, with the round closed over
-    # it (#435). VERSION-INDEPENDENT like the orphan arm: the residual producer is the
-    # statuses.save read->upsert window, present on every image. Previous-pass presence
-    # confirm + id-set dedupe, like every other shape arm.
+    # (f2) rekey home: a block/park whose recorded origin RESOLVES to a home the category was
+    # re-keyed under after the block recorded it, with the round closed over it (#435), or —
+    # from 2.78.41 — a NON-terminal home the block recorded another category for (#496).
+    # VERSION-INDEPENDENT like the orphan
+    # arm: the residual producer is the statuses.save read->upsert window, present on every
+    # image. Previous-pass presence confirm + id-set dedupe, like every other shape arm.
     REKEYHOME=$(echo "$STROUT" | awk -F'|' '/^rekeyhome/{print $2}')
     if [ -n "${REKEYHOME:-}" ] && [ "$REKEYHOME" != "none" ] && [ "$(cat "$PROBE_STATE/rekeyhome.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/rekeyhome.alerted" 2>/dev/null || echo none)" != "$REKEYHOME" ]; then
-        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed into a terminal category over a decided round [$REKEYHOME] — the settle flip cannot land, #435 class")
+        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed after the block recorded it [$REKEYHOME] — TERMINAL: the settle flip cannot land (#435); NON-terminal: the restore lands on the re-keyed home — a WORKING target demotes to to-do (#496)")
         echo "$REKEYHOME" > "$PROBE_STATE/rekeyhome.alerted"
       fi
     else
@@ -2105,6 +2203,47 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/parkclosed.alerted"
     fi
     printf '%s\n' "${PARKCLOSED:-none}" > "$PROBE_STATE/parkclosed.prev"
+  fi
+fi
+
+# 5g. RESTORE-STRAND (#500, floor 2.78.42): the record the gating restore writes into its
+# own unblock note when it lands a task outside the review flow behind a re-keyed block
+# home with a review decision still owed (live round or a verdict that landed while
+# blocked). Independent of the column-gated strand SQL above: a column guard failure must
+# never blind this arm. The record is a permanent audit row, so dedupe on the id SET (a
+# standing fault pings once; a new strand changes the set and alerts again).
+if restore_strand_floor_met "$V"; then
+  RSSQL=$(restore_strand_sql "$V")
+  # ONE psql round-trip: the arm's scan is the only non-trivial query here; the old
+  # two-call stderr probe doubled it. stderr lands beside the other probe state files.
+  RSOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>"$PROBE_STATE/restorestrand.err") || RSOUT="db-unreachable"
+  RSERR=$(grep -m1 ERROR "$PROBE_STATE/restorestrand.err" 2>/dev/null)
+  if [ "$RSOUT" = "db-unreachable" ]; then
+    anom+=("restorestrand: unreachable ${RSERR:-psql failed}")
+  else
+    RSIDS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $2}')
+    RSTASKS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $3}')
+    if [ -n "${RSIDS:-}" ] && [ "$RSIDS" != "none" ]; then
+      # alert only on a RECORD id not alerted before: the 120-day window's edge can SHRINK
+      # the set without a new strand, and that must not re-alert a standing fault; a new
+      # record (even on an already-alerted task) changes the set and alerts.
+      ALERTED=$(cat "$PROBE_STATE/restorestrand.alerted" 2>/dev/null || echo "")
+      UNSEEN=""
+      for rid in $(echo "$RSIDS" | tr ',' ' '); do
+        case ",$ALERTED," in *",$rid,"*) ;; *) UNSEEN="$rid" ;; esac
+      done
+      if [ -n "$UNSEEN" ]; then
+        # DISPLAY-vs-DEDUPE (#490): the task ids are UUIDs the global dedupe_key blanks, so
+        # a repeat strand on the same task would share the alert key and be swallowed. A
+        # letters-only digest of the NEW record id rides the line as the discriminator — the
+        # normaliser keeps letters, so the key changes exactly once per new record.
+        RDISC=$(printf '%s' "$UNSEEN" | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] [$RDISC] — the review round cannot land (#500)")
+      fi
+      echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
+    else
+      rm -f "$PROBE_STATE/restorestrand.alerted"
+    fi
   fi
 fi
 
