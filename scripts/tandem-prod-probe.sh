@@ -546,6 +546,26 @@ egress_sql() {
 egress_arm_on() {
   [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
 }
+# RESTORE-STRAND (#500, floor 2.78.42): the RE-KEYED-HOME arm's live-round clause cannot
+# see a status re-keyed while its task sits BLOCKED over a LIVE round (a PENDING row on a
+# blocked task is legal — waiting-answer holds), and a verdict that lands after the record
+# is visible only while the row is still PAUSED. Both strands drop at the RESTORE: the
+# children land, `resolveRestoreTarget` resolves the re-keyed home, and the task leaves the
+# review flow with its decision still owed. The gating restore decides at that moment (the
+# one read that sees the recorded category, the landing category and the round together)
+# and carries the verdict on its OWN unblock record — `reviewStrand` in the note's 1:1
+# kind='STATUS' payload, atomic with the note. This arm only surfaces that record: the
+# body prefix + payload are single-writer (only gating's restore writes them), so a free
+# text note can neither forge nor suppress the alert. Pre-floor images write no such
+# record — the arm is inert below its floor, and the SPEC's declared residual stands there.
+RESTORE_STRAND_FLOOR=2.78.42
+restore_strand_floor_met() {
+  [ "$(at_least "$RESTORE_STRAND_FLOOR" "${1:-}")" = "1" ]
+}
+restore_strand_sql() {
+  restore_strand_floor_met "${1:-}" || return 0
+  printf "%s" "select 'restorestrand', coalesce((select string_agg(distinct m.task_id, ',' order by m.task_id) from task_messages m join task_message_activities a on a.message_id = m.id where m.body like 'unblocked: all subtasks terminal → %' and a.payload->>'kind' = 'STATUS' and a.payload->>'autoUnblocked' = 'true' and a.payload->>'reviewStrand' = 'true'), 'none') as ids"
+}
 # LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
 # delivery-preflight outage (WebSocket 500) failed tandem-triage 30x and tandem-critic
 # 3x in a row for 29h while every PRODUCT arm here stayed green, and the designated
@@ -1182,6 +1202,25 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "decided_at" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
+  # RESTORE-STRAND arm (#500, floor 2.78.42): CONSUMER-FIRST — the arm is only shippable if
+  # the live pass reads its label AND the selfcheck pins the gate, the single-writer record
+  # predicates and the alert wiring (an emit-only arm is a detector that never runs).
+  restore_strand_floor_met 2.78.41 && { echo "selfcheck fail: restore-strand arm on below its floor"; exit 1; }
+  restore_strand_floor_met 2.78.42 || { echo "selfcheck fail: restore-strand arm off at its floor"; exit 1; }
+  restore_strand_floor_met 2.78.100 || { echo "selfcheck fail: restore-strand arm off above the floor"; exit 1; }
+  restore_strand_floor_met 3.0.0 || { echo "selfcheck fail: restore-strand arm off at the next major"; exit 1; }
+  restore_strand_floor_met '' && { echo "selfcheck fail: restore-strand arm on with no version"; exit 1; }
+  restore_strand_floor_met 2.78.42-rc1 && { echo "selfcheck fail: restore-strand arm on for a pre-release"; exit 1; }
+  [ -z "$(restore_strand_sql 2.78.41)" ] || { echo "selfcheck fail: restore-strand SQL emitted below its floor"; exit 1; }
+  RSTRAND=$(restore_strand_sql 2.78.42)
+  printf '%s' "$RSTRAND" | grep -qF "select 'restorestrand'" || { echo "selfcheck fail: restore-strand arm missing"; exit 1; }
+  [ "$(printf '%s' "$RSTRAND" | grep -oF "select 'restorestrand'" | wc -l)" = "1" ] || { echo "selfcheck fail: restore-strand arm emitted twice"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "m.body like 'unblocked: all subtasks terminal → %'" || { echo "selfcheck fail: restore-strand arm lost the single-writer body"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'kind' = 'STATUS'" || { echo "selfcheck fail: restore-strand arm lost the payload-kind predicate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'reviewStrand' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the detector record predicate"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*RSSQL=\$\(restore_strand_sql' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand arm call missing from the live pass"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*anom\+=\("restorestrand: a restore left a live review decision' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand alert line missing"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*echo "\$RSIDS" > "\$PROBE_STATE/restorestrand\.alerted"' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand dedupe write missing"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
   # note-dispatch bounce produces the shape legally (a send on a parked task), so the arm
   # must be ABSENT there — a misattributed alert on a pre-fix image is worse than silence.
@@ -1627,6 +1666,14 @@ if [ "${1:-}" = "--strand-sql" ]; then
   # emit the exact 5f strand SQL for an explicit (version, origin-column-count) pair:
   # the arms' regression test seeds a test DB and runs these bytes (no network, no state)
   strand_sql "${2:-}" "${3:-}"
+  printf '\n'
+  exit 0
+fi
+if [ "${1:-}" = "--restore-strand-sql" ]; then
+  # emit the RESTORE-STRAND arm (#500) for an explicit image version — empty below its
+  # floor. Same contract as --strand-sql: the regression test seeds the record and runs
+  # these exact bytes against a test DB (no network, no probe state).
+  restore_strand_sql "${2:-}"
   printf '\n'
   exit 0
 fi
@@ -2141,6 +2188,31 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/parkclosed.alerted"
     fi
     printf '%s\n' "${PARKCLOSED:-none}" > "$PROBE_STATE/parkclosed.prev"
+  fi
+fi
+
+# 5g. RESTORE-STRAND (#500, floor 2.78.42): the record the gating restore writes into its
+# own unblock note when it lands a task outside the review flow behind a re-keyed block
+# home with a review decision still owed (live round or a verdict that landed while
+# blocked). Independent of the column-gated strand SQL above: a column guard failure must
+# never blind this arm. The record is a permanent audit row, so dedupe on the id SET (a
+# standing fault pings once; a new strand changes the set and alerts again).
+if restore_strand_floor_met "$V"; then
+  RSSQL=$(restore_strand_sql "$V")
+  RSERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+  RSOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>/dev/null) || RSOUT="db-unreachable"
+  if [ "$RSOUT" = "db-unreachable" ]; then
+    anom+=("restorestrand: unreachable ${RSERR:-psql failed}")
+  else
+    RSIDS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $2}')
+    if [ -n "${RSIDS:-}" ] && [ "$RSIDS" != "none" ]; then
+      if [ "$(cat "$PROBE_STATE/restorestrand.alerted" 2>/dev/null || echo none)" != "$RSIDS" ]; then
+        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSIDS] — the review round cannot land (#500)")
+        echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
+      fi
+    else
+      rm -f "$PROBE_STATE/restorestrand.alerted"
+    fi
   fi
 fi
 

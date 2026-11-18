@@ -16,6 +16,7 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { AfterCommitQueue } from './after-commit';
+import { hasVerdictAfter, isRestoreStrand, newestBlockHomeRecord } from './review-strand';
 import {
   logActivity as publishActivity,
   dispatchAiReviewTurns,
@@ -155,6 +156,40 @@ async function restoreUnblocked(
   const restore = parked
     ? resolveParkRestoreTarget(nonNull(cur.parkFromStatus), known)
     : resolveRestoreTarget(nonNull(cur.preBlockStatus), known);
+  // RESTORE-STRAND DETECTOR (#500): a block home re-keyed while the task sat blocked is
+  // invisible to the probe's live-round clause — the drop happens HERE, when the restore
+  // resolves the re-keyed home and lands the task outside the review flow with its round
+  // still owed. The restore is the one moment the recorded category, the landing category
+  // and the round are all readable; the verdict rides the restore's OWN record
+  // (`reviewStrand` in the unblock note payload), atomic with the note. The PARK half is
+  // out by declaration (a park's origin resolves in-review by construction; the SPEC's
+  // category term excludes it), and a pre-floor block note carries no category -> null ->
+  // silent (the pre-block residual #491 (c) must not be re-labelled by half a record).
+  let strand: { recordedCategory: string; landingCategory: string; liveRound: boolean; lateVerdict: boolean } | null =
+    null;
+  if (!parked && cur.preBlockStatus) {
+    const blockRecord = await newestBlockHomeRecord(cur.id, ex);
+    if (blockRecord) {
+      const liveRound = await openRoundLive(cur.id);
+      const postRecordVerdict = liveRound ? false : await hasVerdictAfter(cur.id, blockRecord.at, ex);
+      const landingCategory = known.get(restore);
+      if (
+        isRestoreStrand({
+          recordedCategory: blockRecord.category,
+          landingCategory,
+          liveRound,
+          postRecordVerdict,
+        })
+      ) {
+        strand = {
+          recordedCategory: blockRecord.category,
+          landingCategory: nonNull(landingCategory),
+          liveRound,
+          lateVerdict: postRecordVerdict,
+        };
+      }
+    }
+  }
   // GUARDED GATING WRITE (#208): atomic on the row still being BLOCKED (same pattern
   // as bounceTaskAfterRun) — the statusCategoryMap await above opens a window a
   // concurrent owner settle/unblock can win. PARK-AWARE CAS (#419): a park landing in
@@ -182,8 +217,23 @@ async function restoreUnblocked(
   // transaction defers the events to its own commit (#397/#466)
   await logActivity(
     cur.id,
-    `unblocked: all subtasks terminal → ${restore}`,
-    { autoUnblocked: true, restored: restore, ...(parked ? { parkResumed: true } : {}) },
+    strand
+      ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} was re-keyed to ${strand.landingCategory}; the ${strand.liveRound ? 'live' : 'decided'} review round cannot land`
+      : `unblocked: all subtasks terminal → ${restore}`,
+    {
+      autoUnblocked: true,
+      restored: restore,
+      ...(parked ? { parkResumed: true } : {}),
+      ...(strand
+        ? {
+            reviewStrand: true,
+            recordedCategory: strand.recordedCategory,
+            landingCategory: strand.landingCategory,
+            liveRound: strand.liveRound,
+            lateVerdict: strand.lateVerdict,
+          }
+        : {}),
+    },
     ex,
     { publish: ex === db },
   );
