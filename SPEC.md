@@ -1362,7 +1362,7 @@ non-positive deltas render no duration.
   home that already named no `task_statuses` row (the ghost-task race), so no recorded
   category exists to compare and the re-key test is satisfied by construction — a restore
   that lands OUTSIDE `in_review` over a live review decision writes the same strand record,
-  its payload carrying `ghostAtBlock: 'true'` and `recordedCategory: null` and its body
+  its payload carrying `ghostAtBlock: true` and `recordedCategory: null` and its body
   suffixed `REVIEW STRAND (ghost-at-block)`. A block note with NO `homeCategory` KEY
   (pre-floor note) returns no record and stays silent — the #491-era residual — and
   ORPHAN-HOME's no-PENDING variant is unchanged: the two arms still split the ghost shape

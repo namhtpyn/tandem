@@ -7,6 +7,7 @@ import { isRestoreStrand } from '../../server/domains/tasks/review-strand';
 
 const base = {
   recordedCategory: 'in_review',
+  ghostAtBlock: false,
   homeCategory: 'done',
   landingCategory: 'done',
   liveRound: true,
@@ -56,6 +57,53 @@ describe('restore-strand detector (#500)', () => {
 
   it('stays silent without a floored block record (pre-floor note cannot split the row)', () => {
     expect(isRestoreStrand({ ...base, recordedCategory: null })).toBe(false);
+  });
+
+  it('fires on a ghost-at-block record that strands a live round (#503)', () => {
+    // the block recorded NO category (its home was already a ghost): the re-key test is
+    // satisfied by construction, so the landing gate + the decision carry the whole decision
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: null,
+        ghostAtBlock: true,
+        homeCategory: undefined,
+        landingCategory: 'backlog',
+      }),
+    ).toBe(true);
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: null,
+        ghostAtBlock: true,
+        homeCategory: 'working',
+        landingCategory: 'backlog',
+        liveRound: false,
+        postRecordVerdict: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('stays silent on a ghost-at-block record that lands back in review or has no decision (#503)', () => {
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: null,
+        ghostAtBlock: true,
+        homeCategory: 'in_review',
+        landingCategory: 'in_review',
+      }),
+    ).toBe(false);
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: null,
+        ghostAtBlock: true,
+        homeCategory: undefined,
+        landingCategory: 'backlog',
+        liveRound: false,
+      }),
+    ).toBe(false);
   });
 
   it('fires when the recorded home no longer resolves and a live decision waits', () => {
