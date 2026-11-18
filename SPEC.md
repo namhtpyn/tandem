@@ -1335,7 +1335,10 @@ non-positive deltas render no duration.
   and the recorded park home is `park_from_status` — #502) the app reads
   the newest gating note's recorded category (`homeCategory` on the newest block note,
   `homeCategoryAtPark` on the newest park note — a note carrying no such key is not a
-  record and leaves its half of the detector silent, #491) and the round's review
+  record and leaves its half of the detector silent, #491; the read is the newest note ON
+  THE TASK, so a row whose CURRENT gating note never landed can be read against an EARLIER
+  episode's note — a pre-floor crash or direct write only, the same declared residual class
+  as the DECISION-PARK arm's record) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
   the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
@@ -1369,8 +1372,9 @@ non-positive deltas render no duration.
   (pre-floor note) returns no record and stays silent — the #491-era residual — and an
   EMPTY value is likewise not a record (the probe's `<> ''` guard), never a ghost.
   ORPHAN-HOME's no-PENDING variant is unchanged; it overlaps this term on a DECIDED ghost
-  (ORPHAN-HOME surfaces the paused row, this record surfaces the restore), while the
-  live-PENDING ghost stays exclusive to this term. The detector only RECORDS; a strand can
+  (ORPHAN-HOME surfaces the paused row, this record surfaces the restore), and this term
+  also reads a live PENDING row in ANY round (#445) where ORPHAN-HOME's max-round clause
+  cannot see it. The detector only RECORDS; a strand can
   never block the restore.
   Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
   category, a manual terminal/working move keeps the category it blocks from, a legal

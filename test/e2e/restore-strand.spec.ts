@@ -119,6 +119,7 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       autoUnblocked: true,
       reviewStrand: true,
       recordedCategory: 'in_review',
+      ghostAtBlock: false,
       homeCategory: 'done',
       landingCategory: 'done',
       liveRound: true,
@@ -217,8 +218,24 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     expect(ghostRecords[0]!.body).toContain('REVIEW STRAND (ghost-at-block)');
 
     // 3c. pre-floor control: the same ghost shape with NO homeCategory KEY stays silent —
-    // the note cannot say whether the home was a ghost at block time (the #491-era residual)
+    // the note cannot say whether the home was a ghost at block time (the #491-era residual).
+    // An OLDER floored note must not stand in for the key-less newest note (the read is the
+    // newest note, and a "skip key-less notes" reader would resurrect the old record).
     const preFloorGhost = await seedParent('GHOSTPRE', { liveRound: true, rekey: false, record: 'absent' });
+    await sql.unsafe(
+      `with m as (
+         insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'auto-blocked: 1 subtask(s) open', now() - interval '10 minutes')
+         returning id
+       )
+       insert into task_message_activities (message_id, payload)
+       select id, $3 from m`,
+      [
+        `block-old-${preFloorGhost.id}`,
+        preFloorGhost.id,
+        { kind: 'STATUS', autoBlocked: true, open: 1, homeCategory: 'done' },
+      ],
+    );
     expect(
       (
         await page.request.post('/rpc/tasks/setStatus', {
