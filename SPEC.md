@@ -1233,8 +1233,11 @@ non-positive deltas render no duration.
   re-key is the declared look-alike (the re-key is a guard window/regression in both cases,
   so the alert names the anomaly rather than a lost landing). The arm's live-round clause
   bounds it: a re-key that strands a round still carrying a PENDING row is invisible to
-  every term here and is the DECLARED residual (#500) — it needs a restore-time detector,
-  and this term claims no coverage of it. #423 stays
+  every term here — the strand DROPS at the restore, so from `2.78.42` (RESTORE-STRAND
+  RECORD FLOOR) the gating restore detects it on the `pre_block_status` half and carries
+  the verdict on its own unblock record (the RESTORE-STRAND arm below; below that floor
+  the live-round window stays the DECLARED residual #500, and the PARK half's version of
+  the shape is the separately declared #502). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
@@ -1287,6 +1290,44 @@ non-positive deltas render no duration.
   this one's. The live pass carries the arm's emit + previous-pass presence
   confirm + id-set dedupe wiring (`--selfcheck` pins the wiring in the shipped
   file: a SQL arm with no pass consumer is a detector that never runs).
+- The RESTORE-STRAND arm (#500, label `restorestrand`, floor `2.78.42`, RESTORE-STRAND
+  RECORD FLOOR) surfaces the restore-time detector for the live-round variant the
+  RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, the
+  `pre_block_status` half only; the PARK half is OUT by declaration — a park note carries
+  no category record, the same boundary the arm's category term declares, and closing it
+  needs the park note to record its own category first (#502)) the app reads
+  the newest floored `auto-blocked:` record's `homeCategory` and the round's review
+  evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
+  older owed vote, #445 — or a verdict NEWER than the block record) as ADVISORY evidence
+  on the pool before the write — a failed evidence read is logged and never blocks the
+  restore — and reads the DECISIVE categories inside the restore's transaction immediately
+  before the guarded write, so the target follows the category map the write is about to
+  use. (The remaining single-statement gap — a `statuses.save` committing between that map
+  read and the write — is the same guard-window producer this detector backstops and is a
+  declared residual for the record's category naming.) When the recorded category is NOT
+  the category its recorded home (the blocked task's `pre_block_status`) carries at that
+  read — or that home no longer resolves at the restore while its block record carried a
+  category (`deleted under the block`: the ghost-race producer; ORPHAN-HOME covers the
+  no-PENDING variant, this term the live-decision one) — and the landing category is NOT
+  `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
+  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
+  its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
+  own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
+  with `REVIEW STRAND`. A floored note that recorded a NULL category means the home was
+  already a ghost AT BLOCK time — a distinct producer this term cannot compare and the
+  ORPHAN-HOME arm's no-PENDING clause excludes; it is a declared residual (era-bounded to
+  the ghost race, #503). The detector only RECORDS; a strand can never block the restore.
+  Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
+  category, a manual terminal/working move keeps the category it blocks from, a legal
+  hold-landing block records the category it resolves, a faithful status re-home keeps the
+  category, and a restore into the recorded in-review home re-enters the flow. The arm
+  reads only that single-writer record (`m.body like 'unblocked: all subtasks terminal →
+  %'` + `kind='STATUS'` + `autoUnblocked='true'` + `reviewStrand='true'`), bounded to the
+  last 120 days, alerts on the RECORD-id set (a repeat strand on the same task changes the
+  set and alerts again; aging records out of the window never re-alert a standing fault)
+  and names the task ids; it is inert below its floor (pre-floor images write no such
+  note), and the live pass carries its emit + id-set dedupe wiring (`--selfcheck` pins the
+  gate, the record predicates and the wiring).
 - The DECISION-PARK arm (#431, label `parkclosed`) reads the parked round that CLOSED
   with its settle flip lost: a PAUSED row carrying `park_from_status` that RESOLVES to an
   in-review-category status, `park_rearm_after IS NULL` with `park_rearm_attempts = 0`

@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   answerHealed: [] as string[],
   answerSignature: true,
   roundLive: true,
+  blockRecord: null as { category: string; at: Date } | null,
+  postVerdict: false,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
@@ -162,6 +164,19 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   };
 });
 
+// #500: the restore-strand detector's reads are DB-level (block note payload + verdict
+// ordering) — mocked at the module seam; the DECISION stays real (isRestoreStrand), so the
+// note-payload pin below exercises the shipped predicate, never a test double.
+vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/review-strand')>();
+  return {
+    ...mod,
+    newestBlockHomeRecord: async () => h.blockRecord,
+    hasVerdictAfter: async () => h.postVerdict,
+    hasLiveReviewRow: async () => h.roundLive,
+  };
+});
+
 import { db as mockedDb } from '../../server/db/index';
 import {
   AfterCommitQueue,
@@ -210,6 +225,8 @@ beforeEach(() => {
   h.publishCount = 0;
   h.reads = 0;
   h.roundLive = true;
+  h.blockRecord = null;
+  h.postVerdict = false;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
   h.onChildrenQuery = null;
@@ -751,5 +768,132 @@ describe('borrowed-restore deferral (#479)', () => {
     expect(h.settled).toEqual(['p']);
     expect(afterCommit.pending).toBe(0);
     expect(await afterCommit.drain()).toBe(0); // nothing was queued: the own path ran inline
+  });
+
+  // #500: a block home re-keyed while its task sits blocked over a LIVE round is invisible
+  // to the probe arm (a PENDING row on a blocked task is legal); the drop is the RESTORE.
+  // The detector must fire on the restore and carry the verdict on the unblock record.
+  it('a restore into a re-keyed home with a live round records the strand (#500)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.inReview); // the restore still lands (detector only)
+    const note = h.notes.find((n) => n.meta.reviewStrand === true);
+    expect(note, 'the strand verdict rides the unblock record').toBeTruthy();
+    expect(note?.meta).toMatchObject({
+      autoUnblocked: true,
+      restored: STATUS.inReview,
+      reviewStrand: true,
+      recordedCategory: 'in_review',
+      homeCategory: 'done',
+      landingCategory: 'done',
+      liveRound: true,
+      lateVerdict: false,
+    });
+    expect(note?.body).toContain('REVIEW STRAND');
+  });
+
+  it('a decided round whose verdict landed after the block record is a strand too (#500)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = false;
+    h.postVerdict = true;
+    await refreshParentGating('p');
+    const note = h.notes.find((n) => n.meta.reviewStrand === true);
+    expect(note?.meta).toMatchObject({ lateVerdict: true, liveRound: false });
+  });
+
+  it('a re-key with no live decision stays silent (the legal #423 / manual-move class)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = false;
+    h.postVerdict = false;
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('a matching recorded category stays silent (a restore into the recorded home)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('a legal WORKING-home demotion is not a strand (#88: landing differs, the HOME did not)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.doing });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'working', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // the legal demotion still lands
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('reports a late verdict beside a live pending row (both facts, not an either/or)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    h.postVerdict = true;
+    await refreshParentGating('p');
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      liveRound: true,
+      lateVerdict: true,
+    });
+  });
+
+  it('a WORKING-home re-key records both the home category and the demoted landing', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.doing });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // #88 demotion
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      recordedCategory: 'in_review',
+      homeCategory: 'working',
+      landingCategory: 'backlog',
+    });
+  });
+
+  it('a dangling recorded home with a live round records the strand (homeCategory null)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: 'ghost-home' });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // resolveRestoreTarget fallback
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      recordedCategory: 'in_review',
+      homeCategory: null,
+      landingCategory: 'backlog',
+    });
+  });
+
+  it('a PARKED restore never runs the strand detector (the park half is out by declaration)', async () => {
+    // pre_block_status is SET too (a park landing on a gated row): the parked guard, not a
+    // null home, is the only thing keeping the detector out of this restore
+    row('p', {
+      status: STATUS.blocked,
+      preBlockStatus: STATUS.inReview,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAfter: new Date(Date.now() - 1000),
+    });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
 });
