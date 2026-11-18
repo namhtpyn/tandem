@@ -3271,6 +3271,12 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     return false;
   }
   const rearmable = opts.rearmable === true;
+  // PARK-CATEGORY RECORD FLOOR (#502): the park HOME's category at write time travels on
+  // the park note, so the restore-time detector can separate a re-keyed park home (the
+  // restore lands outside in-review and the round strands) from a legal park restore. A
+  // home that vanished inside the read window records nothing — the restore would fall
+  // back to in-review, so there is no strand to name.
+  const parkOriginCategory = await categoryOf(parkOrigin);
   // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
   // next re-fire; past the ladder the round parks FINAL (after = null) and the
   // watchdog alerts the exhausted shape
@@ -3332,6 +3338,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
         reviewParked: true,
         why,
         fromStatus: task.status,
+        ...(parkOriginCategory ? { homeCategoryAtPark: parkOriginCategory } : {}),
         ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
       },
       ex,

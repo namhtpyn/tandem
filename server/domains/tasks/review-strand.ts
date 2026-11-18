@@ -14,8 +14,11 @@ import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { asDb, type DbExecutor } from '../../db/index';
 import { taskMessageActivities, taskMessages, taskReviews } from '../../db/schema';
 
-/** The newest gating block record's recorded home category + when it landed. */
-export type BlockHomeRecord = { category: string; at: Date };
+/** A home CATEGORY recorded on a gating note at write time + when that note landed. */
+export type HomeRecord = { category: string; at: Date };
+
+/** The block note's record — same shape, named for the half that reads it. */
+export type BlockHomeRecord = HomeRecord;
 
 const VERDICT_STATUSES = [REVIEW_STATUS.APPROVED, REVIEW_STATUS.CHANGE_REQUESTED, REVIEW_STATUS.REJECTED];
 
@@ -35,6 +38,32 @@ export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Pro
       and(
         eq(taskMessages.taskId, taskId),
         like(taskMessages.body, 'auto-blocked:%'),
+        sql`${taskMessageActivities.payload}->>'kind' = 'STATUS'`,
+      ),
+    )
+    .orderBy(desc(taskMessages.createdAt))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.category === null || row.category === '') return null;
+  return { category: row.category, at: row.at };
+}
+
+/** The newest `review parked` note carrying the park home's CATEGORY (PARK-CATEGORY
+ *  RECORD FLOOR, 2.78.43, #502). A pre-floor park note carries no `homeCategoryAtPark`
+ *  key and returns null — the detector's park half stays silent on it, the declared
+ *  residual below the floor (same shape as the block half's pre-floor fallback). */
+export async function newestParkHomeRecord(taskId: string, ex: DbExecutor): Promise<HomeRecord | null> {
+  const rows = await asDb(ex)
+    .select({
+      category: sql<string | null>`${taskMessageActivities.payload}->>'homeCategoryAtPark'`,
+      at: taskMessages.createdAt,
+    })
+    .from(taskMessages)
+    .innerJoin(taskMessageActivities, eq(taskMessageActivities.messageId, taskMessages.id))
+    .where(
+      and(
+        eq(taskMessages.taskId, taskId),
+        like(taskMessages.body, 'review parked —%'),
         sql`${taskMessageActivities.payload}->>'kind' = 'STATUS'`,
       ),
     )

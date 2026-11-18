@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   answerSignature: true,
   roundLive: true,
   blockRecord: null as { category: string; at: Date } | null,
+  parkRecord: null as { category: string; at: Date } | null,
   postVerdict: false,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
@@ -172,6 +173,8 @@ vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
   return {
     ...mod,
     newestBlockHomeRecord: async () => h.blockRecord,
+    // #502: the park half reads its OWN record (the park note's homeCategoryAtPark)
+    newestParkHomeRecord: async () => h.parkRecord,
     hasVerdictAfter: async () => h.postVerdict,
     hasLiveReviewRow: async () => h.roundLive,
   };
@@ -226,6 +229,7 @@ beforeEach(() => {
   h.reads = 0;
   h.roundLive = true;
   h.blockRecord = null;
+  h.parkRecord = null;
   h.postVerdict = false;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
@@ -880,9 +884,66 @@ describe('borrowed-restore deferral (#479)', () => {
     });
   });
 
-  it('a PARKED restore never runs the strand detector (the park half is out by declaration)', async () => {
-    // pre_block_status is SET too (a park landing on a gated row): the parked guard, not a
-    // null home, is the only thing keeping the detector out of this restore
+  // #502: the PARK half of the restore detector — the park note's `homeCategoryAtPark`
+  // record is the ordering anchor and the recorded category, exactly like the block note's
+  // `homeCategory` on the pre_block_status half.
+  it('a re-keyed PARK home with a live round records the strand (#502)', async () => {
+    row('p', {
+      status: STATUS.blocked,
+      // the parked guard still arbitrates: a park landing on a gated row keeps
+      // pre_block_status out of the decision — the PARK record is the one consulted
+      preBlockStatus: STATUS.inReview,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAfter: new Date(Date.now() - 1000),
+    });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    const note = h.notes.find((n) => n.meta.reviewStrand === true);
+    expect(note, 'the park half fires on a re-keyed home with a live round').toBeTruthy();
+    expect(note!.meta).toMatchObject({
+      recordedCategory: 'in_review',
+      homeCategory: 'done',
+      landingCategory: 'done',
+      liveRound: true,
+    });
+    expect(note!.body).toContain('REVIEW STRAND');
+  });
+
+  it('a decided round whose verdict landed after the PARK record is a strand too (#502)', async () => {
+    row('p', {
+      status: STATUS.blocked,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAfter: new Date(Date.now() - 1000),
+    });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'cancelled' } : s));
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = false;
+    h.postVerdict = true;
+    await refreshParentGating('p');
+    expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
+      lateVerdict: true,
+      landingCategory: 'cancelled',
+    });
+  });
+
+  it('a legal park restore (home still in-review) writes no strand record (#502)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+    expect(
+      h.notes.find((n) => n.meta.parkResumed === true),
+      'the legal park restore still resumes',
+    ).toBeTruthy();
+  });
+
+  it('a pre-floor park note (no homeCategoryAtPark record) stays silent (#502)', async () => {
     row('p', {
       status: STATUS.blocked,
       preBlockStatus: STATUS.inReview,
@@ -891,7 +952,19 @@ describe('borrowed-restore deferral (#479)', () => {
     });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    // the pre-floor note: the detector's read returns null, and the block record (which
+    // this restore must NOT consult — its home is cleared on the park flip) says nothing
+    h.parkRecord = null;
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('a park home that no longer resolves falls back to in-review and names no strand (#502)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: 'ghost-home', parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = true;
     await refreshParentGating('p');
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);

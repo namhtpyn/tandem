@@ -1236,13 +1236,25 @@ non-positive deltas render no duration.
   every term here — the strand DROPS at the restore, so from `2.78.42` (RESTORE-STRAND
   RECORD FLOOR) the gating restore detects it on the `pre_block_status` half and carries
   the verdict on its own unblock record (the RESTORE-STRAND arm below; below that floor
-  the live-round window stays the DECLARED residual #500, and the PARK half's version of
-  the shape is the separately declared #502). #423 stays
+  the live-round window stays the DECLARED residual #500). From `2.78.43` (PARK-CATEGORY
+  RECORD FLOOR, #502) the park's `review parked` note payload carries the park home's
+  CATEGORY at write time (`homeCategoryAtPark`, written atomically with the park flip in
+  the same transaction) and the detector's PARK half closes the same shape: the restore
+  compares that record against the category the recorded park home
+  (`park_from_status`) carries NOW, with the same live-round / post-record-verdict
+  decision and the same landing test (a restore that lands outside the
+  `in_review` category), so a status re-keyed while its task sat parked over a live round
+  FIRES; a legal park restore (home still in-review, or unresolvable and therefore
+  falling back to in-review) writes no strand, and a pre-floor park note carries no
+  record and stays silent — the declared residual below `2.78.43`. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
-  half needs the record and stays silent — and the PARK half carries no category record: it
-  is OUT of the category term by declaration (its ordering term is unchanged).
+  half needs the record and stays silent — and the PARK half's category is RECORDED from
+  `2.78.43` (`homeCategoryAtPark`) but feeds the RESTORE-STRAND detector only: the ARM's
+  category term stays block-only by declaration, because a paused row's strand is still
+  catchable at its restore (the landing is knowable there) while the arm's ordering term
+  is unchanged.
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
@@ -1292,11 +1304,11 @@ non-positive deltas render no duration.
   file: a SQL arm with no pass consumer is a detector that never runs).
 - The RESTORE-STRAND arm (#500, label `restorestrand`, floor `2.78.42`, RESTORE-STRAND
   RECORD FLOOR) surfaces the restore-time detector for the live-round variant the
-  RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, the
-  `pre_block_status` half only; the PARK half is OUT by declaration — a park note carries
-  no category record, the same boundary the arm's category term declares, and closing it
-  needs the park note to record its own category first (#502)) the app reads
-  the newest floored `auto-blocked:` record's `homeCategory` and the round's review
+  RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, BOTH
+  halves from `2.78.43`: the `pre_block_status` half reads the block note's `homeCategory`,
+  the PARK half reads the park note's `homeCategoryAtPark` and the recorded park home is
+  `park_from_status` — #502) the app reads
+  the newest floored record's `homeCategory` and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the block record) as ADVISORY evidence
   on the pool before the write — a failed evidence read is logged and never blocks the
@@ -1305,7 +1317,8 @@ non-positive deltas render no duration.
   use. (The remaining single-statement gap — a `statuses.save` committing between that map
   read and the write — is the same guard-window producer this detector backstops and is a
   declared residual for the record's category naming.) When the recorded category is NOT
-  the category its recorded home (the blocked task's `pre_block_status`) carries at that
+  the category its recorded home (the blocked task's `pre_block_status` for the block half,
+  the parked task's `park_from_status` for the park half) carries at that
   read — or that home no longer resolves at the restore while its block record carried a
   category (`deleted under the block`: the ghost-race producer; ORPHAN-HOME covers the
   no-PENDING variant, this term the live-decision one) — and the landing category is NOT

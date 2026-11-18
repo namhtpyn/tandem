@@ -146,6 +146,9 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+    // PARK-CATEGORY RECORD FLOOR (#502): the home's category at park time rides the note,
+    // so the restore detector can tell a re-keyed park home from a legal park
+    expect(h.activities[0]?.payload.homeCategoryAtPark).toBe('in_review');
     // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
     // carries kind='STATUS' — the park writer must keep minting it
     expect(h.activities[0]?.payload.kind).toBe('STATUS');
