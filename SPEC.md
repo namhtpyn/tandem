@@ -1168,7 +1168,7 @@ non-positive deltas render no duration.
   into review (a resolvable in-review origin still lets the settle flip land: the
   orphan arm's exclusion, mirrored). The TERMINAL resolve is the arm's ORIGINAL scope; from
   `2.78.41` the `pre_block_status` half ALSO reads a NON-terminal resolve that the category
-  record splits (the CATEGORY TERM below), so a re-key into a ready or working category
+  record splits (the CATEGORY TERM below), so a re-key into any non-terminal category (backlog, ready, working, paused, waiting_answer)
   while the task sat blocked is in scope, and the home a legal hold-landing block records —
   a repair round re-opened on a ready/working status and then gating-blocked, which the
   unblock restore heals — stays SILENT because it records the category it RESOLVES
@@ -1224,8 +1224,8 @@ non-positive deltas render no duration.
   same floor, on the `pre_block_status` half only — a LATE re-key into a NON-terminal
   category (in_review -> ready/working while blocked): the block records the category it
   read, the home resolves another one now, and the unblock restore reads the NEW home
-  (`resolveRestoreTarget` demotes a WORKING target to to-do and restores any other
-  non-terminal category into that status), so the task lands outside the review flow when
+  (`resolveRestoreTarget` sends a working-category home to the to-do status and restores
+  any other non-terminal category into that status), so the task lands outside the review flow when
   its children close; `settledByOwner` is false on a non-terminal home and the park
   heals are park-only, so no healer corrects it. That half reads the SAME rule — recorded
   category vs the category the home carries NOW — and adds NO ordering term: a round closed
@@ -1255,8 +1255,8 @@ non-positive deltas render no duration.
   landed and its settle flip can never land on the re-keyed terminal home — except on the
   degraded path that skips its sweep (residual (a)), where a settled-then-re-blocked task
   can carry one; the PENDING heal signature keeps that row silent until it drains.
-  THREE DECLARED residuals the SQL cannot see — (a) and (b) verified empty in prod at
-  the `2.78.40` deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is
+  FOUR DECLARED residuals the SQL cannot see — (a) and (b) verified empty in prod at
+  the `2.78.40` deploy; (c) and (d) are FALSE NEGATIVES and cannot be counted (the row is
   indistinguishable from #423 by declaration). (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
   the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
   path (the flip committed on the pool, the sweep skipped by design when that isolation

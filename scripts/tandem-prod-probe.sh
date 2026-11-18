@@ -242,8 +242,9 @@ rekey_pre_half() {
   if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
 }
 # NON-TERMINAL LATE RE-KEY half (#496, floor 2.78.41): the same recorded-vs-resolved
-# category term on a home that resolves NON-terminal (landing/todo/ready/working/paused;
-# in_review is excluded by the arm's own origin exclusion and re-stated here) — the block
+# category term on a home that resolves NON-terminal (backlog/ready/working/paused/
+# waiting_answer; in_review is excluded by the arm's own origin exclusion and re-stated
+# here) — the block
 # recorded a category its home no longer carries, i.e. the status was RE-KEYED while the
 # task sat blocked at it (the same statuses.save read->upsert window / guard regression the
 # terminal half reads). The landing consequence differs: the settle flip is not the victim
@@ -394,7 +395,7 @@ strand_sql() {
   # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
   # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
   # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
-  # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
+  # stands, and a row carrying NO note of that kind falls back to it. FOUR DECLARED
   # residuals this SQL cannot see — (a) and (b) verified 0 rows in prod at the 2.78.40
   # deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is indistinguishable
   # from #423 by declaration): (a) a
@@ -1167,9 +1168,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
   [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "6" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
-  # NON-TERMINAL half (#496): the same floor, the block half only, and the ALL-OLDER gate
-  # that keeps the legal hold-landing class silent (its closing verdict POSTDATES the
-  # record, so the ordering term must not be reused on that half — it would fire there).
+  # NON-TERMINAL half (#496): the same floor and the block half only; its rule is the
+  # recorded-vs-resolved EQUALITY alone (no ordering conjunct — adding one is a regression,
+  # the legal hold-landing class records the category it resolves).
   rekey_nonterminal_half 2.78.40 && { echo "selfcheck fail: non-terminal half emitted below the home floor"; exit 1; }
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "o.category not in ('done', 'cancelled', 'in_review')" || { echo "selfcheck fail: non-terminal half lost its resolve clause"; exit 1; }
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: non-terminal half lost the category record"; exit 1; }

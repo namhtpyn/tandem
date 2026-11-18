@@ -82,7 +82,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       // ids per run: the e2e DB persists across runs and the cleanup sweep is time-windowed
       const tag = crypto.randomUUID();
       const rekeyDone = `probe-rekey-done-${tag}`; // fires: THE counterexample — block home re-keyed in_review -> done
-      const rekeyDoing = `probe-rekey-doing-${tag}`; // silent: a NON-terminal re-key is the declared boundary
+      const rekeyDoing = `probe-rekey-doing-${tag}`; // silent here: no category record on the note, and the non-terminal half needs it (#496)
       const rekeyCancelled = `probe-rekey-cancelled-${tag}`; // fires: a cancelled-category home is the same wedge (no owner settle cleared the origin)
       const parkRekey = `probe-rekey-park-${tag}`; // fires: a PARK-only origin re-keyed terminal
       const bothRekey = `probe-rekey-both-${tag}`; // fires: either column re-keyed is enough
