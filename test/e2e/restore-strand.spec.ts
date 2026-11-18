@@ -115,6 +115,21 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     ).toBe(200);
     expect(await strandRecord(quiet.id), 'no live round -> no strand record').toHaveLength(0);
 
+    // 2b. the decided variant: a verdict landed AFTER the block record while the task sat
+    // blocked — the round closed, the settle flip could not land, and the restore drops it
+    const late = await seedParent('LATE', { liveRound: false, rekey: true });
+    await sql.unsafe(
+      `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at, decided_at)
+       values ($1, $2, $3, 1, 'APPROVED', null, now() - interval '10 minutes', now() - interval '1 minute')`,
+      [`rev-late-${late.id}`, late.id, reviewer],
+    );
+    expect(
+      (await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: late.child, status: DONE } } })).status(),
+    ).toBe(200);
+    const lateRecords = await strandRecord(late.id);
+    expect(lateRecords, 'a verdict newer than the block record is a strand too').toHaveLength(1);
+    expect(lateRecords[0]!.payload).toMatchObject({ reviewStrand: true, liveRound: false, lateVerdict: true });
+
     // 3. legal control: a live round restored into its recorded in-review home re-enters the
     // flow (the recorded category equals the landing one) — no strand record
     const inFlow = await seedParent('INFLOW', { liveRound: true, rekey: false });

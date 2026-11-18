@@ -16,7 +16,7 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { AfterCommitQueue } from './after-commit';
-import { hasVerdictAfter, isRestoreStrand, newestBlockHomeRecord } from './review-strand';
+import { hasLiveReviewRow, hasVerdictAfter, isRestoreStrand, newestBlockHomeRecord } from './review-strand';
 import {
   logActivity as publishActivity,
   dispatchAiReviewTurns,
@@ -181,8 +181,10 @@ async function restoreUnblocked(
     try {
       const blockRecord = await newestBlockHomeRecord(cur.id, ex);
       if (blockRecord) {
-        const liveRound = await openRoundLive(cur.id);
-        const postRecordVerdict = liveRound ? false : await hasVerdictAfter(cur.id, blockRecord.at, ex);
+        const liveRound = await hasLiveReviewRow(cur.id, ex);
+        // report BOTH facts: the strand is an OR, but the record's `lateVerdict` must be
+        // true whenever a verdict landed after the block, even beside a live pending row
+        const postRecordVerdict = await hasVerdictAfter(cur.id, blockRecord.at, ex);
         const homeCategory = known.get(cur.preBlockStatus);
         const landingCategory = known.get(restore);
         if (

@@ -43,7 +43,15 @@ describe('restore-strand detector (#500)', () => {
   });
 
   it('stays silent when the home still resolves into review', () => {
-    expect(isRestoreStrand({ ...base, homeCategory: 'in_review', landingCategory: 'in_review' })).toBe(false);
+    // recorded != home and landing === in_review: ONLY the landing gate can exclude it
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: 'working',
+        homeCategory: 'in_review',
+        landingCategory: 'in_review',
+      }),
+    ).toBe(false);
   });
 
   it('stays silent without a floored block record (pre-floor note cannot split the row)', () => {

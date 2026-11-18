@@ -7,7 +7,7 @@
 // detector's decision + the two reads it needs; the gating restore writes the verdict into
 // its OWN unblock record (`reviewStrand`, atomic with the note), and the probe's
 // RESTORE-STRAND arm surfaces that record.
-import { and, desc, eq, gt, inArray, like, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, like, sql } from 'drizzle-orm';
 
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 
@@ -57,6 +57,27 @@ export async function hasVerdictAfter(taskId: string, at: Date, ex: DbExecutor):
         eq(taskReviews.taskId, taskId),
         inArray(taskReviews.status, VERDICT_STATUSES),
         gt(taskReviews.decidedAt, at),
+        eq(taskReviews.round, sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${taskId})`),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** A LIVE reviewer row in the task's CURRENT (max) round — PENDING with a reviewer (a
+ *  void row from a removed reviewer can never carry a verdict and is not a live decision).
+ *  Read on the caller's executor so the detector's three reads share ONE snapshot on a
+ *  borrowed-transaction restore (the module-level read `openRoundLive` would mix an
+ *  uncommitted caller state with a stale pool view). */
+export async function hasLiveReviewRow(taskId: string, ex: DbExecutor): Promise<boolean> {
+  const rows = await asDb(ex)
+    .select({ id: taskReviews.id })
+    .from(taskReviews)
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        isNotNull(taskReviews.reviewerId),
         eq(taskReviews.round, sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${taskId})`),
       ),
     )

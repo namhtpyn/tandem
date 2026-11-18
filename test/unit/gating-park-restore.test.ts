@@ -173,6 +173,7 @@ vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
     ...mod,
     newestBlockHomeRecord: async () => h.blockRecord,
     hasVerdictAfter: async () => h.postVerdict,
+    hasLiveReviewRow: async () => h.roundLive,
   };
 });
 
