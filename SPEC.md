@@ -1333,9 +1333,9 @@ non-positive deltas render no duration.
   PARK half from `2.78.43`: the block half reads
   the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
   and the recorded park home is `park_from_status` — #502) the app reads
-  the newest block note's recorded category (`homeCategory` on the block note,
-  `homeCategoryAtPark` on the park note — a note carrying no such key is not a record and
-  leaves its half of the detector silent, #491) and the round's review
+  the newest gating note's recorded category (`homeCategory` on the newest block note,
+  `homeCategoryAtPark` on the newest park note — a note carrying no such key is not a
+  record and leaves its half of the detector silent, #491) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
   the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
@@ -1360,7 +1360,7 @@ non-positive deltas render no duration.
   its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
   own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
   with `REVIEW STRAND`. A floored note that recorded a NULL category is a RECORD, not a
-  missing one (#503, GHOST-AT-BLOCK RECORD floor `2.78.44`): the block committed against a
+  missing one (#503, GHOST-AT-BLOCK TERM floor `2.78.44`): the block committed against a
   home that already named no `task_statuses` row (the ghost-task race), so no recorded
   category exists to compare and the re-key test is satisfied by construction — a restore
   that lands OUTSIDE `in_review` over a live review decision writes the same strand record,

@@ -47,12 +47,15 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     // homeCategory says the home was in-review when the block committed
     const seedParent = async (
       name: string,
-      opts: { liveRound: boolean; rekey: boolean; record?: 'in_review' | 'ghost' | 'absent' },
+      opts: { liveRound: boolean; rekey: boolean; record?: string; home?: string },
     ) => {
       // #503: 'ghost' = a floored note whose home already named no row (category null);
-      // 'absent' = a pre-floor note (no homeCategory KEY) — the same ghost shape, silent.
-      const ghost = opts.record === 'ghost' || opts.record === 'absent';
-      const statusId = ghost ? null : await save({ name: `${name}-${tag}`, position: 80, category: 'in_review' });
+      // 'absent' = a pre-floor note (no homeCategory KEY); 'blank' = a floored EMPTY value,
+      // which the reader treats as no record (the probe's `<> ''` guard) — all three seed
+      // the same ghost home, and only 'ghost' is a record.
+      const ghost = opts.record === 'ghost' || opts.record === 'absent' || opts.record === 'blank';
+      const homeCategory = opts.home ?? 'in_review';
+      const statusId = ghost ? null : await save({ name: `${name}-${tag}`, position: 80, category: homeCategory });
       if (statusId) createdStatuses.push(statusId);
       const homeId = statusId ?? crypto.randomUUID();
       const id = await createTask(`${name}-${tag}`);
@@ -75,7 +78,9 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
         [messageId, id, 'auto-blocked: 1 subtask(s) open'],
       );
       const payload: Record<string, unknown> = { kind: 'STATUS', autoBlocked: true, open: 1 };
-      if (opts.record !== 'absent') payload.homeCategory = ghost ? null : 'in_review';
+      if (opts.record === 'ghost') payload.homeCategory = null;
+      else if (opts.record === 'blank') payload.homeCategory = '';
+      else if (opts.record !== 'absent') payload.homeCategory = opts.record ?? homeCategory;
       await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
         messageId,
         payload,
@@ -226,6 +231,54 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       (await sql.unsafe(`select status from tasks where id = $1`, [preFloorGhost.id])) as Array<{ status: string }>
     )[0];
     expect(preFloorAfter?.status, 'the control still restored').toBe(TODO);
+
+    // 3d. blank control: a floored note with an EMPTY homeCategory is treated as no record
+    // (the probe's `<> ''` guard), never as a ghost — same silence as the pre-floor note
+    const blankGhost = await seedParent('GHOSTBLANK', { liveRound: true, rekey: false, record: 'blank' });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', {
+          data: { json: { id: blankGhost.child, status: DONE } },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(blankGhost.id), 'an empty value is not a ghost record').toHaveLength(0);
+
+    // 3e. the NEWEST block note is the record: a task that blocked twice carries an OLDER
+    // note whose category differs from the home — an oldest-first read would fire; the
+    // newest note (recorded == home) is the current episode and stays silent.
+    const newestNote = await seedParent('NEWEST', {
+      liveRound: true,
+      rekey: false,
+      home: 'done',
+      record: 'done',
+    });
+    await sql.unsafe(
+      `with m as (
+         insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'auto-blocked: 1 subtask(s) open', now() - interval '10 minutes')
+         returning id
+       )
+       insert into task_message_activities (message_id, payload)
+       select id, $3 from m`,
+      [
+        `block-old-${newestNote.id}`,
+        newestNote.id,
+        { kind: 'STATUS', autoBlocked: true, open: 1, homeCategory: 'in_review' },
+      ],
+    );
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', {
+          data: { json: { id: newestNote.child, status: DONE } },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(newestNote.id), 'the newest block note is the record').toHaveLength(0);
+    const newestAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [newestNote.id])) as Array<{ status: string }>
+    )[0];
+    expect(newestAfter?.status, 'the control restored into its done-category home').toBe(newestNote.statusId);
 
     // 4. the PARK half (#502): the same read->upsert re-key can land while the task sits
     // PARKED — the restore takes the park branch, lands on the re-keyed home, and the

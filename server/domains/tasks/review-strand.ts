@@ -25,11 +25,12 @@ export type BlockHomeRecord = { category: string | null; at: Date };
 const VERDICT_STATUSES = [REVIEW_STATUS.APPROVED, REVIEW_STATUS.CHANGE_REQUESTED, REVIEW_STATUS.REJECTED];
 
 /** The newest `auto-blocked:` note carrying a home record (HOME-CATEGORY RECORD FLOOR,
- *  2.78.41; GHOST-AT-BLOCK RECORD FLOOR, 2.78.44, #503). A pre-floor note carries no
+ *  2.78.41; GHOST-AT-BLOCK TERM FLOOR, 2.78.44, #503). A pre-floor note carries no
  *  `homeCategory` KEY at all and returns null — the detector stays silent on it, exactly
  *  like the probe arm's pre-floor fallback (the row is the declared #491 residual and must
  *  not be re-labelled by half a record). A floored note whose value is NULL returns a
- *  record with `category: null`: the home was already a ghost at block time. */
+ *  record with `category: null`: the home was already a ghost at block time. An EMPTY
+ *  value is treated as no record (the probe's `<> ''` guard), never as a ghost. */
 export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Promise<BlockHomeRecord | null> {
   const rows = await asDb(ex)
     .select({
@@ -49,8 +50,8 @@ export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Pro
     .orderBy(desc(taskMessages.createdAt))
     .limit(1);
   const row = rows[0];
-  if (!row || !row.keyed) return null;
-  return { category: row.category === '' ? null : row.category, at: row.at };
+  if (!row || !row.keyed || row.category === '') return null;
+  return { category: row.category, at: row.at };
 }
 
 /** The newest `review parked` note carrying the park home's CATEGORY (PARK-CATEGORY
@@ -122,7 +123,7 @@ export type RestoreStrandInput = {
   /** the block record IS floored and names NO category: the block committed against a
    *  home that already named no `task_statuses` row (the ghost-task race). The re-key
    *  test is satisfied by construction — there is no recorded category a current home
-   *  could match (#503, GHOST-AT-BLOCK RECORD floor 2.78.44). */
+   *  could match (#503, GHOST-AT-BLOCK TERM floor 2.78.44). */
   ghostAtBlock: boolean;
   /** the category the recorded home (pre_block_status) carries NOW — the re-key test's
    *  second term, mirroring the RE-KEYED-HOME arm. Never derived from the landing status:
