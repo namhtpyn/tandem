@@ -385,6 +385,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const twoEpisode = `probe-homecat-two-episode-${tag}`; // silent: the NEWEST note recorded done
       const undecided = `probe-homecat-undecided-${tag}`; // silent: no verdict row in max(round)
       const terminalRekey = `probe-homecat-terminal-${tag}`; // fires: done -> cancelled re-key while blocked
+      const tornRound = `probe-homecat-torn-round-${tag}`; // silent: max(round) holds no verdict
 
       const seedTask = async (id: string, pre: string | null, park: string | null, writtenMinutesAgo: number) => {
         await sql.unsafe(
@@ -454,6 +455,12 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedTask(terminalRekey, CANCELLED, null, 5);
       await seedRecord(terminalRekey, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'done' });
       await seedVerdict(terminalRekey, 10);
+      // the DECIDED round is max(round): a torn-down current round (SUPERSEDED only)
+      // over an older decided round must stay silent — the term binds to max(round)
+      await seedTask(tornRound, DONE, null, 5);
+      await seedRecord(tornRound, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedVerdict(tornRound, 10);
+      await seedVerdict(tornRound, 1, 'SUPERSEDED', 2);
       // a round with NO verdict row is not a decided round: the exists-verdict clause
       await seedTask(undecided, DONE, null, 5);
       await seedRecord(undecided, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
@@ -500,6 +507,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(post, 'a terminal -> terminal re-key is the same wedge (recorded done, home cancelled now)').toContain(
         terminalRekey,
       );
+      expect(post, 'the decided round is max(round): a torn-down current round stays silent').not.toContain(tornRound);
     } finally {
       await sql.end();
     }
