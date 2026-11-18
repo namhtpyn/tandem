@@ -82,8 +82,9 @@ test('prod probe restore-strand arm (#500): fires on the detector record, silent
       reviewStrand: true,
     });
 
-    const rows = (await sql.unsafe(sqlText)) as Array<{ ids: string }>;
-    const ids = String(rows[0]?.ids ?? 'none').split(',');
+    const rows = (await sql.unsafe(sqlText)) as Array<{ ids: string; task_ids: string }>;
+    expect(String(rows[0]?.ids ?? 'none'), 'the arm reports record ids for dedupe').not.toBe('none');
+    const ids = String(rows[0]?.task_ids ?? 'none').split(',');
     expect(ids, 'the detector record fires').toContain(strand);
     expect(ids, 'a plain unblock note stays silent').not.toContain(plain);
     expect(ids, 'a free-text NOTE with the same body cannot forge the record').not.toContain(freeText);

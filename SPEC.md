@@ -1295,29 +1295,32 @@ non-positive deltas render no duration.
   `pre_block_status` half only; the PARK half is OUT by declaration — a park note carries
   no category record, the same boundary the arm's category term declares, and closing it
   needs the park note to record its own category first (#502)) the app reads
-  the newest floored `auto-blocked:` record's `homeCategory`, the category its recorded
-  home (the blocked task's `pre_block_status`) carries NOW — or the fact that it no longer
-  resolves (deleted under the block: the ghost-race producer; ORPHAN-HOME covers the
-  no-PENDING variant, this term the live-decision variant) — and the category the restore
-  actually lands on (after `resolveRestoreTarget`): when the recorded category is NOT the
-  home's current category (or the home is gone), the landing category is NOT `in_review`,
-  and the task carries a live review decision — a PENDING reviewer row in `max(round)`, or
-  a verdict on that round NEWER than the block record (landed while the task sat blocked) —
-  the restore writes `reviewStrand`, `recordedCategory`, `homeCategory`,
-  `landingCategory`, `liveRound` and `lateVerdict` into its own
-  `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its own-path
-  flip + note in ONE transaction, #466 pattern) and suffixes the body with
-  `REVIEW STRAND`. The detector only RECORDS and a detector read that throws is logged,
-  never allowed to block the restore. Every legal shape is excluded: #423's
-  settle-then-reblock records the already-terminal category, a manual terminal/working
-  move keeps the category it blocks from, a legal hold-landing block records the category
-  it resolves, a faithful status re-home keeps the category, and a restore into the
-  recorded in-review home re-enters the flow. The arm reads only that single-writer record
+  the newest floored `auto-blocked:` record's `homeCategory` and the round's review
+  evidence (a PENDING reviewer row, or a verdict NEWER than the block record) as ADVISORY
+  evidence on the pool before the write — a failed evidence read is logged and never
+  blocks the restore — and reads the DECISIVE categories at the flip (`statusCategoryMap`
+  on the write's own executor), so a status re-key committing inside the walk→flip window
+  is judged against the category the write actually commits against (the block arm's own
+  rule). When the recorded category is NOT the category its recorded home (the blocked
+  task's `pre_block_status`) carries at the flip — or that home no longer resolves
+  (deleted under the block: the ghost-race producer; ORPHAN-HOME covers the no-PENDING
+  variant, this term the live-decision variant) — and the landing category is NOT
+  `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
+  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict`
+  into its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`,
+  its own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the
+  body with `REVIEW STRAND`. The detector only RECORDS; a strand can never block the
+  restore. Every legal shape is excluded: #423's settle-then-reblock records the
+  already-terminal category, a manual terminal/working move keeps the category it blocks
+  from, a legal hold-landing block records the category it resolves, a faithful status
+  re-home keeps the category, and a restore into the recorded in-review home re-enters
+  the flow. The arm reads only that single-writer record
   (`m.body like 'unblocked: all subtasks terminal → %'` + `kind='STATUS'` +
-  `autoUnblocked='true'` + `reviewStrand='true'`) and alerts on its task ids; it is inert
-  below its floor (pre-floor images write no such note), and the live pass carries its
-  emit + id-set dedupe wiring (`--selfcheck` pins the gate, the record predicates and the
-  wiring).
+  `autoUnblocked='true'` + `reviewStrand='true'`), bounded to the last 120 days, alerts on
+  the RECORD-id set (a repeat strand on the same task changes the set and alerts again)
+  and names the task ids; it is inert below its floor (pre-floor images write no such
+  note), and the live pass carries its emit + id-set dedupe wiring (`--selfcheck` pins the
+  gate, the record predicates and the wiring).
 - The DECISION-PARK arm (#431, label `parkclosed`) reads the parked round that CLOSED
   with its settle flip lost: a PAUSED row carrying `park_from_status` that RESOLVES to an
   in-review-category status, `park_rearm_after IS NULL` with `park_rearm_attempts = 0`

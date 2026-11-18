@@ -564,7 +564,11 @@ restore_strand_floor_met() {
 }
 restore_strand_sql() {
   restore_strand_floor_met "${1:-}" || return 0
-  printf "%s" "select 'restorestrand', coalesce((select string_agg(distinct m.task_id, ',' order by m.task_id) from task_messages m join task_message_activities a on a.message_id = m.id where m.body like 'unblocked: all subtasks terminal → %' and a.payload->>'kind' = 'STATUS' and a.payload->>'autoUnblocked' = 'true' and a.payload->>'reviewStrand' = 'true'), 'none') as ids"
+  # Two aggregates over ONE scan: record ids for dedupe (a repeat strand on the SAME task
+  # must change the set and alert again) and task ids for the operator. The 120-day bound
+  # keeps the arm off a full-history scan on a table with no created_at-only index; older
+  # records have already alerted and stay as audit rows on the task.
+  printf "%s" "select 'restorestrand', coalesce(string_agg(x.mid, ',' order by x.mid), 'none') as ids, coalesce(string_agg(distinct x.tid, ',' order by x.tid), 'none') as task_ids from (select m.id as mid, m.task_id as tid from task_messages m join task_message_activities a on a.message_id = m.id where m.body like 'unblocked: all subtasks terminal → %' and a.payload->>'kind' = 'STATUS' and a.payload->>'autoUnblocked' = 'true' and a.payload->>'reviewStrand' = 'true' and m.created_at > now() - interval '120 days') x"
 }
 # LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
 # delivery-preflight outage (WebSocket 500) failed tandem-triage 30x and tandem-critic
@@ -1218,6 +1222,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$RSTRAND" | grep -qF "m.body like 'unblocked: all subtasks terminal → %'" || { echo "selfcheck fail: restore-strand arm lost the single-writer body"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF "a.payload->>'kind' = 'STATUS'" || { echo "selfcheck fail: restore-strand arm lost the payload-kind predicate"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF "a.payload->>'reviewStrand' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the detector record predicate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF 'as ids' || { echo "selfcheck fail: restore-strand arm lost the dedupe id aggregate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF 'as task_ids' || { echo "selfcheck fail: restore-strand arm lost the task-id aggregate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "interval '120 days'" || { echo "selfcheck fail: restore-strand arm lost the scan bound"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*RSSQL=\$\(restore_strand_sql' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand arm call missing from the live pass"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*anom\+=\("restorestrand: a restore left a live review decision' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand alert line missing"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*echo "\$RSIDS" > "\$PROBE_STATE/restorestrand\.alerted"' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand dedupe write missing"; exit 1; }
@@ -2199,15 +2206,18 @@ fi
 # standing fault pings once; a new strand changes the set and alerts again).
 if restore_strand_floor_met "$V"; then
   RSSQL=$(restore_strand_sql "$V")
-  RSERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-  RSOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>/dev/null) || RSOUT="db-unreachable"
+  # ONE psql round-trip: the arm's scan is the only non-trivial query here; the old
+  # two-call stderr probe doubled it. stderr lands beside the other probe state files.
+  RSOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RSSQL\"" 2>"$PROBE_STATE/restorestrand.err") || RSOUT="db-unreachable"
+  RSERR=$(grep -m1 ERROR "$PROBE_STATE/restorestrand.err" 2>/dev/null)
   if [ "$RSOUT" = "db-unreachable" ]; then
     anom+=("restorestrand: unreachable ${RSERR:-psql failed}")
   else
     RSIDS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $2}')
+    RSTASKS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $3}')
     if [ -n "${RSIDS:-}" ] && [ "$RSIDS" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/restorestrand.alerted" 2>/dev/null || echo none)" != "$RSIDS" ]; then
-        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSIDS] — the review round cannot land (#500)")
+        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] — the review round cannot land (#500)")
         echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
       fi
     else

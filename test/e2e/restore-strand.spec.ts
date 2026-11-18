@@ -139,6 +139,10 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       ).status(),
     ).toBe(200);
     expect(await strandRecord(inFlow.id), 'a matching recorded category is not a strand').toHaveLength(0);
+    const inFlowAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [inFlow.id])) as Array<{ status: string }>
+    )[0];
+    expect(inFlowAfter?.status, 'the control really restored into its recorded home').toBe(inFlow.statusId);
   } finally {
     // the per-test fixture sweeps tasks AFTER this block, but status removal refuses while
     // any task still references the status — remove this spec's rows first (tag-scoped),
