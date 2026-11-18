@@ -196,10 +196,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const fired = new Set(String(arm?.[1] ?? 'none').split(','));
 
       expect(fired, 'a block home re-keyed in_review -> done over a decided round is the strand').toContain(rekeyDone);
-      expect(
-        fired,
-        'a note-less row cannot split a non-terminal home (#496 needs the category record): silent',
-      ).not.toContain(rekeyDoing);
+      expect(fired, 'below the record floor a non-terminal home is outside this arm: silent').not.toContain(rekeyDoing);
       expect(
         fired,
         'a cancelled-category home is the same wedge: no legal owner settle can leave an origin behind',
@@ -392,6 +389,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const recordedDoing = `probe-homecat-doing-${tag}`; // FIRES (#496): recorded in_review, resolves working, all-older
       const rekeyPostVerdict = `probe-homecat-post-verdict-${tag}`; // silent (#496): a verdict NEWER than the record keeps the non-terminal half out
       const holdLanding = `probe-homecat-hold-landing-${tag}`; // silent (#496): the legal hold-landing block records the category it RESOLVES
+      const leftoverMoved = `probe-homecat-leftover-${tag}`; // silent (#496): a status write AFTER the block is the #427 leftover, not this strand
       const twoEpisode = `probe-homecat-two-episode-${tag}`; // silent: the NEWEST note recorded done
       const undecided = `probe-homecat-undecided-${tag}`; // silent: no verdict row in max(round)
       const terminalRekey = `probe-homecat-terminal-${tag}`; // fires: done -> cancelled re-key while blocked
@@ -486,10 +484,17 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedRecord(rekeyPostVerdict, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedVerdict(rekeyPostVerdict, 2);
       // the LEGAL control: a hold-landing block records the category it RESOLVES, so the
-      // recorded-vs-resolved term is false however the round is ordered
+      // recorded-vs-resolved term is false. ALL-OLDER on purpose — with a post-record verdict
+      // the all-older gate alone would silence it and the equality would pin nothing.
       await seedTask(holdLanding, DOING, null, 5);
       await seedRecord(holdLanding, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'working' });
-      await seedVerdict(holdLanding, 2);
+      await seedVerdict(holdLanding, 10);
+      // a status MOVE after the block leaves the origin behind (#427 egress leftover): the
+      // shape must not be read as this strand just because the row is paused-CATEGORY
+      await seedTask(leftoverMoved, DOING, null, 5);
+      await seedRecord(leftoverMoved, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedRecord(leftoverMoved, 1, 'status: Doing -> Todo', null);
+      await seedVerdict(leftoverMoved, 10);
 
       const armOf = async (probeSql: string) => {
         const rows = (await sql.unsafe(probeSql)) as Record<string, unknown>[];
@@ -525,7 +530,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       );
       expect(post, 'a note-less row keeps the ordering fallback counterexample').toContain(noteLessNew);
       expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(recordedLive);
-      expect(post, 'a home still resolving non-terminal is not this shape').toContain(recordedDoing);
+      expect(post, 'a non-terminal home whose recorded category differs is the strand (#496)').toContain(recordedDoing);
+      expect(
+        post,
+        'a status move after the block leaves the origin behind (#427 leftover): not this strand',
+      ).not.toContain(leftoverMoved);
       expect(
         post,
         'the non-terminal half is ALL-OLDER only: a verdict newer than the record keeps it silent (#496)',
