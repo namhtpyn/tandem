@@ -1166,33 +1166,24 @@ non-positive deltas render no duration.
   status id as its home while that id's category is being rewritten; the standing
   residual class, declared like the orphan arm's ghost-task race) — and NEITHER origin resolves
   into review (a resolvable in-review origin still lets the settle flip land: the
-  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED BOUNDARY, not an
-  accident: a re-key into a NON-terminal category is, from the SQL, indistinguishable
-  from the declared legal class (a hold-landing repair round re-opened on a
-  ready/working status, then gating-blocked: the block legally records a non-review
-  home and a later verdict closes the round with no task write — the unblock restore
-  heals it). That sub-shape is OUT of this arm and NAMED here so no one assumes
-  coverage. A terminal home cannot host the hold-landing class; the OTHER legal class
-  a terminal home DOES host is the #423 re-block after a settle — the task settles
+  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED SCOPE BOUNDARY, not a
+  SQL impossibility: a hold-landing repair round re-opened on a ready/working status and
+  then gating-blocked legally records a non-review home whose category MATCHES the home
+  it resolves (the unblock restore heals it), and `homeCategory` would separate that from
+  a re-key into a NON-terminal category (`statuses.save`'s guard beat by the same
+  read→upsert window) — that wider term is tracked as #496 and OUT of this arm until it
+  lands, so no one assumes coverage. A terminal home cannot host the hold-landing class;
+  the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
   re-block write (a cancel that re-blocks records the cancelled status the same
-  way). The ordering therefore reads EVERY verdict of the round, not the newest: it
-  fires only when ALL verdict timestamps (min, not max) are NEWER than the task's
-  newest gating FLOW RECORD (the same BLOCK-PARK RECORD FLOOR as the orphan arm —
-  rows with no block/park note at all fall back to the `updated_at` stamp; the floor's
-  pre-floor note-loss window is the same declared residual), never the `updated_at`
-  stamp alone: a benign edit after the verdict cannot mask a real re-key. That MIN ordering is also what a max() test gets wrong on any late row (a decided_at
-  past the re-block write while the applied verdict predates it): the flip→supersede gap
-  that used to produce one (a verdict CAS landing between the settle's flip and its
-  supersede sweep) is gone as a COMMITTED gap — the sweep rides the flip's transaction
-  (#467, SETTLE-SWEEP ATOMICITY), so a settle is never observable between its own flip and
-  its sweep and a throw rolls every write back. A verdict CAS landing BEFORE that
-  transaction's sweep is arbitrated like any concurrent vote (#260); once the sweep's
-  rows are locked it is refused — either way it never ends as a stranded pending row.
-  The ordering therefore still earns its MIN: it excludes the #423 re-block class, and
-  the late rows a SETTLE can still leave — the degraded path (flip committed before its
-  sweep by design) and the reviewer-removal settle's own order. The settle flip's write gate takes
+  way). The ordering is PER VERDICT, not an aggregate, from the `2.78.38`
+  BLOCK-PARK RECORD FLOOR (#466): ANY verdict of `max(round)` newer than the ORIGIN'S
+  OWN record is the split-timing wedge (#468); an all-older round is the #423 class, the
+  LATE re-key the category term fires on, or the pre-block-re-key residual the arm bullet
+  declares (the legal class's applied verdict predates the re-block record). The arm
+  bullet below states the record exactly, the note-less/pre-floor MIN fallback and the
+  three declared residuals this SQL cannot see. The settle flip's write gate takes
   only an in_review-category status or a paused block whose recorded origin
   (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
   terminal home fails every branch, the round closes on the verdict row with NO
@@ -1206,18 +1197,71 @@ non-positive deltas render no duration.
   restore, which resolves the still-EXISTING terminal row and never a review path. A DIRECT owner settle is excluded by construction:
   `setStatus` moves the task out of the paused category and clears both machine
   origins in the same statement, so it leaves no origin behind; the residual
-  owner-settle shape is the machine #423 re-block above, excluded by the MIN
-  ordering. That is why the arm fires on a resolved `done`/`cancelled` home when no
-  verdict predates the block write (the counterexample shape: `in_review` → `done`
-  under a blocked task). The current-round clause (no PENDING row in `max(round)`,
-  at least one verdict row) and the MIN ordering above apply as specified; below
-  the `2.78.24` record floor the WEDGE falls back to its legacy test (#430) — this
-  arm's OWN floor is `2.78.38` (BLOCK-PARK RECORD FLOOR, #466): below it the stamp
-  test stands, at and above it the flow record orders. A
-  DECLARED BOUNDARY of the MIN ordering: a MULTI-REVIEWER round split across the
-  block record (one vote before it, the settling vote after) has min(verdict) older
-  than the block record and is OUT of this arm — the split-timing class needs a
-  per-verdict record term (the same flow record) and is tracked as #468.
+  owner-settle shape is the machine #423 re-block above, excluded by the
+  ordering. The ORDERING TERM's counterexample shape is the resolved `done`/`cancelled`
+  home under a blocked task whose round carries at least one verdict NEWER than the
+  record that made it terminal (one vote before it, the settling vote after, is this same
+  wedge); the CATEGORY TERM's counterexample is a DECIDED round whose recorded category
+  differs from the category its recorded home carries now (the late re-key above). The
+  current-round clause (no PENDING row in `max(round)`, at least one verdict row) and
+  the ordering above apply as specified; below the `2.78.24` record floor the WEDGE
+  falls back to its legacy test (#430). THIS arm's own floor is `2.78.38` (BLOCK-PARK
+  RECORD FLOOR, #466): at and above it the ordering is PER VERDICT against the ORIGIN'S
+  OWN record — the block's `auto-blocked:` note for a `pre_block_status` home, the
+  park's `review parked` note for a park home — so a MULTI-REVIEWER round split across
+  that record (one vote before it, the settling vote after) is this wedge, not a
+  boundary; an all-older round is either the legal #423 re-block (its applied verdict
+  necessarily predates the re-block record) or a RE-KEY strand, split as follows. From
+  `2.78.41` (HOME-CATEGORY RECORD FLOOR) the auto-block note's payload
+  carries the home's CATEGORY at write time (`homeCategory`, written atomically with the
+  block flip in the same transaction), and the CATEGORY TERM closes the LATE-RE-KEY
+  strand: a DECIDED round whose recorded category DIFFERS from the category its recorded
+  home carries NOW — a status re-keyed while its task already sits blocked over a live
+  round (the block-state-home guard's read->upsert window, or a guard regression), the
+  round's pending turn superseded by the owner-settled teardown (`settledByOwner`), every
+  verdict predating the note, so the ordering term is blind — that row FIRES. The term
+  covers a terminal->terminal re-key (done -> cancelled while blocked) too. #423 stays
+  silent: its recorded category IS the home's current one, exactly as every legal block's
+  is (the hold-landing class included). A block note carrying no
+  category (pre-floor row) falls back to the ordering-only term, and the PARK half
+  carries no category record: it is OUT of the category term by declaration (its
+  ordering term is unchanged).
+  The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
+  status is re-keyed terminal BEFORE the task blocks, so the block records the
+  ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
+  same verdicts, the same superseded pending turn, the same note order). `homeCategory`
+  cannot separate it — only a record of the status that homed the round at its verdicts'
+  time would, and the verdict rows carry none. Below the floor the verdict-vs-stamp MIN
+  test stands. A row carrying NO note of that kind at all falls back to the same
+  MIN-vs-stamp test: below the floor the #467 flip→supersede window (its sweep atomic
+  with the flip from 2.78.35) could legally leave one verdict past the block write, so
+  the fallback keeps the MIN test for those rows until they drain. At and above the
+  floor every settle path THAT LANDS ITS SWEEP supersedes its pending rows BEFORE its
+  re-gate writes the note, so a post-note verdict means the round was LIVE when the block
+  landed and its settle flip can never land on the re-keyed terminal home — except on the
+  degraded path that skips its sweep (residual (a)), where a settled-then-re-blocked task
+  can carry one; the PENDING heal signature keeps that row silent until it drains.
+  THREE DECLARED residuals the SQL cannot see — (a) and (b) verified empty in prod at
+  the `2.78.40` deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is
+  indistinguishable from #423 by declaration). (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
+  the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
+  path (the flip committed on the pool, the sweep skipped by design when that isolation
+  transaction fails) — can leave a post-note verdict that reads as the wedge; while the
+  PENDING heal signature survives, the arm's current-round clause keeps such a row
+  silent, so the residue only surfaces once it drains (rare: a failed isolation
+  transaction AND a verdict CAS inside the window). (b) `block_record_ts`/`park_record_ts`
+  read the newest note of that KIND, never tied to the episode that set the origin, so a
+  row whose CURRENT episode note was lost to a pre-`2.78.38` crash and that still carries
+  an EARLIER same-kind note orders against the older record — a legal #423 row can then
+  read as the wedge (pre-floor crash or direct write only); a NOTE-LOSS FALSE
+  NEGATIVE rides the same class, the other way: a note-less row whose round was split
+  across the origin write falls back to MIN and stays silent, so the split-timing class
+  is only observable when the note survives (pre-floor crash or direct write only).
+  (c) The PRE-BLOCK re-key (#491): a status re-keyed terminal BEFORE its task blocks
+  records the ALREADY-terminal category, so `homeCategory` is terminal and the row is
+  byte-equivalent to the legal #423 shape; closing it needs a record of WHICH status
+  homed the round when its verdicts were written, which no row carries today (a category
+  record cannot split them — at verdict time both shapes read `in_review`).
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
@@ -1255,10 +1299,11 @@ non-positive deltas render no duration.
   scan filters `park_rearm_after IS NOT NULL`, `restoreUnblocked` withholds a FINAL park,
   and the wedge arm's ownership predicate excludes every parked row. The alert therefore
   names the PARK as the owner's own resolution: the verdict is already recorded, so the
-  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose, unlike the re-key arm's MIN — a
-  multi-reviewer round split across the park write (a vote before it, the closing vote
-  after) is this same owed-flip shape, and the re-key arm's late-row class has no
-  analogue here (a park whose home resolves into review can always land its flip).
+  repair is a status move (which clears the origins), never a re-arm or an approval. MAX on purpose (the re-key arm is per-verdict from its floor
+  and MIN below it) — a multi-reviewer round split across the park write (a vote before
+  it, the closing vote after) is this same owed-flip shape, and the re-key arm's
+  terminal-home late-row class has no analogue here (a park whose home resolves into
+  review can always land its flip).
   VERSION-independent as an arm above its column floor but COLUMN-gated at the two-column
   gate plus the 2.78.37 column floor (the arm reads `referral_target_id`, shipped there;
   a missing column would kill the whole UNION, #325) and PAUSED-scoped; the live pass
@@ -1368,3 +1413,148 @@ non-positive deltas render no duration.
   drift) and is the drift check the critic runs (exit 0 = live copy ==
   `origin/dev`; its tests retarget the live path with `TANDEM_PROBE_TEST=1`,
   where a successful comparison exits 3 — never 0).
+- The loop-liveness arm (#485) watches the loop ITSELF, not prod, and its record is the
+  scheduler's own `cron/jobs.json` — never `passes.jsonl`, because a job that keeps
+  ticking while every run FAILS looks fresh in its trail and is functionally dead. The
+  2026-11-15/16 gap proved it: `tandem-triage` failed 30 consecutive hourly runs and
+  `tandem-critic` 3, every one a pre-flight delivery failure, and nothing alerted for 29h
+  — every product arm was green because prod was healthy, and the designated dead-man
+  (the critic) is itself an LLM cron that dies with the provider. Liveness = last SUCCESS,
+  and success includes DELIVERABILITY and COMPLETION: Hermes records `delivery_failed` as
+  a successful run with `failure_streak` forced to 0, so a job whose every run reaches
+  nobody would otherwise be invisible — it gets its own term keyed off
+  `last_delivery_error`; `delivery_queued` is a delivery still IN PROGRESS (the outbox
+  still owes it) and stays silent; an operator CANCEL is not a failure (Hermes clears its
+  error and keeps the streak). Terms per enabled job, the probe excluded (it cannot
+  witness its own death): (a) a non-ok `last_status` at `failure_streak >= 2`; (a2)
+  `last_status = delivery_failed`; (b) OVERDUE — `next_run_at` more than an hour in the
+  past, the exact missed-fire signal and the only term that catches a low-cadence job
+  (monthly/quarterly/annual) in hours instead of multiples of its own gap; (b2) the newest
+  fire stamp (`last_dispatch.dispatched_at` or `last_run_at`, whichever is newer) older
+  than **2x the job's own MAX gap**, a job that never ran having no baseline and staying
+  silent; (b3) `next_run_at` present but NULL on a recurring job that has fired is `no next fire
+  scheduled - wedged` (it can never fire again, and (b) could never see it); (b4) fires
+  keep advancing while `last_run_at` sits beyond **max(4x gap, 12h)** —
+  a hung run or a wedged handoff, the same "runs but lands nowhere" class as (a2) — and a
+  job that fires but has NEVER recorded a completion is measured from `created_at` — with
+  the 12-hour floor set by measurement (the loop's own triage runs take up to 6.9h, so a
+  schedule-gap multiple alone paged on healthy runs). The gap is the LONGEST legitimate
+  gap between two fires, never the mean cadence — INCLUDING a cluster's own intra-day
+  spacing (`0 0,23 * * *` is a 1380m gap, not the 60m cross-midnight one) — ENUMERATED from
+  the cron fields over an 8-year core horizon plus a successor buffer: union semantics when day-of-month AND
+  day-of-week are both restricted (cron fires on the union, so `0 9 1 * 1` is a 7-day
+  gap, not 31), named months and weekdays (`JAN`, `MON-FRI`), day-of-month 29-31 reality
+  (`0 9 31 * *` is a 61-day gap), 0 and 7 both Sunday, croniter's seconds-LAST 6-field
+  exprs, or the interval minutes. A `once` job that never ran past its `run_at` plus ONE
+  HOUR of grace is dead (`one-shot never fired`) — a durable `run_claim`/`fire_claim`
+  inside two hours means the fire is IN FLIGHT and stays silent — evaluated even when the scheduler has
+  retired it (Hermes writes `enabled=false` + `state=completed` with no completion stamp,
+  so that gate must not run first); a `once` with no `run_at` is un-watched. A gap that cannot be derived is an ANOMALY
+  (`unsupported schedule … un-watched`), never silence; an empty or re-keyed store
+  (`jobs: []`) is `jobs.json has no jobs - un-watched`, never vacuous green; a corrupt
+  record is isolated (`record invalid`) without blinding the scan, and an enabled job
+  whose name is empty or whitespace-only is `un-watched` too (`unnamed enabled job …`) —
+  except in a name-keyed store, where the KEY is the job's name and a blank `name` falls
+  back to it; identity is the VERBATIM name (so padding never re-classifies a job as the
+  probe itself or as a BRAIN job) while the interpolated DISPLAY TOKEN is sanitised first:
+  every character that is not alphanumeric (Unicode `isalnum`, so `²` counts), a combining
+  mark, a space, `.`, `_` or `-`
+  — control characters, newlines, `:`, `!`, `=` included — becomes a space, runs of spaces
+  collapse and the edges trim, so a name stays READABLE in any script (an accented name is
+  not shredded into letter soup) while it can never carry the punctuation a level token or
+  the join separator is built from; a name with nothing READABLE left (no letter or digit —
+  punctuation only, or combining marks alone) renders as `<unprintable>`.
+  A name the sanitiser changed carries a `~<12 letters>` discriminator of the raw name,
+  appended to the fallback too, so two DISTINCT raw names whose tokens collide still emit
+  distinct lines (identical raw names are one identity and cannot be told apart) —
+  LETTERS-ONLY because the repeat-suppression key masks long digit runs and hex ids, which
+  would erase a numeric suffix and let the pair share a key; 26^12 letters puts a deliberate
+  birthday pair at ~10^9 sanitised variants (the key's other normalisations are unchanged:
+  two clean names differing only in a 6+ digit run, an age (`N s/m/h`), a UUID / long hex id
+  or an attempt/retry counter stay one standing fault by design). Every field the record can shape — name, `state`, a schedule expression,
+  a cause — is swept at emission of every code point a Unicode line splitter treats as a
+  break (C0, DEL, C1, U+2028/U+2029), so the line count is the job count, never the record's
+  content — the record is read as UTF-8 BYTES with replacement (an invalid byte degrades to
+  U+FFFD and the scan still reports the job, where a locale-decoded text read would raise
+  and blind every job); emission is TOTAL and LOCALE-PROOF (UTF-8 bytes go straight to the stream, so a
+  lone surrogate is escaped and a non-UTF-8 locale cannot abort the scan before later jobs,
+  the brain ones included) and lossless for quoted record text (the sweep maps breaks, it
+  does not collapse spaces). Only the sanitised token is rendered, so a name
+  can neither forge a second physical line nor spell the `P0!:` escalation prefix, and that
+  prefix is emitted by the identity branch alone, never composed from the rendered name.
+  Every line carries the CAUSE, drawn from `last_error` /
+  `last_delivery_error` / `last_fire_error`: the exception-class line (so a
+  `…InvalidStatus: …` is caught even though it is not an `*Error` — a traceback yields its
+  last non-indented line, or any `Name: message` line), else a `reason`/`failed` line,
+  else the first line that is not the prompt's `# Cron Job:` title. The loop's
+  BRAIN jobs (`tandem-triage`, `tandem-critic`) carry the `loopdead:P0!:` line PREFIX —
+  escalated at line start or immediately after the `;` join separator, with the exact
+  brain-job NAME (`loopdead:P0!:tandem-triage` / `:tandem-critic`) terminated by a space,
+  so a brain line that is not last still pages while a look-alike job name
+  (`…tandem-triage-2`), a `P0001`, a `P0RT` or an embedded token in record text or after
+  `cause=` stays P1
+  (every emitted line is `;`-sanitised, so the join separator never appears inside one) — and causes are `;`-sanitised on the way out so no error text can forge the escalation
+  prefix. An alert line is P0 when ANY of its `;`-joined segments is P0, and a segment that
+  starts `loopdead:` or `loopdead_scan:` is classified by its own identity token ALONE: a
+  job name, a `state`, a cause or any other payload inside such a segment never matches a
+  loose P0 phrase (a job named `unreachable`, or `cause=db unreachable`, stays P1), while a
+  genuine `db: unreachable` segment in the same join still pages; the caller's own
+  three-or-more-anomaly override is unchanged. The repeat-suppression key masks
+  volatile cause tails (`request_id=` / `trace=` / UUIDs / long hex ids / long digit runs /
+  attempt counters) and every age (`=<n>m` and `=<n>h`) so a standing fault alerts once
+  instead of every 10-min tick while a changed cause class still re-alerts. The arm lives
+  in `scripts/tandem-prod-probe.sh` with a `--loop-liveness` dispatch mode so the unit
+  test drives the shipped bytes with fixtures.
+- The RUNTIME-REFRESH arm (#487) reads the mixed-module state that killed the loop on
+  2026-11-15/16: an install that lands under a LIVE gateway (files written 17:55:20Z, two
+  minutes after the 17:53:50Z gateway start) leaves the running process holding its OLD
+  modules while every LAZY import afterwards reads NEW files — `tui_gateway` imported
+  `release_process_group_once_empty` at WebSocket-upgrade time, raised ImportError,
+  uvicorn answered the cron worker with HTTP 500, and every LLM cron died (`tandem-triage`
+  30 runs, `tandem-critic` 3, the dockhand report 1 — 29h, from 11-15T18:00:15Z to the
+  11-16T23:02:15Z unit start) recording only `InvalidStatus: server rejected WebSocket
+  connection`. The dead-man catches that only after two failed ticks and never catches a
+  break confined to one lazily-imported path, so this arm reads the STATE the gateway
+  publishes: the booted `code_sha` in its own `gateway_state.json` against the install's
+  code identity, resolved exactly as the platform's own stamp gate resolves it — the stamp
+  must carry a `commit`, a known `updateMechanism` and a non-`light` payload; a git-source
+  stamp whose checkout `HEAD` diverges is REJECTED in favour of `HEAD` (a hot pull, a
+  rollback), otherwise the stamp's `commit` is the identity and `HEAD` is the fallback; a
+  commit must be non-empty and not the all-zero placeholder — the platform imposes no
+  length or charset rule, and neither does the arm (a short stamp must not blind it). ANY live record
+  whose sha disagrees with that identity is the finding (a fresh sibling record never masks
+  a stale one), and the result is P0 (`LLM crons may be dead or dying`). A record counts as
+  the SERVING gateway only when its `gateway_state` is `running` OR `degraded` (degraded is
+  a serving gateway with a parked platform) AND its pid is alive at the SAME `start_time`
+  stamp (field 22 of `/proc/<pid>/stat`) — a recycled pid, and a record carrying no stamp,
+  are NEVER trusted: a skipped record is a false negative the arm prefers to a
+  misattributed P0. Candidates are tried in order (the profile's own state file, then the
+  multiplexed root one), so a standalone and a multiplexed gateway are both read and a
+  stale `stopped` document is skipped instead of blinding or alarming the arm. The GATEWAY
+  is the process the cron workers dial for `/api/ws`, never the dashboard (a separate
+  process, out of scope): the outage process was the gateway (pid 2699883), whose unit
+  start at 23:02:15Z healed it while the dashboard kept its own older process. The emitted
+  line names the finding and points at this paragraph instead of embedding a runnable
+  operator command — a literal operator command inside an executable trips the runtime's
+  own self-guard and would block every operator run of the probe; the operator action is to
+  restart the gateway unit (`hermes gateway restart`, or `systemctl --user restart
+  hermes-gateway.service`) from a shell OUTSIDE the gateway process. The P0 prefix is
+  matched only at the start of the joined line or immediately after its `;` separator (no
+  space — the probe's join emits none), so a job's own error text that happens to quote the
+  arm's prefix cannot escalate its line to P0, and the scheduler scan lines strip the
+  separator from any caller-supplied text they print. A failing arm is never silent about
+  itself: its stderr is surfaced as a `runtime_stale_err:` anomaly instead of being
+  swallowed, so a detector that dies is visible rather than looking like a fresh install.
+  DECLARED BOUNDARIES (silent, never a false alarm): no readable state file, no live record
+  that is both stamped and sha-bearing, an install with no usable stamp and no git HEAD, a
+  dirty worktree at the same commit (the arm compares commits, not file bytes), and the
+  dashboard. `--runtime-stale <state1[:state2]> <install> [proc_root]` is the unit test's
+  seam so the fixtures drive the shipped bytes; `--selfcheck` pins the fire/silence matrix
+  (running AND degraded fire, a stale record still fires behind a fresh sibling, a recycled
+  pid does not, a record without a stamp is not trusted, a boolean/float pid is not
+  trusted, a `)` inside the process comm does not shift the field index, the zero
+  placeholder is rejected), the identity resolution (stamp honoured, a diverging git-source
+  stamp rejected, a short stamp honoured as the identity, an unknown `updateMechanism` and a
+  `light` payload rejected), the absence of a runnable command in the line, the stderr
+  surface, the P0 prefix position, the seam dispatch end-to-end and the live-pass wiring
+  (call, then append, before the empty-exit), once each.

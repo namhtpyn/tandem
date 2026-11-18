@@ -162,6 +162,32 @@ paused_order() {
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
 }
+# RE-KEY per-verdict ordering (#468): at/above the flow floor the arm asks whether ANY
+# verdict of the current round is NEWER than the record of the origin that makes the row
+# TERMINAL — a round still LIVE when that block/park landed (one vote in, the settling
+# vote after) is the split-timing wedge the aggregate MIN test missed, and a later task
+# write cannot mask it. An all-older round is the legal #423 settle-then-reblock (its
+# applied verdict predates its record). The record is the origin's OWN note, never the
+# task-wide newest gating note: a park whose note was lost to the declared pre-floor
+# crash residual must not order against an older auto-blocked note. Below the floor, and
+# for a row carrying NO note of that kind, the MIN-vs-stamp test stands: the #467
+# flip->supersede window (closed by 2.78.35's atomic sweep) could legally leave one
+# verdict past the stamp on a pre-floor image, and a note-less row is exactly such a row
+# until it drains. $1 = prod version, $2 = the origin's record-ts expression.
+paused_order_any() {
+  if flow_floor_met "${1:-}" && [ -n "${2:-}" ]; then
+    printf "case when %s is null then %s > t.updated_at else exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > %s) end" "${2:-}" "$(verdict_ts min)" "${2:-}"
+  elif flow_floor_met "${1:-}"; then
+    return 1
+  else
+    printf "%s > t.updated_at" "$(verdict_ts min)"
+  fi
+}
+# the BLOCK's own note (#419): unlike flow_record_ts's task-wide newest gating note, this
+# reads only the single-writer auto-block body, so a park-origin row never borrows it.
+block_record_ts() {
+  printf "%s" "(select max(m.created_at) from task_messages m where m.task_id = t.id and m.body like 'auto-blocked:%' and exists (select 1 from task_message_activities a where a.message_id = m.id and a.payload->>'kind' = 'STATUS'))"
+}
 # PARK RECORD (the park's OWN flow note): the arm orders its verdict against the note the
 # park write itself produced. Unlike flow_record_ts (the task-wide newest gating note,
 # which an older auto-blocked note can satisfy on a parked row whose park note never
@@ -178,6 +204,41 @@ park_order() {
   else
     printf "%s > t.updated_at" "$(verdict_ts "$1")"
   fi
+}
+# HOME-CATEGORY RECORD floor (#491, 2.78.41): the gating auto-block note's payload carries
+# the recorded home's CATEGORY at write time (`homeCategory`, minted in the block's own
+# transaction), so the RE-KEYED-HOME arm can separate the legal #423 settle-then-reblock
+# (the recorded category was ALREADY terminal) from a home re-keyed terminal AFTER the
+# record (recorded non-terminal, resolves terminal now) over an all-older round — the
+# strand no ordering term can see, because every verdict predates the note. The field
+# exists only on notes written by a floored image; a pre-floor note carries no category
+# and its row falls back to the ordering term, which is all a note-less row ever had.
+# RE-DERIVE the floor for the release that actually ships the writer — never assume it.
+HOME_CATEGORY_FLOOR=2.78.41
+home_floor_met() {
+  [ "$(at_least "$HOME_CATEGORY_FLOOR" "${1:-}")" = "1" ]
+}
+# the block origin's recorded-at-block category, read from the origin's OWN newest
+# `auto-blocked:` record (never the task-wide newest gating note): a recorded category
+# that DIFFERS from the category the recorded home carries NOW means the home was re-keyed
+# AFTER the record — every legal block records the category its home had at write time, so
+# the equality is what separates the legal classes (#423's settle, a hold-landing block)
+# from the strand. A terminal->terminal re-key (done -> cancelled) is the same term. The
+# round must be DECIDED (at least one verdict); when one is newer than the record the
+# ordering term fires first, so no ordering conjunct is needed here. Empty below the floor
+# and on a note-less row; a null or empty record never fires.
+home_category_term() {
+  home_floor_met "${1:-}" || return 1
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'auto-blocked:%%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategory' is not null and ah.payload->>'homeCategory' <> '' and not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory') and mh.created_at = %s) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))" "$(block_record_ts)"
+}
+# the block-origin half of the RE-KEYED-HOME arm: the per-verdict ordering term, OR the
+# category term at/above its floor. Below the floor the expression is the ordering term
+# alone, byte-identical to the pre-#491 arm.
+rekey_pre_half() {
+  local order cat
+  order=$(paused_order_any "${1:-}" "$(block_record_ts)")
+  cat=$(home_category_term "${1:-}")
+  if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
 }
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
@@ -278,30 +339,70 @@ strand_sql() {
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
-  # heals read it as owner-settled. TERMINAL-only on purpose: a re-key INTO a non-terminal
-  # category is, from the SQL, indistinguishable from the DECLARED legal class (a
-  # hold-landing repair round re-opened on a ready/working status, then gating-blocked:
-  # the block legally records a non-review home and a later verdict closes the round), so
-  # that sub-shape is OUT of this arm and named in SPEC (r1 boundary, #435). A terminal
+  # heals read it as owner-settled. TERMINAL-only is a DECLARED SCOPE boundary, not a SQL
+  # impossibility: a hold-landing repair round re-opened on a ready/working status and then
+  # gating-blocked legally records a non-review home whose category MATCHES the one it
+  # resolves, so `homeCategory` would separate it from a re-key into a NON-terminal
+  # category — that wider term is OUT of this arm and tracked as #496 (SPEC states the
+  # boundary). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
-  # applied verdict PREDATES the re-block write, so ordering EVERY verdict of the round
-  # after the last write (MIN, not MAX) excludes it — and also excludes the
-  # flip->supersede window shape (a late reviewer CAS landing after the re-block, #467),
-  # which a MAX test would misread as a re-key. A direct owner settle clears both
-  # origins in the same statement, so the residual owner-settle shape is that machine
-  # re-block, excluded by the MIN ordering. The current-round clause is mirrored from
-  # the orphan arm; the ordering is STRONGER than the orphan's max() (min > write) for
-  # the reasons above — a multi-reviewer round split across the block write (min < write)
-  # is a DECLARED boundary of this arm, tracked as #468. Ordering is #466's
-  # BLOCK-PARK RECORD FLOOR: below 2.78.38 the retired stamp test stands, at and above it
-  # MIN(verdict) > the newest gating flow record (record-less pre-floor rows coalesce to
-  # `tasks.updated_at`). Per-column resolve,
+  # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
+  # than the record is legal. The ordering is therefore PER VERDICT (#468): at and above
+  # the BLOCK-PARK RECORD FLOOR (#466, 2.78.38) the arm fires when ANY verdict of the
+  # round is NEWER than the record of the origin that makes the row TERMINAL — its OWN
+  # single-writer note (the block's `auto-blocked:` for a pre_block_status home, the
+  # park's `review parked` for a park home), never the task-wide newest gating note: a
+  # park whose note was lost to the declared pre-floor crash residual must not borrow an
+  # older auto-blocked note. A round still LIVE when that note landed (one vote in, the
+  # settling vote after) is the split-timing wedge the aggregate MIN test missed, and a
+  # record ordering cannot be masked by a later task write. Every settle path at/above
+  # the floor THAT LANDS ITS SWEEP supersedes its pending rows BEFORE its re-gate, so a
+  # post-note verdict cannot be the #467 late-CAS window on a floored row (closed by
+  # 2.78.35's atomic sweep): it means the round was open at the block — except on the
+  # degraded path that skips its sweep (residual (a)). An ALL-OLDER round is the legal
+  # #423 re-block, the LATE re-key the category term below FIRES on, or the PRE-BLOCK
+  # re-key it cannot see (residual (c)). LATE re-key (#491, floor 2.78.41): a status
+  # re-keyed terminal while its task already sits BLOCKED over a live round (the
+  # block-state-home guard's read->upsert window, or a guard regression) — the block's
+  # note records the NON-terminal category it read, the home resolves terminal now, the
+  # pending turn is superseded by the owner-settled teardown and every verdict predates
+  # the note, so the ordering term is blind and `home_category_term` fires. PRE-BLOCK
+  # re-key (residual (c)): re-keyed BEFORE the task blocks, so the note records the
+  # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
+  # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
+  # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
+  # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
+  # residuals this SQL cannot see — (a) and (b) verified 0 rows in prod at the 2.78.40
+  # deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is indistinguishable
+  # from #423 by declaration): (a) a
+  # floored probe
+  # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
+  # flip->supersede crash window, and at ANY version the degraded settle path (flip
+  # committed on the pool, sweep skipped by design when its isolation tx fails) — can
+  # leave a post-note verdict that reads as the wedge; the PENDING heal signature keeps
+  # it silent until it drains, so the residue is rare (failed isolation tx AND a verdict
+  # CAS in the window); (b) the record is the NEWEST note of that kind, never tied to the
+  # episode that set the origin, so a row whose CURRENT note was lost to a pre-2.78.38
+  # crash and that still carries an EARLIER same-kind note orders against the older
+  # record — a legal #423 row can read as the wedge (pre-floor crash or direct write);
+  # A NOTE-LOSS FALSE NEGATIVE rides the same class, the other way: a note-less row
+  # whose round was split across the origin write (live at the write, the settling vote
+  # after) falls back to MIN and stays SILENT — the split-timing class this term exists
+  # for is only observable when the note survives (pre-floor crash or direct write only);
+  # (c) the PRE-BLOCK re-key: the home was re-keyed BEFORE the block, so its record's
+  # category is terminal and the row is SQL-identical to #423 — the category term cannot
+  # see it, and splitting it needs a record that no row carries (the home's identity at
+  # the round's verdict time, not its category — at verdict time both shapes read
+  # in_review). A direct
+  # owner settle clears both origins in the same statement, so the residual owner-settle
+  # shape is that machine re-block, excluded by the all-older test. The current-round
+  # clause is mirrored from the orphan arm. Per-column resolve,
   # VERSION-independent (a pre-guard image produces the strand too), COLUMN-gated like
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))) and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and $(paused_order min "${1:-}")) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -330,9 +431,10 @@ strand_sql() {
   # note ON THE TASK, so a row whose CURRENT park note never landed can be ordered against
   # an EARLIER park episode's note — pre-floor crash or direct write only, the declared
   # residual. MAX, not
-  # MIN — a multi-reviewer round split across the park write (a vote before, the closing
-  # vote after) is this same owed-flip shape, and a park whose home resolves in-review can
-  # always land its flip, so the re-key arm's late-row MIN case has no analogue here. The
+  # MIN (the re-key arm is per-verdict from its floor and MIN below it) — a multi-reviewer
+  # round split across the park write (a vote before, the closing vote after) is this same
+  # owed-flip shape, and a park whose home resolves in-review can always land its flip, so
+  # the re-key arm's terminal-home late-row case has no analogue here. The
   # alert names the park as the owner's own resolution: the verdict is already recorded, so
   # the repair is a status move, never a re-arm.
   # COLUMN FLOOR 2.78.37: the arm reads referral_target_id (shipped there) besides the
@@ -421,6 +523,482 @@ egress_sql() {
 egress_arm_on() {
   [ "$(at_least 2.78.25 "${1:-}")" = "1" ]
 }
+# LOOP LIVENESS (#485): the crons that DO the loop's work had no no-LLM arm — a
+# delivery-preflight outage (WebSocket 500) failed tandem-triage 30x and tandem-critic
+# 3x in a row for 29h while every PRODUCT arm here stayed green, and the designated
+# dead-man (the critic) is itself an LLM cron that died with the provider. The record is
+# the SCHEDULER's own cron/jobs.json, never passes.jsonl: a job that keeps ticking while
+# every run FAILS looks fresh in its trail and dead in reality, so liveness = last
+# SUCCESS and success includes deliverability and completion.
+# Terms per enabled job (the probe excluded — it cannot witness its own death), each
+# carrying the CAUSE (never swallowed):
+#   (a) running-but-failing: a non-ok last_status at failure_streak >= 2. An operator
+#       cancel is NOT a failure (Hermes clears its error and keeps the streak).
+#   (a2) NOT DELIVERED: last_status = delivery_failed — Hermes counts that as a
+#       SUCCESSFUL run with failure_streak forced to 0, so without its own term a job
+#       whose every run reaches nobody is invisible. delivery_queued is IN PROGRESS (the
+#       outbox still owes it) and stays silent.
+#   (b) overdue: next_run_at more than an hour in the past — the exact missed-fire signal,
+#       and the ONLY term that catches a low-cadence job (monthly/quarterly/annual) in
+#       hours instead of multiples of its own gap.
+#   (b2) stale fire: the newest fire stamp (last_dispatch.dispatched_at, last_run_at —
+#       whichever is newer) older than 2x the job's own MAX schedule gap. A job that never
+#       ran has no baseline and stays silent.
+#   (b3) dispatched but never completing: fires keep advancing while last_run_at sits
+#       beyond max(4x gap, 12h) — a hung run or a wedged handoff, the same "runs but
+#       lands nowhere" class as (a2). The 12h floor is measured: the loop's own triage
+#       runs take up to 6.9h, and a schedule-gap multiple alone paged on healthy runs.
+#   (c) a schedule whose gap cannot be derived is an anomaly, never silence: an
+#       un-watched job is not a green one.
+# The gap is the LONGEST legitimate gap between two fires, never the mean cadence, and it
+# is enumerated exactly from the cron fields over an 8-year core horizon plus a buffer
+# (union semantics when day-of-month AND day-of-week are both restricted, named
+# months/weekdays, dom 29-31 reality, croniter's seconds-LAST 6-field form, 0 and 7 both
+# Sunday). Worded statically and the repeat-suppression key masks volatile cause tails,
+# so a standing fault alerts once instead of every 10-min tick. The loop's BRAIN jobs
+# (tandem-triage / tandem-critic) carry the `loopdead:P0!:` prefix: their death is the
+# loop's, and a cause string can never forge the token.
+loop_liveness() { python3 - "$1" "${2:-$(date -u +%s)}" <<'PY'
+import datetime, hashlib, json, re, sys, unicodedata
+BRAIN = ("tandem-triage", "tandem-critic")
+SELF = "tandem-prod-watch"
+SPACES_RE = re.compile(r" {2,}")
+TOKEN_CHARS = " ._-"
+# every code point a Unicode-aware line splitter treats as a break: C0, DEL, C1, LS, PS
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+ALPHA = "abcdefghijklmnopqrstuvwxyz"
+
+def disc(n):
+    # A LETTERS-ONLY discriminator of the RAW name: the repeat-suppression key masks
+    # long digit runs and hex ids, so a hex/numeric suffix could be erased and two
+    # colliding display tokens would share a key. 12 letters (26**12): a birthday
+    # search for a deliberate pair needs ~10**9 sanitised variants.
+    h = int.from_bytes(hashlib.sha256(n.encode("utf-8", "surrogatepass")).digest(), "big")
+    out = ""
+    for _ in range(12):
+        h, r = divmod(h, 26)
+        out += ALPHA[r]
+    return out
+
+def display(n):
+    # The DISPLAY token only, never identity: every char that is not a letter, a digit,
+    # a combining mark, a space, '.', '_' or '-' (control chars, ':', '!', '=') becomes a
+    # space; runs collapse and the edges trim, so a name stays READABLE in any script
+    # (an accented name is not shredded into letter soup) while it can never carry the
+    # punctuation the level token or the join separator is built from. A name with
+    # nothing left renders as <unprintable>. Any name the sanitiser changed carries a
+    # `~<12 letters>` discriminator of the RAW name, so two jobs whose tokens collide
+    # still emit distinct lines. The raw name stays the identity key, so padding still
+    # classifies verbatim.
+    out = "".join(
+        c if (c.isalnum() or c in TOKEN_CHARS or unicodedata.category(c).startswith("M")) else " "
+        for c in n)
+    out = SPACES_RE.sub(" ", out).strip()
+    if not any(c.isalnum() for c in out):
+        out = "<unprintable>"
+    if out != n:
+        out += "~" + disc(n)
+    return out
+
+def out_line(s):
+    # TOTAL emission: no interpolated field may forge a physical line, and neither a lone
+    # surrogate nor a non-UTF-8 locale may kill the scan (a UnicodeEncodeError here would
+    # blind every later job, the brain ones included). Bytes go straight to the stream, so
+    # the LOCALE never re-encodes them.
+    s = CTRL_RE.sub(" ", s)
+    sys.stdout.buffer.write(s.encode("utf-8", "backslashreplace") + b"\n")
+    sys.stdout.buffer.flush()
+
+OK_STATUS = {"ok", "success", "completed", "cancelled", "delivery_queued"}
+EXC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning)\b")
+NAMES = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+         "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+         "SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
+CORE_DAYS = 8 * 366 + 1
+BUFFER_DAYS = 800  # gaps are read only from fires inside the core; the buffer supplies
+                   # each one's TRUE successor (no cycle-length assumption in the wrap)
+
+def expand(f, lo, hi):
+    f = str(f)
+    for name, val in NAMES.items():
+        f = re.sub(r"\b%s\b" % name, str(val), f, flags=re.I)
+    vals = set()
+    try:
+        for p in f.split(","):
+            p = p.strip()
+            step = 1
+            if "/" in p:
+                p, s = p.split("/", 1)
+                step = int(s)
+                if step <= 0:
+                    return set()
+            if p in ("*", "?"):
+                a, b = lo, hi
+            elif "-" in p:
+                a, b = (int(x) for x in p.split("-", 1))
+            else:
+                a = int(p)
+                b = hi if step > 1 else a
+            if a < lo or b > hi or a > b:
+                return set()
+            vals.update(range(a, b + 1, step))
+    except ValueError:
+        return set()
+    return vals
+
+def max_gap_minutes(sch):
+    """Longest legitimate gap between two fires, in minutes (0 = underivable)."""
+    kind = str(sch.get("kind") or "")
+    if kind == "interval":
+        return float(sch.get("minutes") or 0)
+    if kind == "once":
+        return 0.0  # handled by the caller: a one-shot has no recurring gap
+    f = str(sch.get("expr") or "").split()
+    if len(f) == 6:
+        f = f[:5]  # croniter form: seconds LAST
+    if len(f) != 5:
+        return 0.0
+    mi, hr = expand(f[0], 0, 59), expand(f[1], 0, 23)
+    if not mi or not hr:
+        return 0.0
+    times = sorted(h * 60 + m for h in hr for m in mi)
+    dom_s = None if f[2] in ("*", "?") else expand(f[2], 1, 31)
+    mon_s = None if f[3] in ("*", "?") else expand(f[3], 1, 12)
+    dow_s = None if f[4] in ("*", "?") else expand(f[4], 0, 7)
+    if (dom_s is not None and not dom_s) or (mon_s is not None and not mon_s) or (dow_s is not None and not dow_s):
+        return 0.0
+    if dow_s is not None and 7 in dow_s:  # cron 0 and 7 are both Sunday
+        dow_s = (dow_s - {7}) | {0}
+    day = datetime.date(2024, 1, 1)
+    fire = []  # (ordinal from the anchor, day)
+    for i in range(CORE_DAYS + BUFFER_DAYS):
+        if mon_s is None or day.month in mon_s:
+            wd = (day.weekday() + 1) % 7  # python Mon=0 -> cron Sun=0
+            if dom_s is not None and dow_s is not None:
+                ok = day.day in dom_s or wd in dow_s  # cron fires on the UNION
+            elif dom_s is not None:
+                ok = day.day in dom_s
+            elif dow_s is not None:
+                ok = wd in dow_s
+            else:
+                ok = True
+            if ok:
+                fire.append(i)
+        day += datetime.timedelta(days=1)
+    if len(fire) < 2:
+        return 0.0
+    gaps = [(b - a) * 1440 - times[-1] + times[0]
+            for a, b in zip(fire, fire[1:]) if a < CORE_DAYS]
+    gaps += [y - x for x, y in zip(times, times[1:])]  # a cluster's own intra-day spacing
+    return float(max(gaps)) if gaps else 0.0
+
+def stamp(v):
+    d = datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    if d.utcoffset() is None:  # offset-less stamps are UTC here, never host-local
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.timestamp()
+
+def cause_of(j, prefer):
+    """First MEANINGFUL line: an exception-class line, else a 'reason'/'failed' line, else
+    the first line that is not the scheduler's prompt title ('# Cron Job: …')."""
+    for key in prefer:
+        raw = j.get(key)
+        if key == "last_fire_error" and isinstance(raw, dict):
+            raw = raw.get("detail")
+        lines = [re.sub(r"\s+", " ", l).strip() for l in str(raw or "").splitlines() if l.strip()]
+        lines = [l for l in lines if not l.startswith("#")]
+        if not lines:
+            continue
+        exc = [l for l in lines if EXC_RE.match(l)]
+        if exc:
+            return exc[-1][:160].replace(";", ",")
+        if any(l.startswith("Traceback (most recent call last)") for l in lines):
+            tail = [l for l in lines if l and not l.startswith(" ") and not l.startswith("Traceback")]
+            if tail:
+                return tail[-1][:160].replace(";", ",")
+        typed = [l for l in lines if re.match(r"^[A-Za-z_][A-Za-z0-9_.]*:\s", l)]
+        if typed:
+            return typed[-1][:160].replace(";", ",")
+        why = [l for l in lines if re.search(r"\breason\b|\bfailed\b", l, re.I)]
+        if why:
+            return why[-1][:160].replace(";", ",")
+        return lines[0][:160].replace(";", ",")
+    return "no error recorded"
+
+def fmtm(v):
+    return "%d" % int(round(v))
+
+def age_text(sec):
+    return ("=%dm" % int(sec / 60)) if sec < 3600 else ("=%dh" % int(sec / 3600))
+
+def one(j, now, name):
+    sch = j.get("schedule") or {}
+    kind = str(sch.get("kind") or "")
+    status = str(j.get("last_status") or "").strip().lower()
+    streak = int(j.get("failure_streak") or 0)
+    cause_all = ("last_error", "last_delivery_error", "last_fire_error")
+    claim = None
+    for ck in ("run_claim", "fire_claim"):
+        cv = j.get(ck)
+        if isinstance(cv, dict) and cv.get("at") not in (None, ""):
+            try:
+                claim = stamp(cv["at"])
+            except ValueError:
+                claim = None
+    if kind == "once" and not j.get("last_run_at") and status not in OK_STATUS \
+            and j.get("state") not in ("paused", "running") \
+            and not (claim is not None and abs(now - claim) < 7200):
+        # a retired one-shot that never ran (Hermes retires it without a completion stamp)
+        if not sch.get("run_at"):
+            return "loopdead:%s unsupported schedule (once without run_at) un-watched cause=%s" % (
+                name, cause_of(j, cause_all))
+        if now > stamp(sch["run_at"]) + 3600:  # an hour of grace: the fire may be in flight
+            return "loopdead:%s one-shot never fired (run_at %s) cause=%s" % (
+                name, sch["run_at"], cause_of(j, cause_all))
+        return None
+    if j.get("enabled") is False or j.get("state") in ("paused", "completed"):
+        return None
+    if status == "delivery_failed":
+        return "loopdead:%s run ok but NOT DELIVERED cause=%s" % (
+            name, cause_of(j, ("last_delivery_error", "last_error", "last_fire_error")))
+    if status not in OK_STATUS and streak >= 2:
+        return "loopdead:%s failing >=2 consecutive ticks cause=%s" % (name, cause_of(j, cause_all))
+    cause = cause_of(j, cause_all)
+    if kind == "once":
+        return None
+    iv = max_gap_minutes(sch)
+    if iv <= 0:
+        shown = sch.get("expr") if kind != "interval" else "interval=%r minutes" % (sch.get("minutes"),)
+        return "loopdead:%s unsupported schedule (%r) un-watched cause=%s" % (name, shown, cause)
+    if "next_run_at" in j and j["next_run_at"] in (None, "") \
+            and j.get("last_run_at") not in (None, ""):
+        return "loopdead:%s no next fire scheduled (state=%s) - wedged cause=%s" % (
+            name, j.get("state") or "?", cause)
+    if j.get("next_run_at") not in (None, ""):
+        late = now - stamp(j["next_run_at"])
+        if late > 3600:  # the scheduler owes a fire: exact, cadence-independent
+            return "loopdead:%s overdue fire: next_run_at past by %s (max gap %sm) cause=%s" % (
+                name, age_text(late), fmtm(iv), cause)
+    tick = None
+    for v in ((j.get("last_dispatch") or {}).get("dispatched_at") if isinstance(j.get("last_dispatch"), dict) else None,
+              j.get("last_run_at")):
+        if v not in (None, ""):
+            s = stamp(v)  # a corrupt stamp raises -> record-invalid line
+            tick = s if tick is None else max(tick, s)
+    if tick is not None and now - tick > 2 * iv * 60:
+        return "loopdead:%s last fire %s ago (max gap %sm) cause=%s" % (
+            name, age_text(now - tick), fmtm(iv), cause)
+    done = None
+    if j.get("last_run_at") not in (None, ""):
+        done = stamp(j["last_run_at"])
+    elif j.get("created_at") not in (None, "") and tick is not None:
+        done = stamp(j["created_at"])  # fires but never completes: measure from creation
+    if done is not None and tick is not None and now - done > max(4 * iv * 60, 12 * 3600):
+        return "loopdead:%s dispatched but no completion for %s (max gap %sm) cause=%s" % (
+            name, age_text(now - done), fmtm(iv), cause)
+    return None
+
+try:
+    # the record is UTF-8 BYTES: a locale-encoded text open would raise UnicodeDecodeError
+    # under LC_ALL=C and collapse the whole scan (the brain jobs' P0 included)
+    jobs = json.loads(open(sys.argv[1], "rb").read().decode("utf-8", "replace")).get("jobs", [])
+    if isinstance(jobs, dict):
+        # name-keyed maps are legal: the KEY is the name when the entry has none, and a
+        # blank/whitespace-only `name` IS none (blank falls back to the key; any other name
+        # is kept verbatim, exactly like the list form)
+        jobs = [dict(v, name=(str(v.get("name") or "") if str(v.get("name") or "").strip() else k)) if isinstance(v, dict) else v for k, v in jobs.items()]
+    now = float(sys.argv[2])
+    if not jobs:
+        out_line("loopdead_scan: jobs.json has no jobs - un-watched")
+    for j in jobs:
+        if not isinstance(j, dict):
+            out_line("loopdead_scan: non-object job entry %s" % repr(j).replace(";", ",")[:120])
+            continue
+        # a whitespace-only name IS no name (the un-watched guard keys on emptiness); any
+        # other name is kept VERBATIM — the SELF/BRAIN identity checks compare exact names,
+        # so stripping would silently re-classify `tandem-triage ` as the brain job
+        raw_name = str(j.get("name") or "")
+        name = raw_name if raw_name.strip() else ""
+        if name == SELF:
+            continue
+        if not name:
+            if j.get("enabled") is not False and j.get("state") not in ("paused", "completed"):
+                out_line("loopdead_scan: unnamed enabled job (%s) - un-watched" % repr(j.get("schedule")).replace(";", ",")[:120])
+            continue
+        try:
+            line = one(j, now, display(name))
+        except Exception as e:
+            line = "loopdead:%s record invalid (%s: %s)" % (
+                display(name), type(e).__name__, str(e).replace("\n", " ")[:120])
+        if line:
+            line = line.replace(";", ",")  # the join separator must never appear in a line
+            # the escalation prefix is chosen by the job's IDENTITY, never spelled by its
+            # rendered name (the display token cannot carry ':' or '!', so a non-brain name
+            # can never produce 'loopdead:P0!:')
+            line = ("loopdead:P0!:" if name in BRAIN else "loopdead:") + line[len("loopdead:"):]
+            # LINE INTEGRITY (#493): out_line sweeps every record-shaped field (name, state,
+            # a schedule expression, a cause) of control characters, so the line count is a
+            # property of the record's job count, never of its content.
+            out_line(line)
+except Exception as e:
+    msg = ("%s: %s" % (type(e).__name__, e)).replace("\n", " ")[:160]
+    out_line("loopdead_scan: unreadable jobs.json (%s)" % msg)
+PY
+}
+# LEVEL: P0 for the probe's explicit P0 classes and the pre-existing infra phrases other
+# arms emit; a cause string like `P0001` or a word like `P0RT` must never escalate it.
+# runtime_stale is one of those classes: the gateway is running pre-update modules and
+# every LLM cron is dead/dying.
+# The brain prefix (loopdead:P0!:tandem-triage / :tandem-critic) is a LINE PREFIX: it only
+# escalates at line start or immediately after the ';' join separator, with the job name
+# terminated by a space — a look-alike name with a suffix (tandem-triage-2), record text or
+# an error cause embedding the token stays P1 (#490; every emitted line is ';'-sanitised,
+# so a separator can only be the join).
+# SEGMENT LAW (#493): the level of a line is P0 when ANY ';'-joined segment is P0, and a
+# segment that starts 'loopdead:' or 'loopdead_scan:' is classified by its own identity
+# token ONLY — its payload (a job name, a cause, record text) never matches a loose P0
+# phrase, so `loopdead:j cause=db unreachable` is P1 while a genuine `db: unreachable`
+# segment in the same join still pages. (The caller keeps its own override: three or more
+# anomaly lines are P0 whatever their individual level.)
+probe_level() {
+  local rest="$1" seg lvl=1
+  while [ -n "$rest" ]; do
+    seg="${rest%%;*}"
+    if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*;}"; fi
+    case "$seg" in
+      'loopdead:P0!:tandem-triage '*|'loopdead:P0!:tandem-critic '*) lvl=0; break ;;
+      'loopdead:'*|'loopdead_scan:'*) continue ;;
+      'runtime_stale: the gateway (pid'*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) lvl=0; break ;;
+    esac
+  done
+  echo "$lvl"
+}
+# DEDUPE KEY: blank the ticking parts of a line so a standing fault alerts once instead
+# of every 10-min tick. The letters-only display discriminator (#493) survives every mask
+# here by construction (a hex/numeric suffix would be normalised away).
+dedupe_key() {
+  printf '%s' "$1" | sed -E 's/=[0-9]+[mh]([^a-z0-9]|$)/=<age>\1/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g; s/request_id=[^ ;]*/request_id=<id>/g; s/trace(_id)?=[^ ;]*/trace=<id>/g; s/\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/<id>/g; s/\b[0-9a-fA-F]{16,}\b/<id>/g; s/\b[0-9]{6,}\b/<n>/g; s/(attempt|retry|tries|count)=[0-9]+/\1=<n>/g'
+}
+
+# RUNTIME-REFRESH (#487, 2026-11-17): the gateway ADVERTISES the code it booted
+# (`code_sha`, `pid`, `start_time` in gateway_state.json). An install that lands under a
+# LIVE gateway — the 2026-11-15 incident: files written 17:55:20Z, two minutes AFTER the
+# 17:53:50Z gateway start — leaves the process holding its OLD modules while every LAZY
+# import reads the NEW files, so the first lazily-imported module whose shape changed
+# raises ImportError: `tui_gateway` imported `release_process_group_once_empty` at
+# WebSocket-upgrade time, uvicorn answered the cron worker's /api/ws upgrade with HTTP 500,
+# and every LLM cron died (`tandem-triage` 30 runs, `tandem-critic` 3, the dockhand report
+# 1 — 29h, 18:00:15Z to the 23:02:15Z unit start) recording only `InvalidStatus: server
+# rejected WebSocket connection`. The dead-man (loop-liveness) catches that only AFTER two
+# failed ticks and cannot catch a break confined to one lazily-imported path. This arm
+# reads the STATE the gateway itself publishes and compares the booted `code_sha` with the
+# install's own code identity — `install-stamp.json`'s `commit` (the same source the
+# gateway reads) or, with no valid stamp, the checkout's HEAD. ANY live record whose sha
+# disagrees is the finding: a fresh sibling record never masks a stale one. A record
+# counts as serving only when its `gateway_state` is `running` OR `degraded` (degraded is
+# a serving gateway with a parked platform) AND its pid is alive at the SAME `start_time`
+# stamp — a recycled pid, or a record carrying no stamp, is never trusted (a skipped
+# record is a false negative the arm prefers to a misattributed P0). Candidates are tried
+# in order (the profile's own state file, then the multiplexed root one), so a standalone
+# and a multiplexed gateway are both read and a stale `stopped` document is skipped
+# instead of blinding or alarming the arm. DECLARED BOUNDARIES (silent, never a false
+# alarm): no readable state file, no live record that is both stamped and sha-bearing, a
+# non-git install with no usable stamp, a dirty worktree at the same commit (the arm
+# compares commits, not file bytes), and the DASHBOARD unit (a separate process, out of
+# scope). The emitted line names the finding and points at SPEC's RUNTIME-REFRESH
+# paragraph instead of embedding a runnable operator command — a literal operator command
+# inside an executable trips the runtime's own self-guard and would block every operator
+# run of this probe.
+runtime_stale() {  # $1 = ':'-separated state candidates, $2 = install dir, $3 = proc root
+  python3 - "${1:-}" "${2:-}" "${3:-}" <<'PY'
+import json, os, subprocess, sys
+cands, inst, proc = sys.argv[1], sys.argv[2], (sys.argv[3] or "/proc")
+def silent():
+    sys.exit(0)
+if not cands or not inst:
+    silent()
+UPDATE_MECHANISMS = ("self", "app-installer", "electron-updater", "external", "microsoft-store")
+def norm_sha(v):
+    # the platform accepts any non-empty commit that is not the all-zero placeholder — it
+    # imposes no length rule, and neither does this arm (a short stamp must not blind it)
+    v = str(v or "").strip().lower()
+    return v if v and set(v) != {"0"} else ""
+def alive(pid, stamp):
+    # field 22 of /proc/<pid>/stat is the start (jiffies since boot); the record's own stamp
+    # must match, so a recycled pid never attributes a stale record to a live process
+    try:
+        with open(os.path.join(proc, str(pid), "stat")) as f:
+            return int(stamp) == int(f.read().rsplit(")", 1)[1].split()[19])
+    except Exception:
+        return False
+def git_head():
+    try:
+        return norm_sha(subprocess.run(["git", "-C", inst, "rev-parse", "--verify", "--quiet", "HEAD"],
+                                      capture_output=True, text=True, timeout=20).stdout)
+    except Exception:
+        return ""
+def installed_sha():
+    # mirror the PLATFORM's own stamp gate (hermes_cli/version_info.py): a stamp must carry a
+    # commit, a known updateMechanism and a non-light payload; a git-source stamp whose
+    # checkout HEAD diverges is REJECTED (so a hot pull or a rollback resolves to HEAD);
+    # otherwise the stamp IS the identity, and HEAD is the fallback when it is unusable.
+    try:
+        st = json.load(open(os.path.join(inst, "install-stamp.json")))
+        if isinstance(st, dict) and "commit" in st:
+            sha = norm_sha(st.get("commit"))
+            if sha and st.get("updateMechanism") in UPDATE_MECHANISMS and st.get("payload") != "light":
+                if str(st.get("source") or "") == "git" and os.path.exists(os.path.join(inst, ".git")):
+                    head = git_head()
+                    if head and head != sha:
+                        return head
+                return sha
+    except Exception:
+        pass
+    return git_head()
+installed = installed_sha()
+if not installed:
+    silent()  # no code identity to compare against: declared boundary
+stale = None
+for sf in [c for c in cands.split(":") if c]:
+    try:
+        st = json.load(open(sf))
+    except Exception:
+        continue
+    if not isinstance(st, dict):
+        continue  # valid JSON of the wrong shape is a skipped record, never a crash
+    if str(st.get("gateway_state") or "") not in ("running", "degraded"):
+        continue
+    raw = st.get("pid")
+    if isinstance(raw, bool):
+        continue
+    try:
+        pid = int(raw)
+    except Exception:
+        continue
+    if str(raw).strip() != str(pid) or pid < 2:
+        continue
+    if not alive(pid, st.get("start_time")):
+        continue
+    booted = norm_sha(st.get("code_sha"))
+    if not booted:
+        continue
+    if booted != installed:
+        stale = (pid, booted)
+        break  # ANY live record that disagrees is the finding: a fresh sibling never masks it
+if not stale:
+    silent()
+pid, booted = stale
+print("runtime_stale: the gateway (pid %d) booted code %s but the install is %s - "
+      "the unit is serving stale code (mixed modules can fail lazy imports, LLM crons "
+      "may be dead or dying). See SPEC RUNTIME-REFRESH" % (pid, booted[:9], installed[:9]))
+PY
+}
+if [ "${1:-}" = "--runtime-stale" ]; then
+  # the arm's unit test drives THESE bytes with fixtures — no network, no state writes
+  [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "usage: --runtime-stale <state1[:state2]> <install_dir> [proc_root]" >&2; exit 2; }
+  runtime_stale "$2" "${3:-}" "${4:-}"
+  exit 0
+fi
 if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(own_predicate 2.78.19 2)" = "s.category = 'in_review'" ] || { echo "selfcheck fail: own floor"; exit 1; }
   [ "$(own_predicate 2.78.20 2)" != "s.category = 'in_review'" ] || { echo "selfcheck fail: own block branch"; exit 1; }
@@ -493,9 +1071,11 @@ if [ "${1:-}" = "--selfcheck" ]; then
   REKEY_ON=$(strand_rekey_arm 2.78.19 2)
   [ "$(printf '%s' "$REKEY_ON" | grep -oF "select 'rekeyhome'" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey arm"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "s.category = 'paused'" || { echo "selfcheck fail: rekey paused scope"; exit 1; }
-  printf '%s' "$REKEY_ON" | grep -qF "(t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) or (t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled')))" || { echo "selfcheck fail: rekey resolve clause (per column)"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "(t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and" || { echo "selfcheck fail: rekey resolve clause (pre column)"; exit 1; }
+  printf '%s' "$REKEY_ON" | grep -qF "(t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and" || { echo "selfcheck fail: rekey resolve clause (park column)"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status))" || { echo "selfcheck fail: rekey in-review-resolver exclusion"; exit 1; }
-  [ "$(printf '%s' "$REKEY_ON" | grep -oF ") > t.updated_at" | wc -l)" = "1" ] || { echo "selfcheck fail: rekey write discriminator"; exit 1; }
+  # one stamp term per origin branch (block + park) at/below the floor
+  [ "$(printf '%s' "$REKEY_ON" | grep -oF ") > t.updated_at" | wc -l)" = "2" ] || { echo "selfcheck fail: rekey write discriminator"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: rekey ordering is not the MIN test"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) > t.updated_at" || { echo "selfcheck fail: rekey MIN subquery lost its round binding"; exit 1; }
   printf '%s' "$REKEY_ON" | grep -qF "max(coalesce(r.decided_at" && { echo "selfcheck fail: rekey ordering fell back to max"; exit 1; }
@@ -533,10 +1113,38 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$ORPHAN_FLOW" | grep -qF "auto-blocked:%" || { echo "selfcheck fail: floored orphan arm lost the flow record"; exit 1; }
   printf '%s' "$ORPHAN_FLOW" | grep -qF ") > t.updated_at" && { echo "selfcheck fail: floored orphan arm still orders by the stamp"; exit 1; }
   REKEY_FLOW=$(strand_rekey_arm 2.78.38 2)
-  printf '%s' "$REKEY_FLOW" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey arm lost the MIN test"; exit 1; }
-  printf '%s' "$REKEY_FLOW" | grep -qF ")) > coalesce((select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the record ordering"; exit 1; }
-  printf '%s' "$REKEY_FLOW" | grep -qF "review parked %" || { echo "selfcheck fail: floored rekey arm lost the flow record"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "case when (select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the record-present branch"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > (select max(m.created_at)" || { echo "selfcheck fail: floored rekey arm lost the per-verdict record term"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "min(coalesce(r.decided_at, r.created_at))" || { echo "selfcheck fail: floored rekey arm lost the record-less MIN fallback"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "m.body like 'auto-blocked:%'" || { echo "selfcheck fail: floored rekey arm lost the block origin's own record"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "m.body like 'review parked %'" || { echo "selfcheck fail: floored rekey arm lost the park origin's own record"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF "or ((t.park_from_status is not null and exists" || { echo "selfcheck fail: floored rekey arm lost the per-origin branch"; exit 1; }
+  printf '%s' "$REKEY_FLOW" | grep -qF " or m.body like" && { echo "selfcheck fail: rekey arm borrows the task-wide flow record"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor per-verdict ordering reads a record"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.37)" | grep -qF "exists (select 1 from task_reviews" && { echo "selfcheck fail: pre-floor per-verdict ordering lost the MIN test"; exit 1; }
+  printf '%s' "$(paused_order_any 2.78.38 '(select 1)')" | grep -qF "exists (select 1 from task_reviews" || { echo "selfcheck fail: floored per-verdict ordering lost the verdict term"; exit 1; }
+  paused_order_any 2.78.38 && { echo "selfcheck fail: floored per-verdict ordering accepted a missing record"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.37 2)" | grep -qF "task_messages" && { echo "selfcheck fail: pre-floor rekey arm reads a record"; exit 1; }
   printf '%s' "$(strand_orphan_arm 2.78.37 2)" | grep -qF "auto-blocked:%" && { echo "selfcheck fail: pre-floor orphan arm reads a record"; exit 1; }
+  # HOME-CATEGORY RECORD term (#491): floor matrix, the term's own bytes, and its scope —
+  # below the floor the arm must stay byte-identical to the ordering-only shape (the field
+  # does not exist on pre-floor notes), and the term rides the BLOCK half only (the park
+  # origin carries no category record: declared boundary).
+  home_floor_met 2.78.40 && { echo "selfcheck fail: home floor met below 2.78.41"; exit 1; }
+  home_floor_met 2.78.41 || { echo "selfcheck fail: home floor off at 2.78.41"; exit 1; }
+  home_floor_met 2.78.100 || { echo "selfcheck fail: home floor off above the floor"; exit 1; }
+  home_floor_met 3.0.0 || { echo "selfcheck fail: home floor off at the next major"; exit 1; }
+  home_floor_met '' && { echo "selfcheck fail: home floor met on an empty version"; exit 1; }
+  home_floor_met guard-error && { echo "selfcheck fail: home floor met on a non-semver"; exit 1; }
+  home_floor_met 2.78.41-rc1 && { echo "selfcheck fail: home floor met on a pre-release"; exit 1; }
+  home_category_term 2.78.40 && { echo "selfcheck fail: home-category term emitted below its floor"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: home-category term lost the record read"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory')" || { echo "selfcheck fail: home-category term lost the recorded-vs-current category test"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at)" && { echo "selfcheck fail: home-category term carries a dead ordering conjunct"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "ah.payload->>'homeCategory' <> ''" || { echo "selfcheck fail: home-category term lost the empty-record guard"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "3" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
@@ -663,6 +1271,309 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
   printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
   printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
+  # LOOP-LIVENESS (#485): the shipped function driven by fixtures — every term, every
+  # silence, the cause selection, the gap enumeration and the escalation prefix are
+  # pinned; a flipped threshold, a lost self-exclusion, a mean-cadence/union regression,
+  # a 12h-floor regression or a dropped cause goes red here.
+  LLT=$(mktemp -d)
+  cat > "$LLT/jobs.json" <<'FIX'
+{"jobs": [{"name": "tandem-prod-watch","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T22:00:00+00:00"},{"name": "tandem-triage","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T02:00:00+00:00"}},{"name": "tandem-critic","enabled": true,"schedule": {"kind": "cron","expr": "0 11,23 * * *"},"last_status": "error","failure_streak": 3,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "InvalidStatus: server rejected WebSocket connection: HTTP 500"},{"name": "nightly-report","enabled": true,"schedule": {"kind": "cron","expr": "0 2 * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T02:00:00+00:00"},{"name": "paused-job","enabled": false,"schedule": {"kind": "interval","minutes": 10},"last_status": "error","failure_streak": 9,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "streak2-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "failed","failure_streak": 2,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "boom"},{"name": "single-failure-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "error","failure_streak": 1,"last_run_at": "2026-11-17T01:45:00+00:00","last_error": "blip"},{"name": "undelivered-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_failed","failure_streak": 0,"last_run_at": "2026-11-17T01:30:00+00:00","last_error": "run completed","last_delivery_error": "discord: channel not found"},{"name": "queued-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "queued-streak-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "delivery_queued","failure_streak": 2,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "cancelled-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "cancelled","failure_streak": 5,"last_run_at": "2026-11-17T01:45:00+00:00"},{"name": "never-run-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "inflight-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "no-completion-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T20:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "stale-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "last successful run"},{"name": "interval-job","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:35:00+00:00"},{"name": "title-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom"},{"name": "fire-error-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-16T23:00:00+00:00"},"last_fire_error": {"detail": "dispatch handoff missed the fire window"}},{"name": "monthly-drill","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T03:05:00+00:00"},{"name": "quarterly-job","enabled": true,"schedule": {"kind": "cron","expr": "0 3 1 */3 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-01T03:05:00+00:00"},{"name": "annual-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-02-28T09:00:00+00:00"},{"name": "named-month-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 JAN *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-01-01T09:05:00+00:00"},{"name": "weekday-job","enabled": true,"schedule": {"kind": "cron","expr": "0 4 * * 1-5"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-13T04:05:00+00:00"},{"name": "six-field-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 1-5 0"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-10T09:00:00+00:00"},{"name": "union-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 1 * 1"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-25T09:00:00+00:00"},{"name": "once-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "completed"},{"name": "once-recent-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T01:45:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"state": "scheduled"},{"name": "once-norunat-job","enabled": true,"schedule": {"kind": "once"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "unsupported-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:00:00+00:00"},{"name": "paused-state-job","enabled": true,"state": "paused","schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-01T00:00:00+00:00"},{"name": "bad-record-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "not-a-time"},{"name": "once-fired-job","enabled": true,"state": "completed","schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T00:00:31+00:00"},{"name": "leap-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0 29 2 *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2013-02-28T09:00:00+00:00"},{"name": "sunday7-job","enabled": true,"schedule": {"kind": "cron","expr": "0 9 * * 7"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-10-28T09:00:00+00:00"},{"name": "overdue-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:45:00+00:00","next_run_at": "2026-11-17T00:00:00+00:00"},{"name": "hung-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T13:00:00+00:00","last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "midnight-job","enabled": true,"schedule": {"kind": "cron","expr": "0 0,23 * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-14T23:00:00+00:00"},{"name": "ws-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "Traceback (most recent call last):\n  File \"/app/run.py\", line 7, in <module>\n    raise_for_status()\nwebsockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500"},{"name": "never-completed-job","enabled": true,"created_at": "2026-11-15T00:00:00+00:00","schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "running","failure_streak": 0,"last_run_at": null,"last_dispatch": {"dispatched_at": "2026-11-17T01:59:00+00:00"}},{"name": "once-retired-job","enabled": false,"state": "completed","schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null},{"name": "semicolon-cause-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "boom; loopdead:P0!:forged"},{"name": "wedged-job","enabled": true,"state": "error","schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T20:00:00+00:00","next_run_at": null},{"name": "once-inflight-job","enabled": true,"schedule": {"kind": "once","run_at": "2026-11-17T00:00:00+00:00"},"last_status": null,"failure_streak": 0,"last_run_at": null,"run_claim": {"at": "2026-11-17T01:40:00+00:00"}},{"name": "P0!:fake","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-16T23:00:00+00:00","last_error": "look alike name"},{"name": "bad-semicolon-job","enabled": true,"schedule": {"kind": "cron","expr": "0 * * * *"},"last_status": "ok","failure_streak": 0,"last_run_at": "x;y"},{"name": " ","enabled": true,"schedule": {"kind": "interval","minutes": 10},"last_status": "ok","failure_streak": 0,"last_run_at": "2026-11-17T01:55:00+00:00"}]}
+FIX
+  LLN=$(date -u -d '2026-11-17T02:00:00Z' +%s)
+  LLR=$(loop_liveness "$LLT/jobs.json" "$LLN")
+  # (a) running-but-failing at EXACTLY streak 2, cause carried; a BRAIN line carries the
+  # unforgeable 'loopdead:P0!:' prefix (never a bare suffix token)
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:P0!:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500' || { echo "selfcheck fail: critic streak gate"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:streak2-job failing >=2 consecutive ticks cause=boom' || { echo "selfcheck fail: streak=2 boundary"; exit 1; }
+  # (a2) delivery_failed = run landed and reached nobody; the DELIVERY cause wins
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found' || { echo "selfcheck fail: delivery term"; exit 1; }
+  # (b) overdue fire (the cadence-independent missed-fire signal)
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:overdue-job overdue fire: next_run_at past by =2h (max gap 60m) cause=no error recorded' || { echo "selfcheck fail: overdue term"; exit 1; }
+  # (b2) stale fire: the newest stamp wins, sub-hour ages in minutes
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run' || { echo "selfcheck fail: stale fire term"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded' || { echo "selfcheck fail: sub-hour age"; exit 1; }
+  # (b3) dispatched but never completing past max(4x gap, 12h); 6h inside the floor is fine
+  printf '%s\n' "$LLR" | grep -qxF 'loopdead:hung-job dispatched but no completion for =13h (max gap 60m) cause=no error recorded' || { echo "selfcheck fail: no-completion term"; exit 1; }
+  # cause selection: the prompt title is not a cause; last_fire_error is one
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom' || { echo "selfcheck fail: cause skips the title line"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'cause=dispatch handoff missed the fire window' || { echo "selfcheck fail: last_fire_error cause"; exit 1; }
+  # gap enumeration: dom/dow UNION, seconds-LAST six-field exprs, cron 7=Sunday,
+  # leap-day reality (the buffer supplies each fire its true successor)
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:union-job last fire =545h ago (max gap 10080m)' || { echo "selfcheck fail: dom/dow union gap"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:six-field-job last fire =161h ago (max gap 4320m)' || { echo "selfcheck fail: six-field expr"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:sunday7-job last fire =473h ago (max gap 10080m)' || { echo "selfcheck fail: cron 7 != Sunday"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:leap-job last fire =120233h ago (max gap 2103840m)' || { echo "selfcheck fail: leap-day gap"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-record-job record invalid' || { echo "selfcheck fail: bad record not isolated"; exit 1; }
+  # a cluster's own intra-day spacing is a gap too (0 0,23 -> 1380m, never the 60m mean)
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:midnight-job last fire =51h ago (max gap 1380m)' || { echo "selfcheck fail: intra-day gap"; exit 1; }
+  # the incident's own exception class is not *Error: a traceback yields its last
+  # non-indented line as the cause
+  printf '%s\n' "$LLR" | grep -qF 'cause=websockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500' || { echo "selfcheck fail: traceback cause"; exit 1; }
+  # fires but NEVER completes (no completion stamp ever) is measured from creation
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:never-completed-job dispatched but no completion for =50h' || { echo "selfcheck fail: never-completed term"; exit 1; }
+  # a retired one-shot that never ran is still dead (enabled=false is how Hermes retires it)
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-retired-job one-shot never fired' || { echo "selfcheck fail: retired one-shot silent"; exit 1; }
+  # a cause can never forge the escalation prefix: the ';' join separator is sanitised
+  printf '%s\n' "$LLR" | grep -qF 'cause=boom, loopdead:P0!:forged' || { echo "selfcheck fail: semicolon sanitised"; exit 1; }
+  # a wedged recurring job (next_run_at present but null) can never fire again, and an
+  # in-flight one-shot (durable claim) is not "never fired"
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:wedged-job no next fire scheduled (state=error) - wedged' || { echo "selfcheck fail: wedged term"; exit 1; }
+  printf '%s\n' "$LLR" | grep -q 'once-inflight-job' && { echo "selfcheck fail: in-flight one-shot paged"; exit 1; }
+  # an empty/re-keyed store is blind, not green
+  printf '{"jobs": []}' > "$LLT/empty.json"
+  printf '%s\n' "$(loop_liveness "$LLT/empty.json" "$LLN")" | grep -qF 'jobs.json has no jobs - un-watched' || { echo "selfcheck fail: empty store green"; exit 1; }
+  # a whitespace-only name IS no name — the un-watched guard keys on emptiness
+  printf '%s\n' "$LLR" | grep -qF 'loopdead_scan: unnamed enabled job' || { echo "selfcheck fail: whitespace-only job name watched"; exit 1; }
+  # a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
+  printf '{"jobs": {"tandem-triage": {"name": " ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}}}' > "$LLT/keyed.json"
+  printf '%s\n' "$(loop_liveness "$LLT/keyed.json" "$LLN")" | grep -qF 'loopdead:P0!:tandem-triage ' || { echo "selfcheck fail: keyed fallback lost to a whitespace name"; exit 1; }
+  # identity is VERBATIM, the DISPLAY token is sanitised (#493): a padded brain name is not
+  # the brain job (never P0) and must still be WATCHED under its own tokenised label
+  printf '{"jobs": [{"name": "tandem-triage ", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/padded.json"
+  RTP=$(printf '%s\n' "$(loop_liveness "$LLT/padded.json" "$LLN")")
+  printf '%s\n' "$RTP" | grep -qF 'loopdead:P0!:' && { echo "selfcheck fail: padded brain name escalated"; exit 1; }
+  printf '%s\n' "$RTP" | grep -Eq '^loopdead:tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: padded job fell out of the scan (silence)"; exit 1; }
+  # #493: the display token never carries ':' '!' '=' or a control character, so a crafted
+  # name can neither forge a second physical line nor spell the P0 token; the P0 prefix is
+  # chosen by identity alone, a sanitised token carries a ~hash discriminator so colliding
+  # names still emit distinct lines, and a loopdead payload never reaches a loose P0 phrase.
+  printf '%s' '{"jobs": [{"name": "P0!:tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "line\nforge", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly.report_v2", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "unreachable", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "!!!", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly:report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "nightly report", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "b\u00e1o c\u00e1o tu\u1ea7n", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "spaced-expr", "enabled": true, "schedule": {"kind": "cron", "expr": "0  0 * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "x=5m", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "a:b", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "a!b", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": " tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "\u0301", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}, {"name": "tandem-triage", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/crafted.json"
+  RTC=$(printf '%s\n' "$(loop_liveness "$LLT/crafted.json" "$LLN")")
+  [ "$(printf '%s\n' "$RTC" | grep -c .)" = "15" ] || { echo "selfcheck fail: crafted fixture is not one line per job"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^forge' && { echo "selfcheck fail: newline name forged a physical line"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:P0 tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: crafted P0 name not tokenised"; exit 1; }
+  CCL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
+  [ -n "$CCL" ] || { echo "selfcheck fail: crafted P0 line missing (vacuous check)"; exit 1; }
+  case "$CCL" in *'P0!:'*) echo "selfcheck fail: crafted name spelled the P0 token"; exit 1 ;; esac
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:<unprintable>~[a-z]{12} last fire' || { echo "selfcheck fail: all-punctuation name lost its fallback token"; exit 1; }
+  [ "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sort -u | grep -c .)" = "2" ] || { echo "selfcheck fail: colliding display tokens emit identical lines"; exit 1; }
+  D1=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 1p)")
+  D2=$(dedupe_key "$(printf '%s\n' "$RTC" | grep -E '^loopdead:nightly report' | sed -n 2p)")
+  [ -n "$D1" ] && [ "$D1" != "$D2" ] || { echo "selfcheck fail: colliding display tokens share a dedupe key"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^loopdead:báo cáo tuần last fire' || { echo "selfcheck fail: a non-ASCII name was shredded"; exit 1; }
+  NFD=$(printf '%s' '{"jobs": [{"name": "ba\u0301o", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/nfd.json"; PYTHONIOENCODING=iso-8859-1 loop_liveness "$LLT/nfd.json" "$LLN")
+  printf '%s\n' "$NFD" | grep -Eq '^loopdead:ba[^ ]+o last fire' || { echo "selfcheck fail: a decomposed name lost its combining mark or the locale killed the scan"; exit 1; }
+  LOK=$(PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 LC_ALL=C loop_liveness "$LLT/nfd.json" "$LLN")
+  printf '%s\n' "$LOK" | grep -q '^loopdead:ba' || { echo "selfcheck fail: a C locale decode killed the scan"; exit 1; }
+  # the record is read as BYTES: a stray invalid-UTF-8 byte degrades to U+FFFD and the scan
+  # still reports the job (a locale-decoded text read would raise and blind every job)
+  printf '{"jobs": [{"name": "bad\xe1byte", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}, "last_status": "ok", "failure_streak": 0, "last_run_at": "2026-11-15T00:00:00+00:00"}]}' > "$LLT/badutf.json"
+  BUT=$(loop_liveness "$LLT/badutf.json" "$LLN")
+  printf '%s\n' "$BUT" | grep -q '^loopdead:bad' || { echo "selfcheck fail: an invalid UTF-8 byte in the record killed the scan"; exit 1; }
+  printf '%s\n' "$RTC" | grep -qF "unsupported schedule ('0  0 * *')" || { echo "selfcheck fail: the sweep rewrote quoted record text"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:x 5m~[a-z]{12} last fire' || { echo "selfcheck fail: '=' survived into the token (age-mask collision)"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^loopdead:nightly.report_v2 last fire' || { echo "selfcheck fail: '.' or '_' was stripped from a clean name"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:tandem-triage~[a-z]{12} last fire' || { echo "selfcheck fail: a leading space survived the trim"; exit 1; }
+  printf '%s\n' "$RTC" | grep -Eq '^loopdead:<unprintable>~[a-z]{12} last fire' || { echo "selfcheck fail: a mark-only name rendered invisibly"; exit 1; }
+  A1=$(printf '%s\n' "$RTC" | grep -E '^loopdead:a b' | sed -n 1p); A2=$(printf '%s\n' "$RTC" | grep -E '^loopdead:a b' | sed -n 2p)
+  [ -n "$A1" ] && [ -n "$A2" ] && [ "$A1" != "$A2" ] && [ "$(dedupe_key "$A1")" != "$(dedupe_key "$A2")" ] || { echo "selfcheck fail: two identically-sanitised names collide in line or key"; exit 1; }
+  printf '%s\n' "$RTC" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: real brain death lost its P0 token"; exit 1; }
+  CPL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0 tandem-triage' || true)
+  [ -n "$CPL" ] || { echo "selfcheck fail: crafted P0 line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$CPL")" = "1" ] || { echo "selfcheck fail: crafted P0 name escalated"; exit 1; }
+  URL=$(printf '%s\n' "$RTC" | grep '^loopdead:unreachable' || true)
+  [ -n "$URL" ] || { echo "selfcheck fail: unreachable-name line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$URL")" = "1" ] || { echo "selfcheck fail: letters-only P0 phrase name escalated"; exit 1; }
+  BRL=$(printf '%s\n' "$RTC" | grep '^loopdead:P0!:tandem-triage' || true)
+  [ -n "$BRL" ] || { echo "selfcheck fail: brain line missing (vacuous check)"; exit 1; }
+  [ "$(probe_level "$BRL")" = "0" ] || { echo "selfcheck fail: brain death not P0"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=db unreachable')" = "1" ] || { echo "selfcheck fail: a cause forged a loose P0 phrase"; exit 1; }
+  [ "$(probe_level 'loopdead:j last fire;db: unreachable')" = "0" ] || { echo "selfcheck fail: a genuine db P0 lost to the segment rule"; exit 1; }
+  [ "$(probe_level 'x; loopdead:P0!:tandem-triage y')" = "1" ] || { echo "selfcheck fail: a space after the join separator escalated"; exit 1; }
+  # LINE INTEGRITY (#493): every record-shaped field (name, state, schedule, cause) is swept
+  # of every code point a Unicode line splitter treats as a break (C0/C1/LS/PS) at emission,
+  # so the line count is the job count, not the content's; a lone surrogate must not kill the
+  # scan (the brain job AFTER it must still emit its P0); a hostile name through the
+  # record-invalid path is tokenised too.
+  printf '%s' '{"jobs": [{"name": "surrogate", "last_status": "error", "failure_streak": 3, "last_error": "\ud800db: unreachable", "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge", "state": "error\u0085db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge4", "state": "error\u2029db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge5", "state": "error\u007fdb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge3", "state": "error\ndb: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "stateforge2", "state": "error\u2028db: unreachable", "next_run_at": null, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}, {"name": "tandem-triage", "last_status": "error", "failure_streak": 3, "last_run_at": "2026-11-15T00:00:00+00:00", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/integrity.json"
+  RTI=$(printf '%s\n' "$(loop_liveness "$LLT/integrity.json" "$LLN")")
+  [ "$(printf '%s\n' "$RTI" | grep -c .)" = "7" ] || { echo "selfcheck fail: a record field forged a physical line or killed the scan"; exit 1; }
+  printf '%s\n' "$RTI" | grep -q '^db:' && { echo "selfcheck fail: a swept break forged a line start"; exit 1; }
+  printf '%s\n' "$RTI" | grep -q '^loopdead:P0!:tandem-triage failing' || { echo "selfcheck fail: a lone surrogate killed the scan before the brain job"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:surrogate')")" = "1" ] || { echo "selfcheck fail: surrogate cause escalated"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C1 state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge4 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: PS state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge5 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: DEL state not swept"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge3 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: C0 state not swept"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:stateforge ' || true)")" = "1" ] || { echo "selfcheck fail: C1 state payload escalated"; exit 1; }
+  printf '%s\n' "$RTI" | grep -Eq '^loopdead:stateforge2 no next fire scheduled \(state=error db: unreachable\) - wedged' || { echo "selfcheck fail: LS state not swept"; exit 1; }
+  [ "$(probe_level "$(printf '%s\n' "$RTI" | grep '^loopdead:stateforge2')")" = "1" ] || { echo "selfcheck fail: state payload escalated"; exit 1; }
+  printf '%s' '{"jobs": [{"name": "x\nloopdead:P0!:tandem-triage y", "last_run_at": "x;y", "enabled": true, "schedule": {"kind": "cron", "expr": "0 * * * *"}}]}' > "$LLT/invalid.json"
+  RTJ=$(printf '%s\n' "$(loop_liveness "$LLT/invalid.json" "$LLN")")
+  [ "$(printf '%s\n' "$RTJ" | grep -c .)" = "1" ] || { echo "selfcheck fail: record-invalid path forged a line"; exit 1; }
+  printf '%s\n' "$RTJ" | grep -Eq '^loopdead:x loopdead P0 tandem-triage y~[a-z]{12} record invalid' || { echo "selfcheck fail: hostile name on the record-invalid path not tokenised"; exit 1; }
+  printf '%s\n' "$RTJ" | grep -q '^loopdead:P0!:' && { echo "selfcheck fail: record-invalid path forged the P0 token"; exit 1; }
+  # a scan line's record payload never reaches a loose P0 phrase either
+  printf '%s' '{"jobs": ["db unreachable"]}' > "$LLT/scan.json"
+  RTS=$(printf '%s\n' "$(loop_liveness "$LLT/scan.json" "$LLN")")
+  printf '%s\n' "$RTS" | grep -qF "non-object job entry 'db unreachable'" || { echo "selfcheck fail: scan line missing"; exit 1; }
+  [ "$(probe_level "$RTS")" = "1" ] || { echo "selfcheck fail: scan payload escalated"; exit 1; }
+  # the join separator never appears inside a line, even in record text
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:bad-semicolon-job record invalid' || { echo "selfcheck fail: semicolon record missing"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qE 'bad-semicolon-job[^;]*;' && { echo "selfcheck fail: separator leaked into a line"; exit 1; }  # (c) one-shots and underivable schedules are anomalies, never silence
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-job one-shot never fired (run_at 2026-11-17T00:00:00+00:00)' || { echo "selfcheck fail: one-shot never fired"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF 'loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched' || { echo "selfcheck fail: once without run_at silent"; exit 1; }
+  printf '%s\n' "$LLR" | grep -qF "loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched" || { echo "selfcheck fail: unsupported schedule silent"; exit 1; }
+  # exactly these 25 'loopdead:' lines (the unnamed-job scan line is separate): silence on
+  # a healthy record is as load-bearing as the alert
+  LLC2=$(printf '%s\n' "$LLR" | grep -c '^loopdead:')
+  [ "$LLC2" = "25" ] || { echo "selfcheck fail: expected 25 lines, got $LLC2"; exit 1; }
+  # silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
+  # operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
+  # inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
+  # annual drifts, named months, the weekday weekend gap, and the probe itself
+  for QUIET in tandem-triage nightly-report single-failure-job queued-job queued-streak-job cancelled-job paused-job paused-state-job never-run-job inflight-job no-completion-job once-fired-job once-recent-job monthly-drill quarterly-job annual-job named-month-job weekday-job tandem-prod-watch; do
+    printf '%s\n' "$LLR" | grep -q "loopdead:.*$QUIET" && { echo "selfcheck fail: $QUIET alerted on a healthy record"; exit 1; }
+  done
+  # boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at 2x
+  # (silent) and one minute later it is stale (strict >)
+  printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$(date -u -d '2026-11-17T04:00:00Z' +%s)")" | grep -q 'loopdead:.*tandem-triage' && { echo "selfcheck fail: exactly 2x alerted"; exit 1; }
+  printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$(date -u -d '2026-11-17T04:01:00Z' +%s)")" | grep -qF 'loopdead:P0!:tandem-triage last fire =2h ago (max gap 60m)' || { echo "selfcheck fail: just past 2x silent"; exit 1; }
+  # unreadable scheduler record = blind, and the cause reaches the operator
+  printf 'not json' > "$LLT/jobs.json"
+  printf '%s\n' "$(loop_liveness "$LLT/jobs.json" "$LLN")" | grep -q '^loopdead_scan: unreadable jobs.json' || { echo "selfcheck fail: unreadable jobs.json silent"; exit 1; }
+  rm -rf "$LLT"
+  # ESCALATION pin: the brain prefix escalates at line start or after the ';' join, and a
+  # cause can never forge it (a bare `P0001`, `P0RT` or an embedded 'loopdead:P0!:' text
+  # after cause= stays P1).
+  [ "$(probe_level 'loopdead:P0!:tandem-critic x')" = "0" ] || { echo "selfcheck fail: leading P0 prefix"; exit 1; }
+  [ "$(probe_level 'loopdead:j x;loopdead:P0!:tandem-triage y')" = "0" ] || { echo "selfcheck fail: mid-line P0 prefix"; exit 1; }
+  [ "$(probe_level 'loopdead:P0!:fake x')" = "1" ] || { echo "selfcheck fail: look-alike name escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:P0!:tandem-triage-2 failing')" = "1" ] || { echo "selfcheck fail: suffixed look-alike escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j record invalid cause=loopdead:P0!:tandem-critic')" = "1" ] || { echo "selfcheck fail: embedded brain token escalated"; exit 1; }
+  # the position clause: the token mid-line WITH text after it must stay P1 too (an
+  # anywhere-glob keeping the trailing space would pass the pin above, not this one)
+  [ "$(probe_level 'loopdead:j cause=loopdead:P0!:tandem-triage last fire =2h ago')" = "1" ] || { echo "selfcheck fail: mid-line embedded token escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=Postgres error P0001')" = "1" ] || { echo "selfcheck fail: P0001 escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=word P0RT')" = "1" ] || { echo "selfcheck fail: P0RT escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:j cause=loopdead:P0!:forged')" = "1" ] || { echo "selfcheck fail: forged P0 prefix escalated"; exit 1; }
+  # WIRING pins: the live pass must CONSUME the arm (run once, append once, surface its
+  # stderr, take its level from the shipped function) and the dedupe key must mask
+  # volatile cause tails and ages — deleting any of those keeps the fixtures green and
+  # ships a dead, screaming or mute detector. Anchored so no pin matches its own grep.
+  LLC=$(grep -c '^LLOUT=$(loop_liveness "$PROFILE_DIR/cron/jobs.json" 2>"$LLERR")' "$0" 2>/dev/null || true)
+  [ "$LLC" = "1" ] || { echo "selfcheck fail: loop-liveness pass missing ($LLC)"; exit 1; }
+  LLA=$(grep -c '^[[:space:]]*\[ -n "\$L" \] && anom' "$0" 2>/dev/null || true)
+  [ "$LLA" = "1" ] || { echo "selfcheck fail: loop-liveness append missing ($LLA)"; exit 1; }
+  LLE=$(grep -c '^\[ -s "\$LLERR" \] && anom' "$0" 2>/dev/null || true)
+  [ "$LLE" = "1" ] || { echo "selfcheck fail: loop-liveness stderr surface missing ($LLE)"; exit 1; }
+  LLV=$(grep -c '^LVL=$(probe_level "$LINE")' "$0" 2>/dev/null || true)
+  [ "$LLV" = "1" ] || { echo "selfcheck fail: level not taken from probe_level ($LLV)"; exit 1; }
+  LLM=$(grep -c "s/request_id=\[^ ;\]\*/request_id=<id>/g" "$0" 2>/dev/null || true)
+  [ "$LLM" = "1" ] || { echo "selfcheck fail: cause-tail masking missing ($LLM)"; exit 1; }
+  LLM2=$(grep -c '^  printf .*s/=\[0-9\]+\[mh\](\[^a-z0-9\]|\$)/=<age>' "$0" 2>/dev/null || true)
+  [ "$LLM2" = "1" ] || { echo "selfcheck fail: age masking missing ($LLM2)"; exit 1; }
+  LLU=$(grep -c '^  printf .*\[0-9a-fA-F\]{8}-\[0-9a-fA-F\]{4}-' "$0" 2>/dev/null || true)
+  [ "$LLU" = "1" ] || { echo "selfcheck fail: uuid masking missing ($LLU)"; exit 1; }
+  # RUNTIME-REFRESH arm (#487): the shipped function is driven with fixtures through every
+  # branch — a booted sha DIFFERENT from the install FIRES from a running AND from a
+  # degraded record, and a stale record still fires when a FRESH live sibling precedes it
+  # (no masking); the SAME sha is the steady state and stays silent; and a stopped record,
+  # a recycled pid, a record with no start_time, a dead pid, an absent state file, an
+  # absent sha, an all-zero placeholder sha, an unborn HEAD, a non-dict JSON document and a
+  # non-git install each stay SILENT. The line carries no ';' join separator and names the
+  # finding plus the SPEC pointer (never a runnable command); the level is P0 on the arm's
+  # OWN prefix only (a look-alike cause string stays P1); the live pass consumes the arm
+  # (call, then append) BEFORE the anomaly line is joined; the seam refuses a missing
+  # install argument and is dispatched end-to-end AFTER its own pin.
+  RTD=$(mktemp -d 2>/dev/null) || { echo "selfcheck fail: mktemp for the runtime fixture"; exit 1; }
+  mkdir -p "$RTD/r" "$RTD/proc/4242" "$RTD/proc/7777"
+  git init -q "$RTD/r" 2>/dev/null
+  GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=f@example.invalid \
+  GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=f@example.invalid \
+  GIT_AUTHOR_DATE=2026-11-09T16:24:33Z GIT_COMMITTER_DATE=2026-11-09T16:24:33Z \
+    git -C "$RTD/r" commit -q --no-gpg-sign --allow-empty -m fixture 2>/dev/null
+  RT_SHA=$(git -C "$RTD/r" rev-parse HEAD)
+  [ -n "$RT_SHA" ] || { echo "selfcheck fail: fixture git unusable"; exit 1; }
+  python3 - "$RTD/proc/4242/stat" 1000 4242 <<'PY2'
+import sys
+open(sys.argv[1], "w").write("%s (gateway) S " % sys.argv[3] + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
+PY2
+  python3 - "$RTD/proc/7777/stat" 3000 7777 <<'PY2'
+import sys
+open(sys.argv[1], "w").write("%s (hermes) dashboard) x) S " % sys.argv[3] + " ".join(["0"] * 18 + [sys.argv[2]] + ["0"] * 10) + "\n")
+PY2
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stale.json"
+  printf '{"gateway_state": "degraded", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/degraded.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "%s"}' "$RT_SHA" > "$RTD/ok.json"
+  printf '{"gateway_state": "stopped", "pid": 4242, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/stopped.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 999, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/reused.json"
+  printf '{"gateway_state": "running", "pid": 4242, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/nostamp.json"
+  printf '{"gateway_state": "running", "pid": 9999, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/dead.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": ""}' > "$RTD/nosha.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "zzzz"}' > "$RTD/nonhex.json"
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "0000000000000000000000000000000000000000"}' > "$RTD/zerosha.json"
+  printf '[1, 2]' > "$RTD/array.json"
+  printf '{"gateway_state": "running", "pid": "4242", "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/strpid.json"
+  printf '{"gateway_state": "running", "pid": true, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/boolpid.json"
+  printf '{"gateway_state": "running", "pid": 4242.0, "start_time": 1000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/floatpid.json"
+  RTF=$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")
+  printf '%s' "$RTF" | grep -qF 'runtime_stale: the gateway (pid 4242) booted code 111111111 but the install is ' || { echo "selfcheck fail: stale runtime silent or mislabelled"; exit 1; }
+  printf '%s' "$RTF" | grep -qF 'the unit is serving stale code' || { echo "selfcheck fail: stale runtime lost its verdict text"; exit 1; }
+  printf '%s' "$RTF" | grep -qF 'SPEC RUNTIME-REFRESH' || { echo "selfcheck fail: stale runtime lost its SPEC pointer"; exit 1; }
+  printf '%s' "$RTF" | grep -qF ';' && { echo "selfcheck fail: runtime line carries the join separator"; exit 1; }
+  RT_CMD_RE=$(printf '%s|%s gateway (re%s|st%s)' 'systemctl' 'hermes' 'start' 'op')
+  printf '%s' "$RTF" | grep -qE "$RT_CMD_RE" && { echo "selfcheck fail: the emitted line embeds a runnable operator command"; exit 1; }
+  [ -n "$(runtime_stale "$RTD/degraded.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: degraded gateway not read as serving"; exit 1; }
+  [ -n "$(runtime_stale "$RTD/strpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: numeric-string pid not read"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/ok.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: matching sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/stopped.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: stopped gateway alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/reused.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: recycled pid alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/nostamp.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: unstamped record trusted"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/boolpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: boolean pid trusted"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/floatpid.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: float pid trusted"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/dead.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: dead pid alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/absent.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent state alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/nosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: absent sha alarmed"; exit 1; }
+  [ -n "$(runtime_stale "$RTD/nonhex.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a non-hex sha was masked (charset rule reintroduced)"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "111111111"}' > "$RTD/shortsha.json"
+  [ -z "$(runtime_stale "$RTD/zerosha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: placeholder zero sha alarmed"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/array.json" "$RTD/r" "$RTD/proc" 2>"$RTD/arr.err")" ] || { echo "selfcheck fail: non-dict JSON alarmed"; exit 1; }
+  [ -s "$RTD/arr.err" ] && { echo "selfcheck fail: non-dict JSON raised on stderr"; exit 1; }
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/nope" "$RTD/proc")" ] || { echo "selfcheck fail: non-git install alarmed"; exit 1; }
+  mkdir -p "$RTD/unborn"; git init -q "$RTD/unborn" 2>/dev/null
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/unborn" "$RTD/proc")" ] || { echo "selfcheck fail: unborn HEAD alarmed"; exit 1; }
+  # a fresh live record must never mask a stale live sibling (two serving gateways)
+  printf '%s' "$(runtime_stale "$RTD/ok.json:$RTD/stale.json" "$RTD/r" "$RTD/proc")" | grep -qF 'booted code 111111111' || { echo "selfcheck fail: a fresh live record masked a stale sibling"; exit 1; }
+  printf '%s' "$(runtime_stale "$RTD/stale.json:$RTD/ok.json" "$RTD/r" "$RTD/proc")" | grep -qF 'booted code 111111111' || { echo "selfcheck fail: stale-first ordering broke"; exit 1; }
+  # an install stamp is the primary identity; a checkout HEAD is the fallback
+  printf '{"commit": "1111111111111111111111111111111111111111", "updateMechanism": "self"}' > "$RTD/r/install-stamp.json"
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity ignored (HEAD used instead of the stamp)"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "source": "git", "updateMechanism": "self"}' > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a stale git-source stamp was trusted over HEAD"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "source": "wheel", "updateMechanism": "self"}' > "$RTD/r/install-stamp.json"
+  [ -z "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a non-git stamp was ignored"; exit 1; }
+  printf '{"commit": "111111111", "source": "wheel", "updateMechanism": "self"}' > "$RTD/r/install-stamp.json"
+  [ -z "$(runtime_stale "$RTD/shortsha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a short stamp was not honoured as the identity"; exit 1; }
+  printf '{"gateway_state": "running", "pid": 4242, "start_time": 1000, "code_sha": "%s"}' "$RT_SHA" > "$RTD/headsha.json"
+  [ -n "$(runtime_stale "$RTD/headsha.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a short stamp was not compared (length rule reintroduced)"; exit 1; }
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a short stamp did not expose the divergence"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "updateMechanism": "bogus"}' > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a stamp with an unknown updateMechanism was honoured"; exit 1; }
+  printf '{"commit": "1111111111111111111111111111111111111111", "updateMechanism": "self", "payload": "light"}' > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: a light-artifact stamp was honoured"; exit 1; }
+  printf '{"commit": "%s", "updateMechanism": "self"}' "$RT_SHA" > "$RTD/r/install-stamp.json"
+  [ -n "$(runtime_stale "$RTD/stale.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: install-stamp identity broke the fire path"; exit 1; }
+  rm -f "$RTD/r/install-stamp.json"
+  # a comm containing ')' must not shift the field index
+  printf '{"gateway_state": "running", "pid": 7777, "start_time": 3000, "code_sha": "1111111111111111111111111111111111111111"}' > "$RTD/paren.json"
+  [ -n "$(runtime_stale "$RTD/paren.json" "$RTD/r" "$RTD/proc")" ] || { echo "selfcheck fail: comm-with-paren parse broken"; exit 1; }
+  [ "$(probe_level "$RTF")" = "0" ] || { echo "selfcheck fail: runtime_stale not P0"; exit 1; }
+  [ "$(probe_level 'loopdead:docs-bot cause=RuntimeError: runtime_stale arm fired')" = "1" ] || { echo "selfcheck fail: a look-alike cause escalated"; exit 1; }
+  [ "$(probe_level 'loopdead:docs-bot cause=error runtime_stale: the gateway (pid 1) booted code x')" = "1" ] || { echo "selfcheck fail: a cause-embedded prefix escalated"; exit 1; }
+  [ "$(probe_level 'runtime_stale: the gateway (pid 1) booted code x but the install is y')" = "0" ] || { echo "selfcheck fail: the arm's own line is not P0"; exit 1; }
+  [ "$(probe_level 'container: x;runtime_stale: the gateway (pid 1) booted code x')" = "0" ] || { echo "selfcheck fail: the arm after the join separator is not P0"; exit 1; }
+  grep -cE '^ +out_line\("loopdead_scan: non-object job entry %s" % repr\(j\)\.replace\(";", ","\)' "$0" | grep -qx 1 || { echo "selfcheck fail: the non-object scan line no longer strips the separator"; exit 1; }
+  grep -cE '^ +out_line\("loopdead_scan: unnamed enabled job \(%s\) - un-watched" % repr\(j\.get\("schedule"\)\)\.replace\(";", ","\)' "$0" | grep -qx 1 || { echo "selfcheck fail: the unnamed-job scan line no longer strips the separator"; exit 1; }
+  grep -cxF 'RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}" 2>"$PROBE_STATE/runtime.err")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm call changed"; exit 1; }
+  grep -cE '^\[ -s "\$PROBE_STATE/runtime\.err" \] && anom\+=\("runtime_stale_err: ' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm stderr surface missing"; exit 1; }
+  grep -cxF '[ -n "$RUNTIME" ] && anom+=("$RUNTIME")' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime arm append missing"; exit 1; }
+  grep -cxF 'if [ "${1:-}" = "--runtime-stale" ]; then' "$0" | grep -qx 1 || { echo "selfcheck fail: runtime seam dispatch changed"; exit 1; }
+  awk '/^anom=\(\)$/{s=NR} /^RUNTIME=\$\(runtime_stale /{a=NR} /^\[ -n "\$RUNTIME" \] && anom/{b=NR} /^if \[ \$\{#anom\[@\]\} -eq 0 \]/{d=NR} /^LINE="\$\(IFS=/{c=NR} END{exit !(s && a && b && d && c && s<a && a<b && b<d && d<c)}' "$0" || { echo "selfcheck fail: the wiring is not call-then-append before the empty-exit inside the live pass"; exit 1; }
+  # the seam refuses a missing install argument, then dispatches end-to-end
+  "$0" --runtime-stale "$RTD/stale.json" >/dev/null 2>&1; [ "$?" = "2" ] || { echo "selfcheck fail: seam accepts a missing install argument"; exit 1; }
+  printf '%s' "$("$0" --runtime-stale "$RTD/stale.json" "$RTD/r" "$RTD/proc" 2>/dev/null)" | grep -qF 'runtime_stale:' || { echo "selfcheck fail: seam dispatch does not reach the arm"; exit 1; }
+  rm -rf "$RTD"
   echo "ok probe selfcheck"
   exit 0
 fi
@@ -684,6 +1595,13 @@ if [ "${1:-}" = "--strand-sql" ]; then
   printf '\n'
   exit 0
 fi
+if [ "${1:-}" = "--loop-liveness" ]; then
+  # emit the liveness lines for an explicit jobs.json (+ optional now epoch): the arm's
+  # unit test drives THESE bytes with fixtures — no network, no state writes.
+  [ -n "${2:-}" ] || { echo "usage: --loop-liveness <jobs.json> [now_epoch]" >&2; exit 2; }
+  loop_liveness "$2" "${3:-$(date -u +%s)}"
+  exit 0
+fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
 OVS_RAW=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null)
 if OVS_TS=$(date -u -d "$OVS_RAW" +%s 2>/dev/null) && [ -n "$OVS_TS" ]; then
@@ -698,6 +1616,11 @@ if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
 else
   rm -f "$PROBE_STATE/.probe-write-test"
 fi
+
+# 0. runtime refresh (#487): installed code newer than the serving process = mixed modules
+RUNTIME=$(runtime_stale "${HERMES_GATEWAY_STATE:-$PROFILE_DIR/gateway_state.json:$HOME/.hermes/gateway_state.json}" "${HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}" 2>"$PROBE_STATE/runtime.err")
+[ -n "$RUNTIME" ] && anom+=("$RUNTIME")
+[ -s "$PROBE_STATE/runtime.err" ] && anom+=("runtime_stale_err: $(tr '\n;' '  ' < "$PROBE_STATE/runtime.err" | head -c 200)")
 
 # 1. container health + image
 IMG=$("${CT[@]}" 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="container_inspect: failed (CT102 ssh or docker inspect — container missing?)"
@@ -1248,7 +2171,9 @@ RBAC2=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/settings/u
 CREEP=$(python3 - "$PROFILE_DIR/cron/jobs.json" 2>/dev/null <<'PY'
 import json, sys
 try:
-    jobs = json.load(open(sys.argv[1])).get("jobs", [])
+    # the record is UTF-8 BYTES: a locale-encoded text open would raise UnicodeDecodeError
+    # under LC_ALL=C and collapse the whole scan (the brain jobs' P0 included)
+    jobs = json.loads(open(sys.argv[1], "rb").read().decode("utf-8", "replace")).get("jobs", [])
     if isinstance(jobs, dict):
         jobs = list(jobs.values())
     n = 0
@@ -1281,6 +2206,17 @@ PY
 case "$CREEP2" in ''|*[!0-9]*) anom+=("creep_unreadable: skill scan failed"); CREEP2=0 ;; esac
 [ "${CREEP2:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP2 hit(s) in tandem-ops skill — critic purges (law/negation text excepted)")
 
+# 6b. LOOP LIVENESS (#485): the loop's own crons had no no-LLM arm — 29h of dead
+# triage/critic went unalerted because the product arms above watch prod, not the loop,
+# and the designated dead-man (the critic) is itself an LLM cron. See loop_liveness.
+LLERR=$(mktemp)
+LLOUT=$(loop_liveness "$PROFILE_DIR/cron/jobs.json" 2>"$LLERR")
+[ -s "$LLERR" ] && anom+=("loopdead_stderr: $(head -1 "$LLERR" | cut -c1-160)")
+rm -f "$LLERR"
+while IFS= read -r L; do
+  [ -n "$L" ] && anom+=("$L")
+done <<< "$LLOUT"
+
 
 # 7. pending memory proposals backing up = nobody triaging the queue
 PM=$(ls "$PROFILE_DIR"/pending/memory/*.json 2>/dev/null | wc -l)
@@ -1300,12 +2236,11 @@ if [ ${#anom[@]} -eq 0 ]; then
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
 # Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
-KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g')
+KEY=$(dedupe_key "$LINE")
 if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0
 fi
 echo "$KEY" > "$PROBE_STATE/last-anomaly"
-LVL=1; [ ${#anom[@]} -ge 3 ] && LVL=0
-case "$LINE" in *P0*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) LVL=0 ;; esac
+LVL=$(probe_level "$LINE"); [ ${#anom[@]} -ge 3 ] && LVL=0
 printf 'P%d: %s\n' "$LVL" "$LINE"

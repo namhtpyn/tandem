@@ -1,4 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { $ } from 'bun';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +9,563 @@ import { describe, expect, it } from 'vitest';
 // self-asserted before any network/SSH call (epoch-ms stamps, health word,
 // so the detector can be checked in CI without a prod target).
 const script = new URL('../../scripts/tandem-prod-probe.sh', import.meta.url).pathname;
+
+// The scheduler-record fixture: identical to the selfcheck's, so a drift between the
+// shipped selfcheck and the unit test is impossible to miss.
+const FIXTURE = {
+  jobs: [
+    {
+      name: 'tandem-prod-watch',
+      enabled: true,
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T22:00:00+00:00',
+    },
+    {
+      name: 'tandem-triage',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T00:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-17T02:00:00+00:00',
+      },
+    },
+    {
+      name: 'tandem-critic',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 11,23 * * *',
+      },
+      last_status: 'error',
+      failure_streak: 3,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'InvalidStatus: server rejected WebSocket connection: HTTP 500',
+    },
+    {
+      name: 'nightly-report',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 2 * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T02:00:00+00:00',
+    },
+    {
+      name: 'paused-job',
+      enabled: false,
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'error',
+      failure_streak: 9,
+      last_run_at: '2026-11-01T00:00:00+00:00',
+    },
+    {
+      name: 'streak2-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'failed',
+      failure_streak: 2,
+      last_run_at: '2026-11-17T01:30:00+00:00',
+      last_error: 'boom',
+    },
+    {
+      name: 'single-failure-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'error',
+      failure_streak: 1,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+      last_error: 'blip',
+    },
+    {
+      name: 'undelivered-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'delivery_failed',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:30:00+00:00',
+      last_error: 'run completed',
+      last_delivery_error: 'discord: channel not found',
+    },
+    {
+      name: 'queued-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'delivery_queued',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+    },
+    {
+      name: 'queued-streak-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'delivery_queued',
+      failure_streak: 2,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+    },
+    {
+      name: 'cancelled-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'cancelled',
+      failure_streak: 5,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+    },
+    {
+      name: 'never-run-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+    },
+    {
+      name: 'inflight-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
+    },
+    {
+      name: 'no-completion-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T20:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
+    },
+    {
+      name: 'stale-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'last successful run',
+    },
+    {
+      name: 'interval-job',
+      enabled: true,
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:35:00+00:00',
+    },
+    {
+      name: 'title-cause-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: '# Cron Job: hourly triage\nTraceback (most recent call last):\nRuntimeError: boom',
+    },
+    {
+      name: 'fire-error-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-16T23:00:00+00:00',
+      },
+      last_fire_error: {
+        detail: 'dispatch handoff missed the fire window',
+      },
+    },
+    {
+      name: 'monthly-drill',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 3 1 * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-01T03:05:00+00:00',
+    },
+    {
+      name: 'quarterly-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 3 1 */3 *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-10-01T03:05:00+00:00',
+    },
+    {
+      name: 'annual-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * 2 *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-02-28T09:00:00+00:00',
+    },
+    {
+      name: 'named-month-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 1 JAN *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-01-01T09:05:00+00:00',
+    },
+    {
+      name: 'weekday-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 4 * * 1-5',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-13T04:05:00+00:00',
+    },
+    {
+      name: 'six-field-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * * 1-5 0',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-10T09:00:00+00:00',
+    },
+    {
+      name: 'union-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 1 * 1',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-10-25T09:00:00+00:00',
+    },
+    {
+      name: 'once-job',
+      enabled: true,
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+      state: 'completed',
+    },
+    {
+      name: 'once-recent-job',
+      enabled: true,
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T01:45:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+      state: 'scheduled',
+    },
+    {
+      name: 'once-norunat-job',
+      enabled: true,
+      schedule: {
+        kind: 'once',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+    },
+    {
+      name: 'unsupported-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 0 * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:00:00+00:00',
+    },
+    {
+      name: 'paused-state-job',
+      enabled: true,
+      state: 'paused',
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-01T00:00:00+00:00',
+    },
+    {
+      name: 'bad-record-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: 'not-a-time',
+    },
+    {
+      name: 'once-fired-job',
+      enabled: true,
+      state: 'completed',
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T00:00:31+00:00',
+    },
+    {
+      name: 'leap-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 0 29 2 *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2013-02-28T09:00:00+00:00',
+    },
+    {
+      name: 'sunday7-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 9 * * 7',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-10-28T09:00:00+00:00',
+    },
+    {
+      name: 'overdue-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:45:00+00:00',
+      next_run_at: '2026-11-17T00:00:00+00:00',
+    },
+    {
+      name: 'hung-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T13:00:00+00:00',
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
+    },
+    {
+      name: 'midnight-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 0,23 * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-14T23:00:00+00:00',
+    },
+    {
+      name: 'ws-cause-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error:
+        'Traceback (most recent call last):\n  File "/app/run.py", line 7, in <module>\n    raise_for_status()\nwebsockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500',
+    },
+    {
+      name: 'never-completed-job',
+      enabled: true,
+      created_at: '2026-11-15T00:00:00+00:00',
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'running',
+      failure_streak: 0,
+      last_run_at: null,
+      last_dispatch: {
+        dispatched_at: '2026-11-17T01:59:00+00:00',
+      },
+    },
+    {
+      name: 'once-retired-job',
+      enabled: false,
+      state: 'completed',
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+    },
+    {
+      name: 'semicolon-cause-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'boom; loopdead:P0!:forged',
+    },
+    {
+      name: 'wedged-job',
+      enabled: true,
+      state: 'error',
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T20:00:00+00:00',
+      next_run_at: null,
+    },
+    {
+      name: 'once-inflight-job',
+      enabled: true,
+      schedule: {
+        kind: 'once',
+        run_at: '2026-11-17T00:00:00+00:00',
+      },
+      last_status: null,
+      failure_streak: 0,
+      last_run_at: null,
+      run_claim: {
+        at: '2026-11-17T01:40:00+00:00',
+      },
+    },
+    {
+      name: 'P0!:fake',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-16T23:00:00+00:00',
+      last_error: 'look alike name',
+    },
+    {
+      name: 'bad-semicolon-job',
+      enabled: true,
+      schedule: {
+        kind: 'cron',
+        expr: '0 * * * *',
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: 'x;y',
+    },
+    // a whitespace-only name IS no name: the un-watched guard keys on emptiness (#490)
+    {
+      name: ' ',
+      enabled: true,
+      schedule: {
+        kind: 'interval',
+        minutes: 10,
+      },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-17T01:55:00+00:00',
+    },
+  ],
+};
 
 describe('prod probe selfcheck', () => {
   it('passes pure-logic assertions with zero network', async () => {
@@ -103,11 +662,460 @@ describe('prod probe selfcheck', () => {
     expect(twoCol.stdout.toString()).toContain("select 'egressorigin'");
   });
 
+  // #485: the loop's own crons had no no-LLM arm — 33h of dead triage/critic went
+  // unalerted while every product arm stayed green (the designated dead-man, the critic,
+  // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
+  // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
+  // through the shipped dispatch mode with the same fixture the selfcheck uses; every
+  // term, every silence and the cause selection are pinned here (mutation-proved red).
+  // #485: the loop's own crons had no no-LLM arm — 33h of dead triage/critic went
+  // unalerted while every product arm stayed green (the designated dead-man, the critic,
+  // is itself an LLM cron). The record is the SCHEDULER's cron/jobs.json, because a job
+  // that keeps ticking while every run FAILS looks fresh in its passes trail. Driven
+  // through the shipped dispatch mode with the same fixture the selfcheck uses; every
+  // term, every silence and the cause selection are pinned here (mutation-proved red).
+  it('flags stale fires, repeated failures and undelivered runs from the scheduler record', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-loop-'));
+    const file = join(dir, 'jobs.json');
+    writeFileSync(file, JSON.stringify(FIXTURE));
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const run = async (at = now) => {
+      const proc = await $`bash ${script} --loop-liveness ${file} ${at}`.nothrow().quiet();
+      expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+      return proc.stdout.toString();
+    };
+
+    const out = await run();
+    const lines = out.trim().split('\n').filter(Boolean);
+    // (a) running-but-failing at exactly streak 2, cause carried; a BRAIN line carries the
+    // unforgeable 'loopdead:P0!:' prefix (never a bare suffix token)
+    expect(lines).toContain(
+      'loopdead:P0!:tandem-critic failing >=2 consecutive ticks cause=InvalidStatus: server rejected WebSocket connection: HTTP 500',
+    );
+    expect(lines).toContain('loopdead:streak2-job failing >=2 consecutive ticks cause=boom');
+    // (a2) delivery_failed = the run landed and reached nobody; the DELIVERY cause wins
+    expect(lines).toContain('loopdead:undelivered-job run ok but NOT DELIVERED cause=discord: channel not found');
+    // (b) overdue fire: the cadence-independent missed-fire signal
+    expect(lines).toContain(
+      'loopdead:overdue-job overdue fire: next_run_at past by =2h (max gap 60m) cause=no error recorded',
+    );
+    // (b2) stale fire: the newest stamp wins, sub-hour ages in minutes
+    expect(lines).toContain('loopdead:stale-job last fire =3h ago (max gap 60m) cause=last successful run');
+    expect(lines).toContain('loopdead:interval-job last fire =25m ago (max gap 10m) cause=no error recorded');
+    // (b3) dispatched but never completing past max(4x gap, 12h)
+    expect(lines).toContain(
+      'loopdead:hung-job dispatched but no completion for =13h (max gap 60m) cause=no error recorded',
+    );
+    // cause selection: the prompt title is skipped, the exception line is the cause
+    expect(lines).toContain('loopdead:title-cause-job last fire =3h ago (max gap 60m) cause=RuntimeError: boom');
+    expect(out).toContain('cause=dispatch handoff missed the fire window');
+    // the gap is the LONGEST legitimate gap, enumerated: dom/dow union, seconds-LAST
+    // six-field exprs, cron 7=Sunday, leap-day reality
+    expect(out).toContain('loopdead:union-job last fire =545h ago (max gap 10080m)');
+    expect(out).toContain('loopdead:six-field-job last fire =161h ago (max gap 4320m)');
+    expect(out).toContain('loopdead:sunday7-job last fire =473h ago (max gap 10080m)');
+    expect(out).toContain('loopdead:leap-job last fire =120233h ago (max gap 2103840m)');
+    // one-shots and underivable schedules are anomalies; one corrupt record is isolated
+    expect(out).toContain('loopdead:once-job one-shot never fired');
+    expect(out).toContain('loopdead:once-norunat-job unsupported schedule (once without run_at) un-watched');
+    expect(out).toContain("loopdead:unsupported-job unsupported schedule ('0 0 * *') un-watched");
+    expect(out).toContain('loopdead:bad-record-job record invalid');
+    // a cluster's own intra-day spacing is a gap too; the incident's exception class is
+    // not *Error, so a traceback yields its last non-indented line; a job that fires but
+    // NEVER completes is measured from creation; a retired one-shot that never ran is dead
+    expect(out).toContain('loopdead:midnight-job last fire =51h ago (max gap 1380m)');
+    expect(out).toContain('cause=websockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 500');
+    expect(out).toContain('loopdead:never-completed-job dispatched but no completion for =50h');
+    expect(out).toContain('loopdead:once-retired-job one-shot never fired');
+    // a cause can never forge the escalation prefix (';' is sanitised)
+    expect(out).toContain('cause=boom, loopdead:P0!:forged');
+    // a wedged recurring job (next_run_at null) can never fire again; an in-flight
+    // one-shot (durable claim) is not "never fired"
+    expect(out).toContain('loopdead:wedged-job no next fire scheduled (state=error) - wedged');
+    expect(out).not.toContain('once-inflight-job');
+    expect(out).toContain('loopdead_scan: unnamed enabled job');
+    expect(lines).toHaveLength(26);
+    // silences: inside 2x, a single failure, queued delivery (even with a stale streak), an
+    // operator cancel, disabled, paused state, never-run, in-flight, 6h of a hung hourly run
+    // inside the 12h floor, a fired one-shot, a one-shot inside its grace, the dom/quarterly/
+    // annual drifts, named months, the weekday weekend gap, and the probe itself
+    for (const quiet of [
+      'tandem-triage',
+      'nightly-report',
+      'single-failure-job',
+      'queued-job',
+      'queued-streak-job',
+      'cancelled-job',
+      'paused-job',
+      'paused-state-job',
+      'never-run-job',
+      'inflight-job',
+      'no-completion-job',
+      'once-fired-job',
+      'once-recent-job',
+      'monthly-drill',
+      'quarterly-job',
+      'annual-job',
+      'named-month-job',
+      'weekday-job',
+      'tandem-prod-watch',
+    ]) {
+      expect(out).not.toContain(quiet);
+    }
+    // boundary: the hourly job's dispatch stamp is 02:00, so at exactly 04:00 it is at 2x
+    // (silent) and one minute later it is stale (strict >, not >=)
+    expect(await run(String(Date.parse('2026-11-17T04:00:00Z') / 1000))).not.toContain('tandem-triage');
+    expect(await run(String(Date.parse('2026-11-17T04:01:00Z') / 1000))).toContain(
+      'loopdead:P0!:tandem-triage last fire =2h ago (max gap 60m)',
+    );
+
+    // a name-keyed map falls back to the KEY; a whitespace name must not eat that fallback
+    const keyedFile = join(dir, 'keyed.json');
+    writeFileSync(
+      keyedFile,
+      JSON.stringify({
+        jobs: {
+          'tandem-triage': {
+            name: ' ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        },
+      }),
+    );
+    const keyed = await $`bash ${script} --loop-liveness ${keyedFile} ${now}`.nothrow().quiet();
+    expect(keyed.stdout.toString()).toContain('loopdead:P0!:tandem-triage ');
+
+    // a padded brain name is neither P0 nor silent: identity stays verbatim, the display
+    // token is sanitised (#493) — watched under its trimmed label, never as the brain job
+    const paddedFile = join(dir, 'padded.json');
+    writeFileSync(
+      paddedFile,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'tandem-triage ',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const padded = await $`bash ${script} --loop-liveness ${paddedFile} ${now}`.nothrow().quiet();
+    expect(padded.stdout.toString()).toMatch(/loopdead:tandem-triage~[a-z]{12} last fire/);
+    expect(padded.stdout.toString()).not.toContain('loopdead:P0!:');
+
+    // an unreadable scheduler record is an ANOMALY (blind), never silence
+    writeFileSync(file, 'not json');
+    expect(await run()).toContain('loopdead_scan: unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #493: the job name is DISPLAY-sanitised before interpolation while identity stays
+  // verbatim — a newline cannot forge a physical line, the token charset cannot spell the
+  // P0 prefix, an all-punctuation name keeps a fallback label, a sanitised token carries a
+  // ~hash discriminator (colliding names stay distinct for the dedupe key), and the P0 token
+  // is emitted for the identity-matched brain job alone.
+  it('tokenises job names for display and derives the P0 prefix from identity', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-name-'));
+    const file = join(dir, 'crafted.json');
+    const dead = (name: string) => ({
+      name,
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 * * * *' },
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-15T00:00:00+00:00',
+    });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          dead('P0!:tandem-triage'),
+          dead('line\nforge'),
+          dead('!!!'),
+          dead('nightly:report'),
+          dead('nightly report'),
+          dead('báo cáo tuần'),
+          {
+            name: 'spaced-expr',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0  0 * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+          dead('unreachable'),
+          dead('nightly.report_v2'),
+          dead('x=5m'),
+          dead('a:b'),
+          dead('a!b'),
+          dead(' tandem-triage'),
+          dead('\u0301'),
+          {
+            name: 'tandem-triage',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'error',
+            failure_streak: 3,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`.nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const out = proc.stdout.toString();
+    const lines: string[] = out
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    // one physical line per job: the escaped newline collapsed to a space, no forged line
+    expect(lines).toHaveLength(15);
+    expect(lines.filter((l: string) => l.startsWith('forge'))).toHaveLength(0);
+    expect(out).toContain('loopdead:line forge~');
+    // the crafted name renders its tokenised form and can never spell the P0 prefix
+    expect(lines.find((l: string) => l.includes('P0 tandem-triage'))).toMatch(
+      /^loopdead:P0 tandem-triage~[a-z]{12} last fire/,
+    );
+    // '=' and whitespace never reach the token (the age mask would collide x=5m / x=10m)
+    expect(out).toContain('loopdead:x 5m~');
+    expect(out).not.toContain('x=5m');
+    // a non-ASCII name stays readable (not shredded) and carries no discriminator
+    expect(out).toContain('loopdead:báo cáo tuần last fire');
+    // quoted record text is emitted losslessly (the sweep maps breaks, it does not collapse)
+    expect(out).toContain("unsupported schedule ('0  0 * *')");
+    // an all-punctuation (or mark-only) name keeps a stable, visible label
+    const unprintable = lines.filter((l: string) => l.includes('<unprintable>~'));
+    expect(unprintable.length).toBeGreaterThanOrEqual(2);
+    for (const l of unprintable) expect(l).toMatch(/^loopdead:<unprintable>~[a-z]{12} last fire/);
+    // two names that sanitise identically still emit distinct lines
+    const ab = lines.filter((l: string) => l.startsWith('loopdead:a b'));
+    expect(ab).toHaveLength(2);
+    expect(new Set(ab).size).toBe(2);
+    // two names that sanitise to the same token still emit DISTINCT lines (the dedupe-key
+    // pin lives in --selfcheck, which can call dedupe_key directly)
+    const nightly = lines.filter((l: string) => l.startsWith('loopdead:nightly report'));
+    expect(nightly).toHaveLength(2);
+    expect(new Set(nightly).size).toBe(2);
+    // the identity branch alone emits the P0 prefix: exactly one line, the real brain job
+    expect(lines.filter((l: string) => l.startsWith('loopdead:P0!:'))).toHaveLength(1);
+    expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #493: LINE INTEGRITY — every record-shaped field (name, state, schedule, cause) is swept
+  // of every code point a Unicode line splitter treats as a break (C0/C1/LS/PS) at emission,
+  // so the line count is the job count, not the content's; a lone surrogate must not kill the
+  // scan (the brain job after it must still emit its P0).
+  it('sweeps every line-break class out of every emitted line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-integrity-'));
+    const file = join(dir, 'integrity.json');
+    const dead = (name: string, extra: Record<string, unknown> = {}) => ({
+      name,
+      last_status: 'ok',
+      failure_streak: 0,
+      last_run_at: '2026-11-15T00:00:00+00:00',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 * * * *' },
+      ...extra,
+    });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          dead('surrogate', {
+            last_status: 'error',
+            failure_streak: 3,
+            last_error: '\ud800db: unreachable',
+          }),
+          dead('stateforge', { state: 'error\u0085db: unreachable', next_run_at: null }),
+          dead('stateforge2', { state: 'error\u2028db: unreachable', next_run_at: null }),
+          dead('stateforge3', { state: 'error\ndb: unreachable', next_run_at: null }),
+          dead('stateforge4', { state: 'error\u2029db: unreachable', next_run_at: null }),
+          dead('stateforge5', { state: 'error\u007fdb: unreachable', next_run_at: null }),
+          {
+            name: 'tandem-triage',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'error',
+            failure_streak: 3,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`.nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const out = proc.stdout.toString();
+    const lines: string[] = out
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    // one physical line per job — a C1/LS break forged nothing and the surrogate did not
+    // abort the scan
+    expect(lines).toHaveLength(7);
+    expect(lines.filter((l: string) => l.startsWith('db:'))).toHaveLength(0);
+    expect(out).toContain('loopdead:stateforge no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge2 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge3 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge4 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:stateforge5 no next fire scheduled (state=error db: unreachable) - wedged');
+    expect(out).toContain('loopdead:P0!:tandem-triage failing >=2 consecutive ticks');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #493: emission is UTF-8 BYTES, so a non-UTF-8 locale cannot abort the scan, and a
+  // decomposed (NFD) name keeps its combining mark instead of being shredded.
+  it('emits UTF-8 bytes under a non-UTF-8 locale and keeps decomposed names readable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-locale-'));
+    const file = join(dir, 'nfd.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'ba\u0301o',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+            last_status: 'ok',
+            failure_streak: 0,
+            last_run_at: '2026-11-15T00:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`
+      .env({ ...process.env, PYTHONIOENCODING: 'iso-8859-1' })
+      .nothrow()
+      .quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const out = proc.stdout.toString('utf8');
+    const lines = out
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('loopdead:ba');
+    expect(lines[0]).toMatch(/^loopdead:ba[^ ]+o last fire/);
+    expect(out).not.toContain('unreadable jobs.json');
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #493: a hostile name on the record-invalid path is tokenised the same way.
+  it('tokenises a hostile name on the record-invalid path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-invalid-'));
+    const file = join(dir, 'invalid.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        jobs: [
+          {
+            name: 'x\nloopdead:P0!:tandem-triage y',
+            last_run_at: 'x;y',
+            enabled: true,
+            schedule: { kind: 'cron', expr: '0 * * * *' },
+          },
+        ],
+      }),
+    );
+    const now = String(Date.parse('2026-11-17T02:00:00Z') / 1000);
+    const proc = await $`bash ${script} --loop-liveness ${file} ${now}`.nothrow().quiet();
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0);
+    const lines: string[] = proc.stdout
+      .toString()
+      .trim()
+      .split('\n')
+      .filter((l: string) => l.length > 0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^loopdead:x loopdead P0 tandem-triage y~[a-z]{12} record invalid/);
+    expect(lines.filter((l: string) => l.startsWith('loopdead:P0!:'))).toHaveLength(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // #487/#490: the RUNTIME-REFRESH arm's own dispatch seam (SPEC "Probe versioning") so
+  // these fixtures drive the SHIPPED bytes: a live gateway whose booted code differs from
+  // the install identity emits the finding; every declared boundary stays silent.
+  it('flags a live gateway serving pre-install code through its dispatch seam', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'probe-runtime-'));
+    const inst = join(dir, 'inst');
+    const proc = join(dir, 'proc');
+    mkdirSync(join(proc, '4242'), { recursive: true });
+    mkdirSync(inst, { recursive: true });
+    // /proc/<pid>/stat field 22 is the start stamp the arm matches against the record
+    writeFileSync(
+      join(proc, '4242', 'stat'),
+      `4242 (gateway) S ${[...Array(18).fill('0'), '1000', ...Array(10).fill('0')].join(' ')}\n`,
+    );
+    const INSTALL = 'a'.repeat(40);
+    const BOOTED = 'b'.repeat(40);
+    writeFileSync(
+      join(inst, 'install-stamp.json'),
+      JSON.stringify({ commit: INSTALL, updateMechanism: 'self', payload: 'full', source: 'wheel' }),
+    );
+    const state = (body: unknown) => {
+      const f = join(dir, `state-${crypto.randomUUID()}.json`);
+      writeFileSync(f, JSON.stringify(body));
+      return f;
+    };
+    const live = { gateway_state: 'running', pid: 4242, start_time: 1000, code_sha: BOOTED };
+    const run = async (cands: string) => {
+      const p = await $`bash ${script} --runtime-stale ${cands} ${inst} ${proc}`.nothrow().quiet();
+      expect(p.exitCode, p.stderr.toString()).toBe(0);
+      return p.stdout.toString();
+    };
+
+    const fired = await run(state(live));
+    expect(fired).toContain('runtime_stale: the gateway (pid 4242) booted code bbbbbbbbb but the install is aaaaaaaaa');
+    expect(fired).toContain('SPEC RUNTIME-REFRESH');
+    expect(fired).not.toContain(';');
+    // a degraded gateway still SERVES the stale code; the matching sha is the steady state
+    expect(await run(state({ ...live, gateway_state: 'degraded' }))).toContain('runtime_stale:');
+    expect(await run(state({ ...live, code_sha: INSTALL }))).toBe('');
+    // a matching record never MASKS a stale sibling: candidates are scanned in full
+    expect(await run(`${state({ ...live, code_sha: INSTALL })}:${state(live)}`)).toContain('runtime_stale:');
+    // declared boundaries: silent, never a false alarm
+    for (const boundary of [
+      { ...live, gateway_state: 'stopped' },
+      { ...live, start_time: 999 },
+      { gateway_state: 'running', pid: 4242, code_sha: BOOTED },
+      { ...live, pid: 9999 },
+      { ...live, code_sha: '' },
+      { ...live, code_sha: '0'.repeat(40) },
+    ]) {
+      expect(await run(state(boundary))).toBe('');
+    }
+    // no charset or length rule: a short non-hex sha is still an identity
+    expect(await run(state({ ...live, code_sha: 'zzzz' }))).toContain('runtime_stale:');
+    expect(await run(join(dir, 'absent.json'))).toBe('');
+    expect(await run(state([1, 2]))).toBe('');
+    // the seam refuses a missing install argument instead of alarming on it
+    const usage = await $`bash ${script} --runtime-stale ${state(live)}`.nothrow().quiet();
+    expect(usage.exitCode).toBe(2);
+    expect(usage.stderr.toString()).toContain('usage: --runtime-stale');
+    rmSync(dir, { recursive: true, force: true });
+  });
   it('writes no probe state in either pure dispatch mode (SPEC: no state writes)', async () => {
     // The DEFAULT state path derives from TANDEM_PROFILE_DIR — override THAT, so a broken
     // derivation cannot pass by writing the real prod trail (an overridden PROBE_STATE
     // alone would only prove the override works).
-    for (const mode of [['--strand-sql', '2.78.20', '2'], ['--egress-sql'], ['--selfcheck']]) {
+    const livenessFixture = join(mkdtempSync(join(tmpdir(), 'probe-loop-state-')), 'jobs.json');
+    writeFileSync(livenessFixture, JSON.stringify({ jobs: [] }));
+    for (const mode of [
+      ['--strand-sql', '2.78.20', '2'],
+      ['--egress-sql'],
+      ['--loop-liveness', livenessFixture, '1763344800'],
+      [
+        '--runtime-stale',
+        `${process.env.TMPDIR ?? '/tmp'}/probe-rt-none/state.json`,
+        `${process.env.TMPDIR ?? '/tmp'}/probe-rt-none/inst`,
+      ],
+      ['--selfcheck'],
+    ]) {
       const profile = `${process.env.TMPDIR ?? '/tmp'}/probe-profile-${crypto.randomUUID()}`;
       // TANDEM_PROBE_STATE='' as well: an inherited override would redirect any real
       // write away from the asserted path and green-light a broken derivation
