@@ -205,7 +205,10 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       landingCategory: 'ready',
       liveRound: true,
     });
-    expect(ghostRecords[0]!.payload.homeCategory ?? null, 'a ghost home has no category to name').toBeNull();
+    expect(ghostRecords[0]!.payload, 'a ghost record still carries homeCategory (null)').toHaveProperty(
+      'homeCategory',
+      null,
+    );
     expect(ghostRecords[0]!.body).toContain('REVIEW STRAND (ghost-at-block)');
 
     // 3c. pre-floor control: the same ghost shape with NO homeCategory KEY stays silent —

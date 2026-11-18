@@ -1333,8 +1333,9 @@ non-positive deltas render no duration.
   PARK half from `2.78.43`: the block half reads
   the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
   and the recorded park home is `park_from_status` — #502) the app reads
-  the newest floored record's recorded category (`homeCategory` on the block note,
-  `homeCategoryAtPark` on the park note) and the round's review
+  the newest block note's recorded category (`homeCategory` on the block note,
+  `homeCategoryAtPark` on the park note — a note carrying no such key is not a record and
+  leaves its half of the detector silent, #491) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
   the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
@@ -1354,7 +1355,8 @@ non-positive deltas render no duration.
   and fires, while a deleted seeded row leaves the landing category UNKNOWN and the term
   silent, the flip writing the dangling id — declared) — and the landing category is NOT
   `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
-  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
+  `recordedCategory`, `ghostAtBlock`, `homeCategory`, `landingCategory`, `liveRound` and
+  `lateVerdict` into
   its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
   own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
   with `REVIEW STRAND`. A floored note that recorded a NULL category is a RECORD, not a
