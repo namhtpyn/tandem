@@ -1,3 +1,21 @@
+## [2.78.42](https://github.com/namhtpyn/tandem/compare/v2.78.41...v2.78.42) (2026-11-18)
+
+
+### Bug Fixes
+
+* **probe:** [#496](https://github.com/namhtpyn/tandem/issues/496) r2 — hold-landing control, [#427](https://github.com/namhtpyn/tandem/issues/427) leftover exclusion, honest scope text ([da67617](https://github.com/namhtpyn/tandem/commit/da67617ba649e9f1b3ddc01232155b3afded829c)), closes [#500](https://github.com/namhtpyn/tandem/issues/500)
+* **probe:** [#496](https://github.com/namhtpyn/tandem/issues/496) r3 — drop the unpinnable ordering/later-write guards, state the anomaly not a lost landing ([cafa808](https://github.com/namhtpyn/tandem/commit/cafa808e61c3945a7bf496030a52be7ee57d1cc1)), closes [#427](https://github.com/namhtpyn/tandem/issues/427)
+* **probe:** [#496](https://github.com/namhtpyn/tandem/issues/496) r4 — doc/pin precision from blind review round 3 ([d487556](https://github.com/namhtpyn/tandem/commit/d487556c37789cfaae5eb4222bd291f85b1b608c))
+* **probe:** [#496](https://github.com/namhtpyn/tandem/issues/496) r5 — category vocabulary + residual ledger counts (review round 4) ([afa0b10](https://github.com/namhtpyn/tandem/commit/afa0b109ae600087c87338e7b7a58c2af2edbf3f))
+* **probe:** [#496](https://github.com/namhtpyn/tandem/issues/496) widen RE-KEYED-HOME to a LATE re-key into a NON-terminal category ([d6e7f24](https://github.com/namhtpyn/tandem/commit/d6e7f2409afeb941771108737a8bd5d366cae0c0)), closes [#423](https://github.com/namhtpyn/tandem/issues/423)
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r2 — home-vs-recorded category test, atomic restore record (review round 1) ([1673520](https://github.com/namhtpyn/tandem/commit/1673520deab58bfb72ece0cd78af5382d4ea86fc)), closes [#466](https://github.com/namhtpyn/tandem/issues/466)
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r3 — pin the landing gate, report both decision facts, snapshot-consistent reads (review round 2) ([63afd05](https://github.com/namhtpyn/tandem/commit/63afd058dfd5d155b4a1d59d2c9132a14db244ce))
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r4 — pin both decision facts, the landing wiring and the dangling home (review round 3) ([7231bdc](https://github.com/namhtpyn/tandem/commit/7231bdcd6b5857085e1a52f078baa00899d91e23))
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r5 — flip-time categories, pooled advisory reads, record-id dedupe (review round 4) ([10e5fe9](https://github.com/namhtpyn/tandem/commit/10e5fe92656710d33330b7caf0b84b33bca42b15))
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r6 — any-round decisions, honest flip-time claims, aging-safe dedupe (review round 5) ([0c24dd9](https://github.com/namhtpyn/tandem/commit/0c24dd9a6831a16e2a1f19d269d90f90fdce40ed)), closes [#445](https://github.com/namhtpyn/tandem/issues/445)
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) r7 — letters-only dedupe discriminator, control restore proof, ghost-at-block residual (review round 6) ([d94b1eb](https://github.com/namhtpyn/tandem/commit/d94b1eb6d8398aad508ffcf8fc50a9b0794659cf))
+* **review:** [#500](https://github.com/namhtpyn/tandem/issues/500) restore-time detector for the live-round re-key strand ([699203d](https://github.com/namhtpyn/tandem/commit/699203dae3d1178869569dea6443f9907a4acfe6))
+
 ## [2.78.41](https://github.com/namhtpyn/tandem/compare/v2.78.40...v2.78.41) (2026-11-18)
 
 
