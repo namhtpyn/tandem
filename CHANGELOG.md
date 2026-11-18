@@ -1,3 +1,16 @@
+## [2.78.43](https://github.com/namhtpyn/tandem/compare/v2.78.42...v2.78.43) (2026-11-18)
+
+
+### Bug Fixes
+
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) park half of the restore-strand detector ([d0df73f](https://github.com/namhtpyn/tandem/commit/d0df73f78e138778260d6fd90930d9641e6ae5e6))
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r1 — record the gate's category, never a re-read; floor wording ([cdbe4d7](https://github.com/namhtpyn/tandem/commit/cdbe4d7f130bbd92d1ccab4b159ec2c684039c2d))
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r2 — vacuous controls prove their restore landed; declare the episode residual ([20ff9f4](https://github.com/namhtpyn/tandem/commit/20ff9f4c3dfab7a95d8ce400e45398a98ad3ef5d))
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r3 — reachable park fixture discriminates the origin; SPEC accuracy ([b49411b](https://github.com/namhtpyn/tandem/commit/b49411b42c801e2645b195234723fa86cbf3d989)), closes [#507](https://github.com/namhtpyn/tandem/issues/507) [#506](https://github.com/namhtpyn/tandem/issues/506)
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r4 — anchor-aware verdict double, negative park pins, SPEC precision ([733d9de](https://github.com/namhtpyn/tandem/commit/733d9de7f387a913f19be58372cc2235a640c7e5)), closes [#506](https://github.com/namhtpyn/tandem/issues/506)
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r5 — newest-park-note e2e pin; SPEC states the re-home caveat ([ae7f979](https://github.com/namhtpyn/tandem/commit/ae7f979f5ce5fb765f69dcf734d2e71a75a6091b)), closes [#506](https://github.com/namhtpyn/tandem/issues/506)
+* **review:** [#502](https://github.com/namhtpyn/tandem/issues/502) r6 — SPEC precision on the arm's record field and residual scope ([8778cc7](https://github.com/namhtpyn/tandem/commit/8778cc793d5bca0aa719c5b43fa9d2cfd559ec95)), closes [#507](https://github.com/namhtpyn/tandem/issues/507) [#506](https://github.com/namhtpyn/tandem/issues/506)
+
 ## [2.78.42](https://github.com/namhtpyn/tandem/compare/v2.78.41...v2.78.42) (2026-11-18)
 
 
