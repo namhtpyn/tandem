@@ -1258,7 +1258,9 @@ non-positive deltas render no duration.
   DECLARED residual (audit #506): a verdict that landed BEFORE the park — a settle throw in
   review, or a lost settle while blocked — is ordered against the park record only, so when
   no PENDING reviewer row survives it is silent (a surviving PENDING REVIEWER row keeps the
-  live-round term firing; a VOID row, `reviewer_id` NULL, is not live). The anchor IS
+  live-round term firing; a VOID row, `reviewer_id` NULL, is not live, and an unredeemed
+  ESCALATED referral — not decided, not PENDING — is silent too, the REFERRAL-OWED boundary
+  declared above). The anchor IS
   derivable — a park note whose `fromStatus` differs from `park_from_status` superseded a
   block, so the newest block note is that episode's record — with one caveat a future term
   must handle: a `statuses.remove` re-home rewrites `park_from_status` while the note keeps
@@ -1270,11 +1272,13 @@ non-positive deltas render no duration.
   half needs the record and stays silent — and the PARK half's category is RECORDED from
   `2.78.43` (`homeCategoryAtPark`) but feeds the RESTORE-STRAND detector only: the ARM's
   category term stays block-only by declaration. For a LADDER-owned park the strand is
-  caught at its restore (the landing is knowable there). For a DECISION park a closed
-  round's terminal-category re-key stays with the arm's ordering term — but with a PENDING
-  row no term reads it, and a re-key into a NON-terminal category after a late verdict is
-  caught by no term either: the declared residual #507 (the FINAL variant is surfaced as
-  exhaustion by the rearm-exhaustion arm).
+  caught at its restore (the landing is knowable there). For a DECISION park the
+  terminal-category re-key is read by the arm's ordering term only while the round carries
+  a verdict NEWER than the park record (a round closed BEFORE its park is the arm's declared
+  MIRROR-ORDER / waiver boundary above); with a PENDING row no term reads it, and a re-key
+  into a NON-terminal category after a late verdict is caught by no term either: the
+  declared residual #507 (the FINAL variant is surfaced as exhaustion by the
+  rearm-exhaustion arm).
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
@@ -1328,7 +1332,8 @@ non-positive deltas render no duration.
   `pre_block_status` half from `2.78.42`, the PARK half from `2.78.43`: the block half reads
   the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
   and the recorded park home is `park_from_status` — #502) the app reads
-  the newest floored record's `homeCategory` and the round's review
+  the newest floored record's recorded category (`homeCategory` on the block note,
+  `homeCategoryAtPark` on the park note) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
   the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
