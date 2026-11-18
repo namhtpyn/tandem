@@ -224,8 +224,9 @@ home_floor_met() {
 # AFTER the record — every legal block records the category its home had at write time, so
 # the equality is what separates the legal classes (#423's settle, a hold-landing block)
 # from the strand. A terminal->terminal re-key (done -> cancelled) is the same term. The
-# round must be DECIDED (at least one verdict); when one is newer than the record the
-# ordering term fires first, so no ordering conjunct is needed here. Empty below the floor
+# round must be DECIDED (at least one verdict); on the TERMINAL half a verdict newer than the
+# record makes the ordering term fire first, so no ordering conjunct is needed here — and the
+# NON-terminal half adds none at all (its rule is the equality alone, #496). Empty below the floor
 # and on a note-less row; a null or empty record never fires.
 home_category_term() {
   home_floor_met "${1:-}" || return 1
@@ -241,14 +242,15 @@ rekey_pre_half() {
   if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
 }
 # NON-TERMINAL LATE RE-KEY half (#496, floor 2.78.41): the same recorded-vs-resolved
-# category term on a home that resolves NON-terminal (ready/working/todo/waiting_answer;
+# category term on a home that resolves NON-terminal (landing/todo/ready/working/paused;
 # in_review is excluded by the arm's own origin exclusion and re-stated here) — the block
 # recorded a category its home no longer carries, i.e. the status was RE-KEYED while the
 # task sat blocked at it (the same statuses.save read->upsert window / guard regression the
 # terminal half reads). The landing consequence differs: the settle flip is not the victim
 # (a non-terminal home is not refused), the RESTORE is — resolveRestoreTarget reads the new
-# category and demotes a working target to to-do, so the task lands in to-do when its
-# children close, with settledByOwner false and the park heals park-only. Only the RECORD
+# category, demotes a WORKING target to to-do and restores any other non-terminal category
+# into that status, so the task lands outside the review flow when its children close, with
+# settledByOwner false and the park heals park-only. Only the RECORD
 # separates it from a legal block: every legal block records the category its home carried
 # (the hold-landing class records the one it RESOLVES, so it stays silent), and no ordering
 # term is needed or used — a round closed before or after the note reads the same way here,
@@ -360,12 +362,11 @@ strand_sql() {
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
-  # heals read it as owner-settled. TERMINAL-only is a DECLARED SCOPE boundary, not a SQL
-  # impossibility: a hold-landing repair round re-opened on a ready/working status and then
-  # gating-blocked legally records a non-review home whose category MATCHES the one it
-  # resolves, so `homeCategory` would separate it from a re-key into a NON-terminal
-  # category — that wider term is OUT of this arm and tracked as #496 (SPEC states the
-  # boundary). A terminal
+  # heals read it as owner-settled. The TERMINAL resolve is the arm's original scope; from
+  # 2.78.41 (#496) the block half ALSO reads a NON-terminal resolve that the record splits —
+  # a hold-landing repair round re-opened on a ready/working status and then gating-blocked
+  # legally records a non-review home whose category MATCHES the one it resolves, so the
+  # equality is the discriminator there too (no ordering term applies to that half). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
   # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
@@ -1177,7 +1178,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # CONSUMER-FIRST wiring: the half must land as an OR branch of the arm's origin clause,
   # not as a detached conjunct (a detached AND would narrow the TERMINAL half instead)
   printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF ")) or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review'))" || { echo "selfcheck fail: non-terminal half not wired as an OR branch"; exit 1; }
-  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at) >" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
+  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "decided_at" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
@@ -2087,14 +2088,14 @@ elif [ "$STRCOL" = "1" ]; then
     printf '%s\n' "${ORPHANHOME:-none}" > "$PROBE_STATE/orphanhome.prev"
     # (f2) rekey home: a block/park whose recorded origin RESOLVES to a home the category was
     # re-keyed under after the block recorded it, with the round closed over it (#435), or —
-    # from 2.78.41 — a NON-terminal home the block recorded another category for, over an
-    # all-older round with no later status move (#496). VERSION-INDEPENDENT like the orphan
+    # from 2.78.41 — a NON-terminal home the block recorded another category for (#496).
+    # VERSION-INDEPENDENT like the orphan
     # arm: the residual producer is the statuses.save read->upsert window, present on every
     # image. Previous-pass presence confirm + id-set dedupe, like every other shape arm.
     REKEYHOME=$(echo "$STROUT" | awk -F'|' '/^rekeyhome/{print $2}')
     if [ -n "${REKEYHOME:-}" ] && [ "$REKEYHOME" != "none" ] && [ "$(cat "$PROBE_STATE/rekeyhome.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/rekeyhome.alerted" 2>/dev/null || echo none)" != "$REKEYHOME" ]; then
-        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed after the block recorded it [$REKEYHOME] — TERMINAL: the settle flip cannot land (#435); NON-terminal: the restore demotes the landing target (#496)")
+        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed after the block recorded it [$REKEYHOME] — TERMINAL: the settle flip cannot land (#435); NON-terminal: the restore lands on the re-keyed home — a WORKING target demotes to to-do (#496)")
         echo "$REKEYHOME" > "$PROBE_STATE/rekeyhome.alerted"
       fi
     else

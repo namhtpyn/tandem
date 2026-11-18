@@ -12,9 +12,9 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // SCOPE boundary, not a SQL impossibility: a hold-landing repair round re-opened on a
 // ready/working status and then gating-blocked records a non-review home whose category
 // MATCHES the one it resolves, so the category record separates it from a re-key into a
-// NON-terminal category — in scope from 2.78.41 (#496) on an ALL-OLDER round, while a
-// post-record verdict keeps that half silent (the legal hold-landing close postdates the
-// record). The settle flip then refuses on the terminal home,
+// NON-terminal category — in scope from 2.78.41 (#496): the recorded-vs-resolved equality
+// is the discriminator there (no ordering term applies, and the legal hold-landing block
+// records the category it resolves). The settle flip then refuses on the terminal home,
 // the round closes on the verdict row with NO task write, and the task stays blocked: the
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
 // ORPHAN-HOME arm cannot (the home exists), and no sweep reaches it: the PRE-block half

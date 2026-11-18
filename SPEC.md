@@ -1168,11 +1168,11 @@ non-positive deltas render no duration.
   into review (a resolvable in-review origin still lets the settle flip land: the
   orphan arm's exclusion, mirrored). The TERMINAL resolve is the arm's ORIGINAL scope; from
   `2.78.41` the `pre_block_status` half ALSO reads a NON-terminal resolve that the category
-  record splits (the CATEGORY TERM below), so a re-key into a ready/working category while
-  the task sat blocked is in scope, and the home a legal hold-landing block records — a
-  repair round re-opened on a ready/working status and then gating-blocked, which the
+  record splits (the CATEGORY TERM below), so a re-key into a ready or working category
+  while the task sat blocked is in scope, and the home a legal hold-landing block records —
+  a repair round re-opened on a ready/working status and then gating-blocked, which the
   unblock restore heals — stays SILENT because it records the category it RESOLVES
-  (recorded == resolved, and its closing verdict postdates the record anyway). A terminal home cannot host the hold-landing class;
+  (recorded == resolved). A terminal home cannot host the hold-landing class;
   the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
@@ -1183,7 +1183,7 @@ non-positive deltas render no duration.
   LATE re-key the category term fires on, or the pre-block-re-key residual the arm bullet
   declares (the legal class's applied verdict predates the re-block record). The arm
   bullet below states the record exactly, the note-less/pre-floor MIN fallback and the
-  three declared residuals this SQL cannot see. The settle flip's write gate takes
+  four declared residuals this SQL cannot see. The settle flip's write gate takes
   only an in_review-category status or a paused block whose recorded origin
   (`pre_block_status` / `park_from_status`) RESOLVES into review; a re-keyed
   terminal home fails every branch, the round closes on the verdict row with NO
@@ -1224,8 +1224,9 @@ non-positive deltas render no duration.
   same floor, on the `pre_block_status` half only — a LATE re-key into a NON-terminal
   category (in_review -> ready/working while blocked): the block records the category it
   read, the home resolves another one now, and the unblock restore reads the NEW home
-  (`resolveRestoreTarget` demotes a working target to to-do), so the task lands in to-do
-  when its children close; `settledByOwner` is false on a non-terminal home and the park
+  (`resolveRestoreTarget` demotes a WORKING target to to-do and restores any other
+  non-terminal category into that status), so the task lands outside the review flow when
+  its children close; `settledByOwner` is false on a non-terminal home and the park
   heals are park-only, so no healer corrects it. That half reads the SAME rule — recorded
   category vs the category the home carries NOW — and adds NO ordering term: a round closed
   before or after the block record reads the same way, and a verdict applied under a LATER
@@ -1236,9 +1237,9 @@ non-positive deltas render no duration.
   and this term claims no coverage of it. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
-  category (pre-floor row) falls back to the ordering-only term, and the PARK half
-  carries no category record: it is OUT of the category term by declaration (its
-  ordering term is unchanged).
+  category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
+  half needs the record and stays silent — and the PARK half carries no category record: it
+  is OUT of the category term by declaration (its ordering term is unchanged).
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
@@ -1274,7 +1275,11 @@ non-positive deltas render no duration.
   records the ALREADY-terminal category, so `homeCategory` is terminal and the row is
   byte-equivalent to the legal #423 shape; closing it needs a record of WHICH status
   homed the round when its verdicts were written, which no row carries today (a category
-  record cannot split them — at verdict time both shapes read `in_review`).
+  record cannot split them — at verdict time both shapes read `in_review`). (d) The
+  NON-TERMINAL analogue of (c): a re-key into a non-terminal category BEFORE the block
+  records the category the block then reads, so the row is indistinguishable from the legal
+  hold-landing class and stays silent — `homeCategory` only splits re-keys that land AFTER
+  the record.
   The resolve test is PER COLUMN, VERSION-independent like the
   orphan arm (a pre-guard image produces the strand too) and COLUMN-gated at the
   two-column gate (it reads both origin columns; #325). PAUSED-scoped on purpose:
