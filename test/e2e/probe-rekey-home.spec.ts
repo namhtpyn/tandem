@@ -12,7 +12,9 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // SCOPE boundary, not a SQL impossibility: a hold-landing repair round re-opened on a
 // ready/working status and then gating-blocked records a non-review home whose category
 // MATCHES the one it resolves, so the category record separates it from a re-key into a
-// NON-terminal category — that wider term is OUT of this arm and tracked as #496. The settle flip then refuses on the terminal home,
+// NON-terminal category — in scope from 2.78.41 (#496) on an ALL-OLDER round, while a
+// post-record verdict keeps that half silent (the legal hold-landing close postdates the
+// record). The settle flip then refuses on the terminal home,
 // the round closes on the verdict row with NO task write, and the task stays blocked: the
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
 // ORPHAN-HOME arm cannot (the home exists), and no sweep reaches it: the PRE-block half
@@ -196,7 +198,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       expect(fired, 'a block home re-keyed in_review -> done over a decided round is the strand').toContain(rekeyDone);
       expect(
         fired,
-        'a re-key into a NON-terminal category is the declared boundary: the legal hold-landing block shares the shape',
+        'a note-less row cannot split a non-terminal home (#496 needs the category record): silent',
       ).not.toContain(rekeyDoing);
       expect(
         fired,
@@ -371,6 +373,12 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
     expect(at.exitCode, at.stderr.toString()).toBe(0);
     expect(at.stdout.toString()).toContain("ah.payload->>'homeCategory'");
     expect(at.stdout.toString(), 'the term rides the block half only').not.toContain("mh.body like 'review parked");
+    expect(below.stdout.toString(), 'the non-terminal half must not exist below its floor').not.toContain(
+      "o.category not in ('done', 'cancelled', 'in_review')",
+    );
+    expect(at.stdout.toString(), 'the non-terminal half rides the block origin').toContain(
+      "o.category not in ('done', 'cancelled', 'in_review')",
+    );
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
@@ -381,7 +389,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const noteLessOld = `probe-homecat-noteless-old-${tag}`; // silent: MIN fallback, verdict older than the stamp
       const noteLessNew = `probe-homecat-noteless-new-${tag}`; // fires: the fallback's own counterexample
       const recordedLive = `probe-homecat-live-${tag}`; // silent: a PENDING row in max(round)
-      const recordedDoing = `probe-homecat-doing-${tag}`; // silent: the home still resolves non-terminal
+      const recordedDoing = `probe-homecat-doing-${tag}`; // FIRES (#496): recorded in_review, resolves working, all-older
+      const rekeyPostVerdict = `probe-homecat-post-verdict-${tag}`; // silent (#496): a verdict NEWER than the record keeps the non-terminal half out
+      const holdLanding = `probe-homecat-hold-landing-${tag}`; // silent (#496): the legal hold-landing block records the category it RESOLVES
       const twoEpisode = `probe-homecat-two-episode-${tag}`; // silent: the NEWEST note recorded done
       const undecided = `probe-homecat-undecided-${tag}`; // silent: no verdict row in max(round)
       const terminalRekey = `probe-homecat-terminal-${tag}`; // fires: done -> cancelled re-key while blocked
@@ -464,10 +474,22 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       // a round with NO verdict row is not a decided round: the exists-verdict clause
       await seedTask(undecided, DONE, null, 5);
       await seedRecord(undecided, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
-      // a home that still resolves non-terminal is not this shape, whatever the record says
+      // a home that still resolves non-terminal IS the shape from 2.78.41 when the record
+      // splits it: recorded in_review, resolves working, every verdict older than the note
       await seedTask(recordedDoing, DOING, null, 5);
       await seedRecord(recordedDoing, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedVerdict(recordedDoing, 10);
+      // the ALL-OLDER gate: the same split over a round the block did NOT find decided
+      // (one verdict newer than the record) must stay silent, or the legal hold-landing
+      // class — closed by a verdict that POSTDATES its block record — would fire
+      await seedTask(rekeyPostVerdict, DOING, null, 5);
+      await seedRecord(rekeyPostVerdict, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
+      await seedVerdict(rekeyPostVerdict, 2);
+      // the LEGAL control: a hold-landing block records the category it RESOLVES, so the
+      // recorded-vs-resolved term is false however the round is ordered
+      await seedTask(holdLanding, DOING, null, 5);
+      await seedRecord(holdLanding, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'working' });
+      await seedVerdict(holdLanding, 2);
 
       const armOf = async (probeSql: string) => {
         const rows = (await sql.unsafe(probeSql)) as Record<string, unknown>[];
@@ -482,6 +504,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         'below the floor the late re-key records no category and reads as the legal #423 shape',
       ).not.toContain(lateRekey);
       expect(pre, 'the note-less fallback is unchanged below the floor').toContain(noteLessNew);
+      expect(pre, 'the non-terminal half is FLOORED: a split non-terminal home cannot fire below it').not.toContain(
+        recordedDoing,
+      );
+      expect(pre, 'the legal hold-landing control is silent on both sides of the floor').not.toContain(holdLanding);
 
       const post = await armOf(at.stdout.toString().trim());
       expect(post, 'a home re-keyed terminal AFTER the record over an all-older round is the strand').toContain(
@@ -499,7 +525,15 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       );
       expect(post, 'a note-less row keeps the ordering fallback counterexample').toContain(noteLessNew);
       expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(recordedLive);
-      expect(post, 'a home still resolving non-terminal is not this shape').not.toContain(recordedDoing);
+      expect(post, 'a home still resolving non-terminal is not this shape').toContain(recordedDoing);
+      expect(
+        post,
+        'the non-terminal half is ALL-OLDER only: a verdict newer than the record keeps it silent (#496)',
+      ).not.toContain(rekeyPostVerdict);
+      expect(
+        post,
+        'the legal hold-landing block records the category it resolves: recorded == resolved stays silent (#496)',
+      ).not.toContain(holdLanding);
       expect(post, 'the term reads the NEWEST same-kind note, never an older one (residual (b))').not.toContain(
         twoEpisode,
       );

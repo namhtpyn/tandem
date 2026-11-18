@@ -1166,13 +1166,13 @@ non-positive deltas render no duration.
   status id as its home while that id's category is being rewritten; the standing
   residual class, declared like the orphan arm's ghost-task race) — and NEITHER origin resolves
   into review (a resolvable in-review origin still lets the settle flip land: the
-  orphan arm's exclusion, mirrored). TERMINAL-only is a DECLARED SCOPE BOUNDARY, not a
-  SQL impossibility: a hold-landing repair round re-opened on a ready/working status and
-  then gating-blocked legally records a non-review home whose category MATCHES the home
-  it resolves (the unblock restore heals it), and `homeCategory` would separate that from
-  a re-key into a NON-terminal category (`statuses.save`'s guard beat by the same
-  read→upsert window) — that wider term is tracked as #496 and OUT of this arm until it
-  lands, so no one assumes coverage. A terminal home cannot host the hold-landing class;
+  orphan arm's exclusion, mirrored). The TERMINAL resolve is the arm's ORIGINAL scope; from
+  `2.78.41` the `pre_block_status` half ALSO reads a NON-terminal resolve that the category
+  record splits (the CATEGORY TERM below), so a re-key into a ready/working category while
+  the task sat blocked is in scope, and the home a legal hold-landing block records — a
+  repair round re-opened on a ready/working status and then gating-blocked, which the
+  unblock restore heals — stays SILENT because it records the category it RESOLVES
+  (recorded == resolved, and its closing verdict postdates the record anyway). A terminal home cannot host the hold-landing class;
   the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
@@ -1220,7 +1220,15 @@ non-positive deltas render no duration.
   round (the block-state-home guard's read->upsert window, or a guard regression), the
   round's pending turn superseded by the owner-settled teardown (`settledByOwner`), every
   verdict predating the note, so the ordering term is blind — that row FIRES. The term
-  covers a terminal->terminal re-key (done -> cancelled while blocked) too. #423 stays
+  covers a terminal->terminal re-key (done -> cancelled while blocked) too, and — from the
+  same floor, on the `pre_block_status` half only — a LATE re-key into a NON-terminal
+  category (in_review -> ready/working while blocked): the block records the category it
+  read, the home resolves another one now, the live round is dropped by
+  `resolveRestoreTarget` (a working target demotes to to-do) and no healer reaches it. That
+  half requires an ALL-OLDER round — no decided verdict of `max(round)` NEWER than the
+  block record — because the ordering term is unusable there: the legal hold-landing class
+  is closed by a verdict that POSTDATES the record, so any post-record verdict keeps the
+  non-terminal half silent rather than reading it as the strand. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only term, and the PARK half
