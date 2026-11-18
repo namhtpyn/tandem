@@ -1228,6 +1228,12 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$RSTRAND" | grep -qF "interval '120 days'" || { echo "selfcheck fail: restore-strand arm lost the scan bound"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*RSSQL=\$\(restore_strand_sql' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand arm call missing from the live pass"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*anom\+=\("restorestrand: a restore left a live review decision' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand alert line missing"; exit 1; }
+  grep -qF 'anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] [$RDISC]' "$0" || { echo "selfcheck fail: restore-strand alert lost the letters-only dedupe discriminator"; exit 1; }
+  RDA=$(printf '%s' rec-a | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+  RDB=$(printf '%s' rec-b | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+  D1C=$(dedupe_key "restorestrand: home [00000000-0000-0000-0000-000000000000] [$RDA] — round cannot land")
+  D2C=$(dedupe_key "restorestrand: home [00000000-0000-0000-0000-000000000000] [$RDB] — round cannot land")
+  [ -n "$D1C" ] && [ "$D1C" != "$D2C" ] || { echo "selfcheck fail: restore-strand dedupe discriminator collides"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*echo "\$RSIDS" > "\$PROBE_STATE/restorestrand\.alerted"' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand dedupe write missing"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*for rid in \$\(echo "\$RSIDS" \| tr' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand unseen-id loop missing"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
@@ -2227,7 +2233,12 @@ if restore_strand_floor_met "$V"; then
         case ",$ALERTED," in *",$rid,"*) ;; *) UNSEEN="$rid" ;; esac
       done
       if [ -n "$UNSEEN" ]; then
-        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] — the review round cannot land (#500)")
+        # DISPLAY-vs-DEDUPE (#490): the task ids are UUIDs the global dedupe_key blanks, so
+        # a repeat strand on the same task would share the alert key and be swallowed. A
+        # letters-only digest of the NEW record id rides the line as the discriminator — the
+        # normaliser keeps letters, so the key changes exactly once per new record.
+        RDISC=$(printf '%s' "$UNSEEN" | sha1sum | cut -c1-8 | tr '0-9' 'ghijklmnop')
+        anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] [$RDISC] — the review round cannot land (#500)")
       fi
       echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
     else

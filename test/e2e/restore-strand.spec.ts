@@ -134,6 +134,10 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       (await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: quiet.child, status: DONE } } })).status(),
     ).toBe(200);
     expect(await strandRecord(quiet.id), 'no live round -> no strand record').toHaveLength(0);
+    const quietAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [quiet.id])) as Array<{ status: string }>
+    )[0];
+    expect(quietAfter?.status, 'the quiet control still restored').toBe(quiet.statusId);
 
     // 2b. the decided variant: a verdict landed AFTER the block record while the task sat
     // blocked — the round closed, the settle flip could not land, and the restore drops it

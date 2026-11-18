@@ -1306,15 +1306,18 @@ non-positive deltas render no duration.
   read and the write — is the same guard-window producer this detector backstops and is a
   declared residual for the record's category naming.) When the recorded category is NOT
   the category its recorded home (the blocked task's `pre_block_status`) carries at that
-  read — or that home no longer resolves (deleted under the block: the ghost-race
-  producer; ORPHAN-HOME covers the no-PENDING variant, this term the live-decision
-  variant) — and the landing category is NOT `in_review`, the task carries a live review
-  decision, the restore writes `reviewStrand`, `recordedCategory`, `homeCategory`,
-  `landingCategory`, `liveRound` and `lateVerdict` into its own
-  `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its own-path
-  resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body with
-  `REVIEW STRAND`. The detector only RECORDS; a strand can never block the restore. Every
-  legal shape is excluded: #423's settle-then-reblock records the already-terminal
+  read — or that home no longer resolves at the restore while its block record carried a
+  category (`deleted under the block`: the ghost-race producer; ORPHAN-HOME covers the
+  no-PENDING variant, this term the live-decision one) — and the landing category is NOT
+  `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
+  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
+  its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
+  own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
+  with `REVIEW STRAND`. A floored note that recorded a NULL category means the home was
+  already a ghost AT BLOCK time — a distinct producer this term cannot compare and the
+  ORPHAN-HOME arm's no-PENDING clause excludes; it is a declared residual (era-bounded to
+  the ghost race, #503). The detector only RECORDS; a strand can never block the restore.
+  Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
   category, a manual terminal/working move keeps the category it blocks from, a legal
   hold-landing block records the category it resolves, a faithful status re-home keeps the
   category, and a restore into the recorded in-review home re-enters the flow. The arm
