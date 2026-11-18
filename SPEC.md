@@ -1329,7 +1329,8 @@ non-positive deltas render no duration.
 - The RESTORE-STRAND arm (#500, label `restorestrand`, floor `2.78.42`, RESTORE-STRAND
   RECORD FLOOR) surfaces the restore-time detector for the live-round variant the
   RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, the
-  `pre_block_status` half from `2.78.42`, the PARK half from `2.78.43`: the block half reads
+  `pre_block_status` half from `2.78.42` — the GHOST-AT-BLOCK variant from `2.78.44` — the
+  PARK half from `2.78.43`: the block half reads
   the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
   and the recorded park home is `park_from_status` — #502) the app reads
   the newest floored record's recorded category (`homeCategory` on the block note,
@@ -1356,10 +1357,16 @@ non-positive deltas render no duration.
   `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
   its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
   own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
-  with `REVIEW STRAND`. A floored note that recorded a NULL category means the home was
-  already a ghost AT BLOCK time — a distinct producer this term cannot compare and the
-  ORPHAN-HOME arm's no-PENDING clause excludes; it is a declared residual (era-bounded to
-  the ghost race, #503). The detector only RECORDS; a strand can never block the restore.
+  with `REVIEW STRAND`. A floored note that recorded a NULL category is a RECORD, not a
+  missing one (#503, GHOST-AT-BLOCK RECORD floor `2.78.44`): the block committed against a
+  home that already named no `task_statuses` row (the ghost-task race), so no recorded
+  category exists to compare and the re-key test is satisfied by construction — a restore
+  that lands OUTSIDE `in_review` over a live review decision writes the same strand record,
+  its payload carrying `ghostAtBlock: 'true'` and `recordedCategory: null` and its body
+  suffixed `REVIEW STRAND (ghost-at-block)`. A block note with NO `homeCategory` KEY
+  (pre-floor note) returns no record and stays silent — the #491-era residual — and
+  ORPHAN-HOME's no-PENDING variant is unchanged: the two arms still split the ghost shape
+  by decision state. The detector only RECORDS; a strand can never block the restore.
   Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
   category, a manual terminal/working move keeps the category it blocks from, a legal
   hold-landing block records the category it resolves, a faithful status re-home keeps the
