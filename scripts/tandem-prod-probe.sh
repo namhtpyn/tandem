@@ -373,7 +373,9 @@ strand_sql() {
   # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
   # which no row carries (a category record cannot split them: both read in_review then). Below the floor the retired MIN-vs-stamp test
   # stands, and a row carrying NO note of that kind falls back to it. THREE DECLARED
-  # residuals this SQL cannot see (verified 0 rows in prod at the 2.78.40 deploy): (a) a
+  # residuals this SQL cannot see — (a) and (b) verified 0 rows in prod at the 2.78.40
+  # deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is indistinguishable
+  # from #423 by declaration): (a) a
   # floored probe
   # cannot era-gate a ROW, so a SETTLE that lost its sweep — the pre-2.78.35
   # flip->supersede crash window, and at ANY version the degraded settle path (flip
