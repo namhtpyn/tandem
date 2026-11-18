@@ -18,6 +18,10 @@ const h = vi.hoisted(() => ({
     via: string;
   }>,
   activities: [] as Array<{ body: string; payload: Record<string, unknown>; via: string }>,
+  // #502 review r1: the gate->record window — a one-shot hook fires inside the FIRST
+  // status read (the gate's), the window a concurrent re-key can land in
+  liveCategory: 'in_review',
+  onStatusQuery: null as null | (() => void),
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -53,7 +57,7 @@ vi.mock('../../server/db/index', async () => {
         taskStatuses: {
           findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
             const rows = [
-              { id: STATUS.inReview, category: 'in_review' },
+              { id: STATUS.inReview, category: h.liveCategory },
               { id: STATUS.done, category: 'done' },
               { id: STATUS.cancelled, category: 'cancelled' },
               { id: 'st-custom-review', category: 'in_review' },
@@ -61,7 +65,12 @@ vi.mock('../../server/db/index', async () => {
               { id: 'st-working', category: 'working' },
             ];
             const id = args?.where?.id?.eq;
-            return id ? rows.filter((r) => r.id === id) : rows;
+            const out = id ? rows.filter((r) => r.id === id) : rows;
+            // one-shot interleave: the re-key lands inside the gate's own read window
+            const hook = h.onStatusQuery;
+            h.onStatusQuery = null;
+            hook?.();
+            return out;
           },
         },
       },
@@ -97,6 +106,8 @@ beforeEach(() => {
   h.taskRows = [];
   h.updates = [];
   h.activities = [];
+  h.liveCategory = 'in_review';
+  h.onStatusQuery = null;
 });
 
 describe('parkRound in-review guard (#199)', () => {
@@ -152,6 +163,19 @@ describe('parkRound in-review guard (#199)', () => {
     // WRITER→PROBE CONTRACT: the probe counts a flow record only when the 1:1 payload
     // carries kind='STATUS' — the park writer must keep minting it
     expect(h.activities[0]?.payload.kind).toBe('STATUS');
+  });
+
+  it('a re-key inside the gate->record window records the QUALIFYING category (#502 r1)', async () => {
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
+    // the gate reads in_review, then the re-key commits before the record is written: a
+    // re-read here would stamp 'working' and recorded==current would launder the strand
+    h.onStatusQuery = () => {
+      h.liveCategory = 'working';
+    };
+    const parked = await parkRound('task-1', 'review turn timed out — reaped after 45 min');
+    expect(parked).toBe(true);
+    expect(h.liveCategory, 'the home really is re-keyed at record time').toBe('working');
+    expect(h.activities[0]?.payload.homeCategoryAtPark, 'the record is the gate value').toBe('in_review');
   });
 
   it('the park flip and its flow record commit in ONE transaction (#466)', async () => {

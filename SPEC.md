@@ -1237,8 +1237,11 @@ non-positive deltas render no duration.
   RECORD FLOOR) the gating restore detects it on the `pre_block_status` half and carries
   the verdict on its own unblock record (the RESTORE-STRAND arm below; below that floor
   the live-round window stays the DECLARED residual #500). From `2.78.43` (PARK-CATEGORY
-  RECORD FLOOR, #502) the park's `review parked` note payload carries the park home's
-  CATEGORY at write time (`homeCategoryAtPark`, written atomically with the park flip in
+  RECORD FLOOR, #502) the park's `review parked` note payload carries the CATEGORY its
+  park gate resolved (`homeCategoryAtPark` — `in_review` by construction, since both park
+  branches admit a home only at that category; the RESOLVED value, never a re-read, so a
+  re-key landing inside the gate→record window cannot stamp the new category and launder
+  the strand — written atomically with the park flip in
   the same transaction) and the detector's PARK half closes the same shape: the restore
   compares that record against the category the recorded park home
   (`park_from_status`) carries NOW, with the same live-round / post-record-verdict
@@ -1304,10 +1307,10 @@ non-positive deltas render no duration.
   file: a SQL arm with no pass consumer is a detector that never runs).
 - The RESTORE-STRAND arm (#500, label `restorestrand`, floor `2.78.42`, RESTORE-STRAND
   RECORD FLOOR) surfaces the restore-time detector for the live-round variant the
-  RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, BOTH
-  halves from `2.78.43`: the `pre_block_status` half reads the block note's `homeCategory`,
-  the PARK half reads the park note's `homeCategoryAtPark` and the recorded park home is
-  `park_from_status` — #502) the app reads
+  RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, the
+  `pre_block_status` half from `2.78.42`, the PARK half from `2.78.43`: the block half reads
+  the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
+  and the recorded park home is `park_from_status` — #502) the app reads
   the newest floored record's `homeCategory` and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the block record) as ADVISORY evidence
