@@ -1329,11 +1329,16 @@ non-positive deltas render no duration.
 - The RESTORE-STRAND arm (#500, label `restorestrand`, floor `2.78.42`, RESTORE-STRAND
   RECORD FLOOR) surfaces the restore-time detector for the live-round variant the
   RE-KEYED-HOME arm's clause cannot see. At a gating restore (`restoreUnblocked`, the
-  `pre_block_status` half from `2.78.42`, the PARK half from `2.78.43`: the block half reads
+  `pre_block_status` half from `2.78.42` — the GHOST-AT-BLOCK variant from `2.78.44` — the
+  PARK half from `2.78.43`: the block half reads
   the block note's `homeCategory`, the PARK half reads the park note's `homeCategoryAtPark`
   and the recorded park home is `park_from_status` — #502) the app reads
-  the newest floored record's recorded category (`homeCategory` on the block note,
-  `homeCategoryAtPark` on the park note) and the round's review
+  the newest gating note's recorded category (`homeCategory` on the newest block note,
+  `homeCategoryAtPark` on the newest park note — a note carrying no such key is not a
+  record and leaves its half of the detector silent, #491; the read is the newest note ON
+  THE TASK, so a row whose CURRENT gating note never landed can be read against an EARLIER
+  episode's note — a pre-floor crash or direct write only, the same declared residual class
+  as the DECISION-PARK arm's record) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
   the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
@@ -1353,13 +1358,24 @@ non-positive deltas render no duration.
   and fires, while a deleted seeded row leaves the landing category UNKNOWN and the term
   silent, the flip writing the dangling id — declared) — and the landing category is NOT
   `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
-  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
+  `recordedCategory`, `ghostAtBlock`, `homeCategory`, `landingCategory`, `liveRound` and
+  `lateVerdict` into
   its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
   own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body
-  with `REVIEW STRAND`. A floored note that recorded a NULL category means the home was
-  already a ghost AT BLOCK time — a distinct producer this term cannot compare and the
-  ORPHAN-HOME arm's no-PENDING clause excludes; it is a declared residual (era-bounded to
-  the ghost race, #503). The detector only RECORDS; a strand can never block the restore.
+  with `REVIEW STRAND`. A floored note that recorded a NULL category is a RECORD, not a
+  missing one (#503, GHOST-AT-BLOCK TERM floor `2.78.44`): the block committed against a
+  home that already named no `task_statuses` row (the ghost-task race), so no recorded
+  category exists to compare and the re-key test is satisfied by construction — a restore
+  that lands OUTSIDE `in_review` over a live review decision writes the same strand record,
+  its payload carrying `ghostAtBlock: true` and `recordedCategory: null` and its body
+  suffixed `REVIEW STRAND (ghost-at-block)`. A block note with NO `homeCategory` KEY
+  (pre-floor note) returns no record and stays silent — the #491-era residual — and an
+  EMPTY value is likewise not a record (the probe's `<> ''` guard), never a ghost.
+  ORPHAN-HOME's no-PENDING variant is unchanged; it overlaps this term on a DECIDED ghost
+  (ORPHAN-HOME surfaces the paused row, this record surfaces the restore), and this term
+  also reads a live PENDING row in ANY round (#445) where ORPHAN-HOME's max-round clause
+  cannot see it. The detector only RECORDS; a strand can
+  never block the restore.
   Every legal shape is excluded: #423's settle-then-reblock records the already-terminal
   category, a manual terminal/working move keeps the category it blocks from, a legal
   hold-landing block records the category it resolves, a faithful status re-home keeps the
