@@ -16,7 +16,13 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { AfterCommitQueue } from './after-commit';
-import { hasLiveReviewRow, hasVerdictAfter, isRestoreStrand, newestBlockHomeRecord } from './review-strand';
+import {
+  hasLiveReviewRow,
+  hasVerdictAfter,
+  isRestoreStrand,
+  newestBlockHomeRecord,
+  newestParkHomeRecord,
+} from './review-strand';
 import {
   logActivity as publishActivity,
   dispatchAiReviewTurns,
@@ -158,16 +164,26 @@ async function restoreUnblocked(
   // throw, it cannot undo the abort). The DECISIVE categories are re-read at the flip
   // below, so a status re-key committing inside the walk->flip window is judged against
   // the category the write actually commits against (the block arm's own rule).
-  let evidence: { recordedCategory: string; liveRound: boolean; lateVerdict: boolean } | null = null;
-  if (!parked && cur.preBlockStatus) {
+  let evidence: {
+    originStatusId: string;
+    recordedCategory: string;
+    liveRound: boolean;
+    lateVerdict: boolean;
+  } | null = null;
+  // PARK HALF (#502): the park note's own `homeCategoryAtPark` record is the park origin's
+  // recorded category — the block record is the wrong record for a park (its home is
+  // `park_from_status`, and the flip clears `pre_block_status`). A pre-floor park note
+  // carries no record and leaves the detector silent (declared residual below 2.78.43).
+  const evidenceOrigin = parked ? cur.parkFromStatus : cur.preBlockStatus;
+  if (evidenceOrigin) {
     try {
-      const blockRecord = await newestBlockHomeRecord(cur.id, db);
-      if (blockRecord) {
+      const homeRecord = parked ? await newestParkHomeRecord(cur.id, db) : await newestBlockHomeRecord(cur.id, db);
+      if (homeRecord) {
         const liveRound = await hasLiveReviewRow(cur.id, db);
         // report BOTH facts: the strand is an OR, but the record's `lateVerdict` must be
         // true whenever a verdict landed after the block, even beside a live pending row
-        const lateVerdict = await hasVerdictAfter(cur.id, blockRecord.at, db);
-        evidence = { recordedCategory: blockRecord.category, liveRound, lateVerdict };
+        const lateVerdict = await hasVerdictAfter(cur.id, homeRecord.at, db);
+        evidence = { originStatusId: evidenceOrigin, recordedCategory: homeRecord.category, liveRound, lateVerdict };
       }
     } catch (e) {
       log.warn(`gating: restore-strand detector failed for task ${cur.id}:`, e instanceof Error ? e.message : e);
@@ -203,7 +219,7 @@ async function restoreUnblocked(
       lateVerdict: boolean;
     } | null = null;
     if (evidence) {
-      const homeCategory = known.get(nonNull(cur.preBlockStatus));
+      const homeCategory = known.get(evidence.originStatusId);
       const landingCategory = known.get(restore);
       if (
         isRestoreStrand({

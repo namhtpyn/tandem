@@ -4,13 +4,15 @@ import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { login } from './helpers/login.ts';
 
-// Contract: SPEC.md "Probe versioning" — RESTORE-STRAND DETECTOR (#500, floor 2.78.42).
-// The RE-KEYED-HOME arm cannot see a status re-keyed while its task sits BLOCKED over a
-// LIVE round (a PENDING row on a blocked task is legal), and the strand DROPS at restore:
-// the children land, resolveRestoreTarget resolves the re-keyed home, and the task leaves
-// the review flow with its decision still owed. This spec seeds that exact live-round
-// variant (a guard-window/regression re-key via direct SQL, the producer the SPEC allows)
-// and drives the app's real restore: the unblock record must carry `reviewStrand`.
+// Contract: SPEC.md "Probe versioning" — RESTORE-STRAND DETECTOR (#500, floor 2.78.42;
+// park half #502, floor 2.78.43). The RE-KEYED-HOME arm cannot see a status re-keyed while
+// its task sits BLOCKED over a LIVE round (a PENDING row on a blocked task is legal), and
+// the strand DROPS at restore: the children land, resolveRestoreTarget resolves the
+// re-keyed home, and the task leaves the review flow with its decision still owed. This
+// spec seeds that exact live-round variant (a guard-window/regression re-key via direct
+// SQL, the producer the SPEC allows) and drives the app's real restore: the unblock record
+// must carry `reviewStrand`. The park half runs the same shape through the park branch,
+// keyed on the park note's `homeCategoryAtPark` record.
 const TODO = '01a14743-43f4-7053-a698-5b4ef36ed046';
 const DONE = '01a14743-43f5-759d-a00e-a20a36faa315';
 const BLOCKED = '01a14743-43f5-759d-a00e-ada27e46c2f8';
@@ -167,6 +169,123 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       (await sql.unsafe(`select status from tasks where id = $1`, [inFlow.id])) as Array<{ status: string }>
     )[0];
     expect(inFlowAfter?.status, 'the control really restored into its recorded home').toBe(inFlow.statusId);
+
+    // 4. the PARK half (#502): the same read->upsert re-key can land while the task sits
+    // PARKED — the restore takes the park branch, lands on the re-keyed home, and the
+    // parked round can never settle. The park note's `homeCategoryAtPark` record is the
+    // park half's ordering anchor + recorded category, exactly like the block note's.
+    const seedParked = async (name: string, opts: { liveRound: boolean; rekey: boolean; record?: boolean }) => {
+      const statusId = await save({ name: `${name}-${tag}`, position: 90, category: 'in_review' });
+      createdStatuses.push(statusId);
+      const id = await createTask(`${name}-${tag}`);
+      // a LADDER-owned park (scheduled rung) is the only park the automatic restore resumes
+      await sql.unsafe(
+        `update tasks set status = $2, park_from_status = $3, park_rearm_after = now() + interval '1 hour',
+                updated_at = now()
+          where id = $1`,
+        [id, BLOCKED, statusId],
+      );
+      if (opts.liveRound) {
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at)
+           values ($1, $2, $3, 1, 'PENDING', null, now() - interval '10 minutes')`,
+          [`rev-park-${id}`, id, reviewer],
+        );
+      }
+      const messageId = `park-${id}`;
+      await sql.unsafe(
+        `insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, $3, now() - interval '5 minutes')`,
+        [messageId, id, 'review parked — review turn timed out'],
+      );
+      await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+        messageId,
+        {
+          kind: 'STATUS',
+          reviewParked: true,
+          why: 'review turn timed out',
+          fromStatus: BLOCKED,
+          ...(opts.record === false ? {} : { homeCategoryAtPark: 'in_review' }),
+        },
+      ]);
+      if (opts.rekey) await sql.unsafe(`update task_statuses set category = 'done' where id = $1`, [statusId]);
+      const child = await createTask(`${name}-child-${tag}`, id);
+      return { id, statusId, child };
+    };
+
+    const parkedStrand = await seedParked('PARKSTRAND', { liveRound: true, rekey: true });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedStrand.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    const parkedAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [parkedStrand.id])) as Array<{ status: string }>
+    )[0];
+    expect(parkedAfter?.status, 'the park restore lands the re-keyed home').toBe(parkedStrand.statusId);
+    const parkedRecords = await strandRecord(parkedStrand.id);
+    expect(parkedRecords, 'the park half records the strand on the restore note').toHaveLength(1);
+    expect(parkedRecords[0]!.payload).toMatchObject({
+      reviewStrand: true,
+      parkResumed: true,
+      recordedCategory: 'in_review',
+      homeCategory: 'done',
+      landingCategory: 'done',
+      liveRound: true,
+    });
+
+    // 4b. legal control: a park restored into its still-in-review home resumes the round
+    const parkedLegal = await seedParked('PARKLEGAL', { liveRound: true, rekey: false });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedLegal.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(parkedLegal.id), 'a legal park restore writes no strand').toHaveLength(0);
+    const parkedLegalAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [parkedLegal.id])) as Array<{ status: string }>
+    )[0];
+    expect(parkedLegalAfter?.status, 'the park restore resumes into the recorded home').toBe(parkedLegal.statusId);
+
+    // 4c. pre-floor control: a park note with no homeCategoryAtPark record stays silent
+    const parkedPreFloor = await seedParked('PARKPRE', { liveRound: true, rekey: true, record: false });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedPreFloor.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(parkedPreFloor.id), 'a pre-floor park note is the declared residual').toHaveLength(0);
+    const parkedPreFloorAfter = (
+      (await sql.unsafe(`select status from tasks where id = $1`, [parkedPreFloor.id])) as Array<{ status: string }>
+    )[0];
+    expect(parkedPreFloorAfter?.status, 'the record-less park still restores into its recorded home').toBe(
+      parkedPreFloor.statusId,
+    );
+
+    // 4d. the NEWEST park note is the record (#502 r5): a flapping reviewer leaves several
+    // `review parked` notes (one per ladder re-fire). Seed an OLDER record-less note on a
+    // re-keyed, live-round task whose CURRENT park note is floored — an oldest-first read
+    // would return the record-less note, stay silent, and disable the park half for every
+    // re-parked task; the newest-note read fires.
+    const parkedMulti = await seedParked('PARKMULTI', { liveRound: true, rekey: true });
+    await sql.unsafe(
+      `with m as (
+         insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'review parked — earlier episode', now() - interval '30 minutes')
+         returning id
+       )
+       insert into task_message_activities (message_id, payload)
+       select id, $3 from m`,
+      [`park-old-${parkedMulti.id}`, parkedMulti.id, { kind: 'STATUS', reviewParked: true }],
+    );
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedMulti.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    const multiRecords = await strandRecord(parkedMulti.id);
+    expect(multiRecords, 'the newest park note is the record, not the oldest').toHaveLength(1);
+    expect(multiRecords[0]!.payload).toMatchObject({ reviewStrand: true, recordedCategory: 'in_review' });
   } finally {
     // the per-test fixture sweeps tasks AFTER this block, but status removal refuses while
     // any task still references the status — remove this spec's rows first (tag-scoped),
