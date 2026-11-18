@@ -3271,6 +3271,14 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     return false;
   }
   const rearmable = opts.rearmable === true;
+  // PARK-CATEGORY RECORD FLOOR (#502): the category the GATE relied on travels on the park
+  // note, so the restore-time detector can separate a re-keyed park home (the restore lands
+  // outside in-review and the round strands) from a legal park restore. The record carries
+  // the RESOLVED gate value, never a second read: both branches above admit a home only at
+  // `in_review`, and a re-read here could observe a re-key that landed inside the
+  // gate->record window and stamp the NEW category — recorded == current would then launder
+  // the strand into a legal shape (#502 review r1).
+  const parkOriginCategory = CATEGORY.IN_REVIEW;
   // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
   // next re-fire; past the ladder the round parks FINAL (after = null) and the
   // watchdog alerts the exhausted shape
@@ -3332,6 +3340,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
         reviewParked: true,
         why,
         fromStatus: task.status,
+        homeCategoryAtPark: parkOriginCategory,
         ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
       },
       ex,
