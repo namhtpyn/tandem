@@ -219,14 +219,17 @@ home_floor_met() {
   [ "$(at_least "$HOME_CATEGORY_FLOOR" "${1:-}")" = "1" ]
 }
 # the block origin's recorded-at-block category, read from the origin's OWN newest
-# `auto-blocked:` record (never the task-wide newest gating note): a NON-terminal record
-# whose home RESOLVES terminal now means the re-key landed AFTER the record. The round
-# must be ALL-OLDER — at least one verdict and NONE newer than the record — which is the
-# legal #423 silence the term exists to break, and #423 itself never satisfies the
-# non-terminal category term. Empty below the floor and on a note-less row.
+# `auto-blocked:` record (never the task-wide newest gating note): a recorded category
+# that DIFFERS from the category the recorded home carries NOW means the home was re-keyed
+# AFTER the record — every legal block records the category its home had at write time, so
+# the equality is what separates the legal classes (#423's settle, a hold-landing block)
+# from the strand. A terminal->terminal re-key (done -> cancelled) is the same term. The
+# round must be DECIDED (at least one verdict); when one is newer than the record the
+# ordering term fires first, so no ordering conjunct is needed here. Empty below the floor
+# and on a note-less row; a null or empty record never fires.
 home_category_term() {
   home_floor_met "${1:-}" || return 1
-  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'auto-blocked:%%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategory' is not null and ah.payload->>'homeCategory' not in ('done', 'cancelled') and mh.created_at = %s) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > %s)" "$(block_record_ts)" "$(block_record_ts)"
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'auto-blocked:%%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategory' is not null and ah.payload->>'homeCategory' <> '' and not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory') and mh.created_at = %s) and exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id))" "$(block_record_ts)"
 }
 # the block-origin half of the RE-KEYED-HOME arm: the per-verdict ordering term, OR the
 # category term at/above its floor. Below the floor the expression is the ordering term
@@ -336,11 +339,12 @@ strand_sql() {
   # on the terminal home, the round closes on the verdict row with NO task write, and the
   # task stays blocked: the wedge's in_review branch cannot see it (the origin resolves
   # outside in_review), the ORPHAN-HOME arm cannot (the home exists), and the teardown
-  # heals read it as owner-settled. TERMINAL-only on purpose: a re-key INTO a non-terminal
-  # category is, from the SQL, indistinguishable from the DECLARED legal class (a
-  # hold-landing repair round re-opened on a ready/working status, then gating-blocked:
-  # the block legally records a non-review home and a later verdict closes the round), so
-  # that sub-shape is OUT of this arm and named in SPEC (r1 boundary, #435). A terminal
+  # heals read it as owner-settled. TERMINAL-only is a DECLARED SCOPE boundary, not a SQL
+  # impossibility: a hold-landing repair round re-opened on a ready/working status and then
+  # gating-blocked legally records a non-review home whose category MATCHES the one it
+  # resolves, so `homeCategory` would separate it from a re-key into a NON-terminal
+  # category — that wider term is OUT of this arm and tracked as #496 (SPEC states the
+  # boundary). A terminal
   # home DOES legally host the #423 re-block-after-settle class (a settle to a terminal
   # status, then a still-open child re-blocks with the settled status as home): its
   # applied verdict PREDATES the re-block record, so a round whose verdicts are ALL older
@@ -1133,11 +1137,12 @@ if [ "${1:-}" = "--selfcheck" ]; then
   home_floor_met 2.78.41-rc1 && { echo "selfcheck fail: home floor met on a pre-release"; exit 1; }
   home_category_term 2.78.40 && { echo "selfcheck fail: home-category term emitted below its floor"; exit 1; }
   printf '%s' "$(home_category_term 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: home-category term lost the record read"; exit 1; }
-  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "not in ('done', 'cancelled')" || { echo "selfcheck fail: home-category term lost the non-terminal record test"; exit 1; }
-  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at) >" || { echo "selfcheck fail: home-category term lost the all-older round test"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "not exists (select 1 from task_statuses oc where oc.id = t.pre_block_status and oc.category = ah.payload->>'homeCategory')" || { echo "selfcheck fail: home-category term lost the recorded-vs-current category test"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at)" && { echo "selfcheck fail: home-category term carries a dead ordering conjunct"; exit 1; }
+  printf '%s' "$(home_category_term 2.78.41)" | grep -qF "ah.payload->>'homeCategory' <> ''" || { echo "selfcheck fail: home-category term lost the empty-record guard"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "homeCategory" && { echo "selfcheck fail: rekey arm reads homeCategory below its floor"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF "homeCategory" || { echo "selfcheck fail: rekey arm lost the home-category term"; exit 1; }
-  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "2" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "homeCategory" | wc -l)" = "3" ] || { echo "selfcheck fail: home-category term not scoped to the block half"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the

@@ -1201,8 +1201,8 @@ non-positive deltas render no duration.
   ordering. The ORDERING TERM's counterexample shape is the resolved `done`/`cancelled`
   home under a blocked task whose round carries at least one verdict NEWER than the
   record that made it terminal (one vote before it, the settling vote after, is this same
-  wedge); the CATEGORY TERM's counterexample is the all-older late re-key stated in the
-  bullet above. The
+  wedge); the CATEGORY TERM's counterexample is a DECIDED round whose recorded category
+  differs from the category its recorded home carries now (the late re-key above). The
   current-round clause (no PENDING row in `max(round)`, at least one verdict row) and
   the ordering above apply as specified; below the `2.78.24` record floor the WEDGE
   falls back to its legacy test (#430). THIS arm's own floor is `2.78.38` (BLOCK-PARK
@@ -1215,12 +1215,14 @@ non-positive deltas render no duration.
   `2.78.41` (HOME-CATEGORY RECORD FLOOR) the auto-block note's payload
   carries the home's CATEGORY at write time (`homeCategory`, written atomically with the
   block flip in the same transaction), and the CATEGORY TERM closes the LATE-RE-KEY
-  strand: a status re-keyed terminal while its task already sits blocked over a live
-  round (the block-state-home guard's read->upsert window, or a guard regression) — the
-  record says non-terminal while the home resolves terminal now, the round's pending turn
-  is superseded by the owner-settled teardown (`settledByOwner`), and every verdict
-  predates the note, so the ordering term is blind — that row FIRES. #423 stays silent:
-  its recorded category was already terminal at block time. A block note carrying no
+  strand: a DECIDED round whose recorded category DIFFERS from the category its recorded
+  home carries NOW — a status re-keyed while its task already sits blocked over a live
+  round (the block-state-home guard's read->upsert window, or a guard regression), the
+  round's pending turn superseded by the owner-settled teardown (`settledByOwner`), every
+  verdict predating the note, so the ordering term is blind — that row FIRES. The term
+  covers a terminal->terminal re-key (done -> cancelled while blocked) too. #423 stays
+  silent: its recorded category IS the home's current one, exactly as every legal block's
+  is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only term, and the PARK half
   carries no category record: it is OUT of the category term by declaration (its
   ordering term is unchanged).
@@ -1239,8 +1241,9 @@ non-positive deltas render no duration.
   landed and its settle flip can never land on the re-keyed terminal home — except on the
   degraded path that skips its sweep (residual (a)), where a settled-then-re-blocked task
   can carry one; the PENDING heal signature keeps that row silent until it drains.
-  THREE DECLARED residuals the SQL cannot see, all verified empty in prod at the `2.78.40`
-  deploy. (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
+  THREE DECLARED residuals the SQL cannot see — (a) and (b) verified empty in prod at
+  the `2.78.40` deploy; (c) is a FALSE NEGATIVE and cannot be counted (the row is
+  indistinguishable from #423 by declaration). (a) A floored probe cannot era-gate a ROW, so a SETTLE that lost its sweep —
   the pre-`2.78.35` flip→supersede crash window, and at ANY version the degraded settle
   path (the flip committed on the pool, the sweep skipped by design when that isolation
   transaction fails) — can leave a post-note verdict that reads as the wedge; while the

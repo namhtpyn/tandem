@@ -9,10 +9,10 @@ import { E2E_DATABASE_URL } from './helpers/env';
 // but its category was re-keyed after the block recorded it (statuses.save's
 // block-state-home guard is a read-then-write check; the gating block landing inside its
 // read->upsert window is the declared residual producer). TERMINAL-only is a declared
-// boundary: a re-key into a NON-terminal category is SQL-indistinguishable from the
-// declared legal hold-landing class (a repair round re-opened on a ready/working status,
-// then gating-blocked, the block recording a non-review home legally) and is OUT of this
-// arm, never a false alarm here. The settle flip then refuses on the terminal home,
+// SCOPE boundary, not a SQL impossibility: a hold-landing repair round re-opened on a
+// ready/working status and then gating-blocked records a non-review home whose category
+// MATCHES the one it resolves, so the category record separates it from a re-key into a
+// NON-terminal category — that wider term is OUT of this arm and tracked as #496. The settle flip then refuses on the terminal home,
 // the round closes on the verdict row with NO task write, and the task stays blocked: the
 // wedge's in_review branch cannot see it (the origin resolves outside in_review), the
 // ORPHAN-HOME arm cannot (the home exists), and no sweep reaches it: the PRE-block half
@@ -384,6 +384,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const recordedDoing = `probe-homecat-doing-${tag}`; // silent: the home still resolves non-terminal
       const twoEpisode = `probe-homecat-two-episode-${tag}`; // silent: the NEWEST note recorded done
       const undecided = `probe-homecat-undecided-${tag}`; // silent: no verdict row in max(round)
+      const terminalRekey = `probe-homecat-terminal-${tag}`; // fires: done -> cancelled re-key while blocked
 
       const seedTask = async (id: string, pre: string | null, park: string | null, writtenMinutesAgo: number) => {
         await sql.unsafe(
@@ -448,6 +449,11 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedRecord(twoEpisode, 30, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
       await seedRecord(twoEpisode, 5, 'auto-blocked: 2 subtask(s) open', { homeCategory: 'done' });
       await seedVerdict(twoEpisode, 40);
+      // a terminal -> terminal re-key is the same term: the recorded 'done' is not the
+      // category the home carries now ('cancelled')
+      await seedTask(terminalRekey, CANCELLED, null, 5);
+      await seedRecord(terminalRekey, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'done' });
+      await seedVerdict(terminalRekey, 10);
       // a round with NO verdict row is not a decided round: the exists-verdict clause
       await seedTask(undecided, DONE, null, 5);
       await seedRecord(undecided, 5, 'auto-blocked: 1 subtask(s) open', { homeCategory: 'in_review' });
@@ -491,6 +497,9 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         twoEpisode,
       );
       expect(post, 'a round with no verdict row is not a decided round').not.toContain(undecided);
+      expect(post, 'a terminal -> terminal re-key is the same wedge (recorded done, home cancelled now)').toContain(
+        terminalRekey,
+      );
     } finally {
       await sql.end();
     }
