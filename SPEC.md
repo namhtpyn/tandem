@@ -1222,20 +1222,18 @@ non-positive deltas render no duration.
   verdict predating the note, so the ordering term is blind — that row FIRES. The term
   covers a terminal->terminal re-key (done -> cancelled while blocked) too, and — from the
   same floor, on the `pre_block_status` half only — a LATE re-key into a NON-terminal
-  category (in_review -> ready/working while blocked) over a DECIDED round: the block
-  records the category it read, the home resolves another one now, and the unblock restore
-  reads the NEW home (`resolveRestoreTarget` demotes a working target to to-do), so the task
-  lands in to-do when its children close; `settledByOwner` is false on a non-terminal home
-  and the park heals are park-only, so no healer corrects it. That half requires an
-  ALL-OLDER round — no decided verdict of `max(round)` NEWER than the block record —
-  because the ordering term is unusable there: the legal hold-landing class is closed by a
-  verdict that POSTDATES the record, so any post-record verdict keeps the non-terminal half
-  silent rather than reading it as the strand — and NO status write after the block, since
-  a move is the #427 EGRESS-ORIGIN leftover (its origin is left in place) and must not read
-  as this strand. The arm's live-round clause bounds it too: a re-key that strands a round
-  still carrying a PENDING row, or one whose verdict lands after the note, is the DECLARED
-  residual (#500) — it needs a restore-time detector, and this term claims no coverage of
-  it. #423 stays
+  category (in_review -> ready/working while blocked): the block records the category it
+  read, the home resolves another one now, and the unblock restore reads the NEW home
+  (`resolveRestoreTarget` demotes a working target to to-do), so the task lands in to-do
+  when its children close; `settledByOwner` is false on a non-terminal home and the park
+  heals are park-only, so no healer corrects it. That half reads the SAME rule — recorded
+  category vs the category the home carries NOW — and adds NO ordering term: a round closed
+  before or after the block record reads the same way, and a verdict applied under a LATER
+  re-key is the declared look-alike (the re-key is a guard window/regression in both cases,
+  so the alert names the anomaly rather than a lost landing). The arm's live-round clause
+  bounds it: a re-key that strands a round still carrying a PENDING row is invisible to
+  every term here and is the DECLARED residual (#500) — it needs a restore-time detector,
+  and this term claims no coverage of it. #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only term, and the PARK half

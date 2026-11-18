@@ -240,43 +240,26 @@ rekey_pre_half() {
   cat=$(home_category_term "${1:-}")
   if [ -n "$cat" ]; then printf "(%s or %s)" "$order" "$cat"; else printf "%s" "$order"; fi
 }
-# ALL-OLDER round vs the BLOCK's own record (#496): the strict negation of the ordering
-# term — NO decided verdict of max(round) is newer than the newest auto-blocked record.
-# The non-terminal half needs it because the ordering term itself is unusable there: a
-# legal hold-landing block is closed by a verdict that POSTDATES its record, so ANY
-# post-record verdict must keep that half silent instead of reading it as the strand.
-block_all_older() {
-  printf "not exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > %s)" "$(block_record_ts)"
-}
-# NO LATER STATUS WRITE (#496): a manual status move records a `status: %` body with its 1:1
-# kind='STATUS' payload — the ready arm's owner-gap discriminator reads the same record. A
-# move AFTER the block means the task LEFT the home the block recorded: that is the #427
-# EGRESS-ORIGIN leftover shape (the move leaves the origin in place), and a paused-CATEGORY
-# leftover must not be read as this strand. Free text cannot forge the record (a NOTE's
-# payload kind is NOTE, never STATUS).
-no_later_status_write() {
-  printf "not exists (select 1 from task_messages m4 join task_message_activities a4 on a4.message_id = m4.id where m4.task_id = t.id and m4.body like %s and a4.payload->>'kind' = 'STATUS' and m4.created_at > %s)" "'status: %'" "$(block_record_ts)"
-}
-# NON-TERMINAL LATE RE-KEY half (#496, floor 2.78.41): the category term on a home that
-# resolves NON-terminal (ready/working/todo/waiting_answer; in_review is excluded by the
-# arm's own origin exclusion and re-stated here) — a status re-keyed into a non-terminal
-# category while its task stays blocked over a DECIDED round: the block recorded the category
-# it read, the home resolves another one now, and the unblock restore then reads the new
-# non-terminal home (resolveRestoreTarget demotes a working target to to-do), so the task
-# lands in to-do when its children close. settledByOwner is false on a non-terminal home and
-# the park heals are park-only, so no healer corrects it. The legal hold-landing class
-# records the category it RESOLVES (recorded == resolved) and stays silent, the ordering term
-# is NOT reused here (block_all_older — the legal hold-landing close postdates the record),
-# and a later status move is the #427 leftover, not this strand (no_later_status_write).
-# Empty below the floor and on a note-less row, so the pre-floor SQL stays byte-identical.
+# NON-TERMINAL LATE RE-KEY half (#496, floor 2.78.41): the same recorded-vs-resolved
+# category term on a home that resolves NON-terminal (ready/working/todo/waiting_answer;
+# in_review is excluded by the arm's own origin exclusion and re-stated here) — the block
+# recorded a category its home no longer carries, i.e. the status was RE-KEYED while the
+# task sat blocked at it (the same statuses.save read->upsert window / guard regression the
+# terminal half reads). The landing consequence differs: the settle flip is not the victim
+# (a non-terminal home is not refused), the RESTORE is — resolveRestoreTarget reads the new
+# category and demotes a working target to to-do, so the task lands in to-do when its
+# children close, with settledByOwner false and the park heals park-only. Only the RECORD
+# separates it from a legal block: every legal block records the category its home carried
+# (the hold-landing class records the one it RESOLVES, so it stays silent), and no ordering
+# term is needed or used — a round closed before or after the note reads the same way here,
+# and an already-applied round under a later re-key is the declared look-alike (#500 names
+# the live-round variant this term cannot see). Empty below the floor and on a note-less
+# row, so the pre-floor SQL stays byte-identical.
 rekey_nonterminal_half() {
-  local cat older moved
-  home_floor_met "${1:-}" || return 1
+  local cat
   cat=$(home_category_term "${1:-}")
   [ -n "$cat" ] || return 1
-  older=$(block_all_older)
-  moved=$(no_later_status_write)
-  printf " or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review')) and %s and %s and %s))" "$cat" "$older" "$moved"
+  printf " or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review')) and %s))" "$cat"
 }
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
@@ -1189,14 +1172,12 @@ if [ "${1:-}" = "--selfcheck" ]; then
   rekey_nonterminal_half 2.78.40 && { echo "selfcheck fail: non-terminal half emitted below the home floor"; exit 1; }
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "o.category not in ('done', 'cancelled', 'in_review')" || { echo "selfcheck fail: non-terminal half lost its resolve clause"; exit 1; }
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "homeCategory" || { echo "selfcheck fail: non-terminal half lost the category record"; exit 1; }
-  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "not exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > (select max(m.created_at)" || { echo "selfcheck fail: non-terminal half lost the all-older gate"; exit 1; }
   printf '%s' "$(strand_rekey_arm 2.78.40 2)" | grep -qF "o.category not in ('done', 'cancelled', 'in_review')" && { echo "selfcheck fail: non-terminal half on a pre-floor arm"; exit 1; }
   [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "o.category not in ('done', 'cancelled', 'in_review')" | wc -l)" = "1" ] || { echo "selfcheck fail: non-terminal half not emitted exactly once"; exit 1; }
-  [ "$(printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -oF "not exists (select 1 from task_reviews r where r.task_id = t.id and r.status in ('APPROVED', 'CHANGE_REQUESTED', 'REJECTED') and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id) and coalesce(r.decided_at, r.created_at) > (select max(m.created_at)" | wc -l)" = "1" ] || { echo "selfcheck fail: all-older gate not emitted exactly once"; exit 1; }
-  # the #427-leftover exclusion: a status MOVE after the block leaves the origin in place on
-  # a paused-category row — the non-terminal half must not read it as the strand
-  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "m4.body like 'status: %' and a4.payload->>'kind' = 'STATUS' and m4.created_at >" || { echo "selfcheck fail: non-terminal half lost the later-status-write exclusion"; exit 1; }
-  printf '%s' "$(rekey_nonterminal_half 2.78.40)" | grep -qF "m4.body like 'status: %'" && { echo "selfcheck fail: later-status-write exclusion below the floor"; exit 1; }
+  # CONSUMER-FIRST wiring: the half must land as an OR branch of the arm's origin clause,
+  # not as a detached conjunct (a detached AND would narrow the TERMINAL half instead)
+  printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF ")) or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review'))" || { echo "selfcheck fail: non-terminal half not wired as an OR branch"; exit 1; }
+  printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "coalesce(r.decided_at, r.created_at) >" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
@@ -2113,7 +2094,7 @@ elif [ "$STRCOL" = "1" ]; then
     REKEYHOME=$(echo "$STROUT" | awk -F'|' '/^rekeyhome/{print $2}')
     if [ -n "${REKEYHOME:-}" ] && [ "$REKEYHOME" != "none" ] && [ "$(cat "$PROBE_STATE/rekeyhome.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/rekeyhome.alerted" 2>/dev/null || echo none)" != "$REKEYHOME" ]; then
-        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed into a TERMINAL category over a decided round (the settle flip cannot land, #435) or a NON-terminal one over an all-older round (#496) [$REKEYHOME]")
+        anom+=("rekey_home: blocked task whose recorded block/park home was re-keyed after the block recorded it [$REKEYHOME] — TERMINAL: the settle flip cannot land (#435); NON-terminal: the restore demotes the landing target (#496)")
         echo "$REKEYHOME" > "$PROBE_STATE/rekeyhome.alerted"
       fi
     else
