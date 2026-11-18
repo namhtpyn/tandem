@@ -1234,9 +1234,10 @@ non-positive deltas render no duration.
   so the alert names the anomaly rather than a lost landing). The arm's live-round clause
   bounds it: a re-key that strands a round still carrying a PENDING row is invisible to
   every term here — the strand DROPS at the restore, so from `2.78.42` (RESTORE-STRAND
-  RECORD FLOOR) the gating restore detects it and carries the verdict on its own unblock
-  record (the RESTORE-STRAND arm below; below that floor the live-round window stays the
-  DECLARED residual #500). #423 stays
+  RECORD FLOOR) the gating restore detects it on the `pre_block_status` half and carries
+  the verdict on its own unblock record (the RESTORE-STRAND arm below; below that floor
+  the live-round window stays the DECLARED residual #500, and the PARK half's version of
+  the shape is the separately declared #502). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
@@ -1296,28 +1297,31 @@ non-positive deltas render no duration.
   no category record, the same boundary the arm's category term declares, and closing it
   needs the park note to record its own category first (#502)) the app reads
   the newest floored `auto-blocked:` record's `homeCategory` and the round's review
-  evidence (a PENDING reviewer row, or a verdict NEWER than the block record) as ADVISORY
-  evidence on the pool before the write — a failed evidence read is logged and never
-  blocks the restore — and reads the DECISIVE categories at the flip (`statusCategoryMap`
-  on the write's own executor), so a status re-key committing inside the walk→flip window
-  is judged against the category the write actually commits against (the block arm's own
-  rule). When the recorded category is NOT the category its recorded home (the blocked
-  task's `pre_block_status`) carries at the flip — or that home no longer resolves
-  (deleted under the block: the ghost-race producer; ORPHAN-HOME covers the no-PENDING
-  variant, this term the live-decision variant) — and the landing category is NOT
-  `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
-  `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict`
-  into its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`,
-  its own-path resolve + flip + note in ONE transaction, #466 pattern) and suffixes the
-  body with `REVIEW STRAND`. The detector only RECORDS; a strand can never block the
-  restore. Every legal shape is excluded: #423's settle-then-reblock records the
-  already-terminal category, a manual terminal/working move keeps the category it blocks
-  from, a legal hold-landing block records the category it resolves, a faithful status
-  re-home keeps the category, and a restore into the recorded in-review home re-enters
-  the flow. The arm reads only that single-writer record
-  (`m.body like 'unblocked: all subtasks terminal → %'` + `kind='STATUS'` +
-  `autoUnblocked='true'` + `reviewStrand='true'`), bounded to the last 120 days, alerts on
-  the RECORD-id set (a repeat strand on the same task changes the set and alerts again)
+  evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
+  older owed vote, #445 — or a verdict NEWER than the block record) as ADVISORY evidence
+  on the pool before the write — a failed evidence read is logged and never blocks the
+  restore — and reads the DECISIVE categories inside the restore's transaction immediately
+  before the guarded write, so the target follows the category map the write is about to
+  use. (The remaining single-statement gap — a `statuses.save` committing between that map
+  read and the write — is the same guard-window producer this detector backstops and is a
+  declared residual for the record's category naming.) When the recorded category is NOT
+  the category its recorded home (the blocked task's `pre_block_status`) carries at that
+  read — or that home no longer resolves (deleted under the block: the ghost-race
+  producer; ORPHAN-HOME covers the no-PENDING variant, this term the live-decision
+  variant) — and the landing category is NOT `in_review`, the task carries a live review
+  decision, the restore writes `reviewStrand`, `recordedCategory`, `homeCategory`,
+  `landingCategory`, `liveRound` and `lateVerdict` into its own
+  `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its own-path
+  resolve + flip + note in ONE transaction, #466 pattern) and suffixes the body with
+  `REVIEW STRAND`. The detector only RECORDS; a strand can never block the restore. Every
+  legal shape is excluded: #423's settle-then-reblock records the already-terminal
+  category, a manual terminal/working move keeps the category it blocks from, a legal
+  hold-landing block records the category it resolves, a faithful status re-home keeps the
+  category, and a restore into the recorded in-review home re-enters the flow. The arm
+  reads only that single-writer record (`m.body like 'unblocked: all subtasks terminal →
+  %'` + `kind='STATUS'` + `autoUnblocked='true'` + `reviewStrand='true'`), bounded to the
+  last 120 days, alerts on the RECORD-id set (a repeat strand on the same task changes the
+  set and alerts again; aging records out of the window never re-alert a standing fault)
   and names the task ids; it is inert below its floor (pre-floor images write no such
   note), and the live pass carries its emit + id-set dedupe wiring (`--selfcheck` pins the
   gate, the record predicates and the wiring).

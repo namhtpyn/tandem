@@ -45,30 +45,27 @@ export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Pro
   return { category: row.category, at: row.at };
 }
 
-/** A verdict on the task's CURRENT (max) round NEWER than the block record: the round was
- *  live at block time and closed while the task sat blocked — the settle flip could not
- *  land, so the verdict is stranded too (the #500 sentence's second variant). */
+/** A verdict NEWER than the block record: the round was live at block time and closed
+ *  while the task sat blocked — the settle flip could not land, so the verdict is stranded
+ *  too (the #500 sentence's second variant). ANY round, never just max(round): a superseded
+ *  max round can hide an older round that is still live (#445's doctrine — the ready-round
+ *  arm retired the max-round clause for exactly this shape). */
 export async function hasVerdictAfter(taskId: string, at: Date, ex: DbExecutor): Promise<boolean> {
   const rows = await asDb(ex)
     .select({ id: taskReviews.id })
     .from(taskReviews)
     .where(
-      and(
-        eq(taskReviews.taskId, taskId),
-        inArray(taskReviews.status, VERDICT_STATUSES),
-        gt(taskReviews.decidedAt, at),
-        eq(taskReviews.round, sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${taskId})`),
-      ),
+      and(eq(taskReviews.taskId, taskId), inArray(taskReviews.status, VERDICT_STATUSES), gt(taskReviews.decidedAt, at)),
     )
     .limit(1);
   return rows.length > 0;
 }
 
-/** A LIVE reviewer row in the task's CURRENT (max) round — PENDING with a reviewer (a
- *  void row from a removed reviewer can never carry a verdict and is not a live decision).
- *  Read on the caller's executor so the detector's three reads share ONE snapshot on a
- *  borrowed-transaction restore (the module-level read `openRoundLive` would mix an
- *  uncommitted caller state with a stale pool view). */
+/** A LIVE reviewer row in ANY round — PENDING with a reviewer (a void row from a removed
+ *  reviewer can never carry a verdict and is not a live decision). ANY round by the same
+ *  #445 doctrine: a superseded max round must not hide an older owed vote. ADVISORY read —
+ *  the caller runs it on the pool, deliberately, so a failed statement can never abort a
+ *  borrowed caller's transaction. */
 export async function hasLiveReviewRow(taskId: string, ex: DbExecutor): Promise<boolean> {
   const rows = await asDb(ex)
     .select({ id: taskReviews.id })
@@ -78,7 +75,6 @@ export async function hasLiveReviewRow(taskId: string, ex: DbExecutor): Promise<
         eq(taskReviews.taskId, taskId),
         eq(taskReviews.status, REVIEW_STATUS.PENDING),
         isNotNull(taskReviews.reviewerId),
-        eq(taskReviews.round, sql`(select max(r3.round) from task_reviews r3 where r3.task_id = ${taskId})`),
       ),
     )
     .limit(1);

@@ -108,6 +108,26 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     });
     expect(records[0]!.body).toContain('REVIEW STRAND');
 
+    // 1b. a live vote on a NON-current round still counts (#445: a superseded max round
+    // must not hide an older owed vote)
+    const older = await seedParent('OLDER', { liveRound: false, rekey: true });
+    await sql.unsafe(
+      `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at)
+       values ($1, $2, $3, 1, 'PENDING', null, now() - interval '20 minutes')`,
+      [`rev-old-${older.id}`, older.id, reviewer],
+    );
+    await sql.unsafe(
+      `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at, decided_at)
+       values ($1, $2, $3, 2, 'SUPERSEDED', null, now() - interval '10 minutes', now() - interval '9 minutes')`,
+      [`rev-sup-${older.id}`, older.id, reviewer],
+    );
+    expect(
+      (await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: older.child, status: DONE } } })).status(),
+    ).toBe(200);
+    const olderRecords = await strandRecord(older.id);
+    expect(olderRecords, 'an older-round live vote is a live decision too').toHaveLength(1);
+    expect(olderRecords[0]!.payload).toMatchObject({ reviewStrand: true, liveRound: true });
+
     // 2. legal control: a re-key with no review decision to strand stays silent
     const quiet = await seedParent('QUIET', { liveRound: false, rekey: true });
     expect(

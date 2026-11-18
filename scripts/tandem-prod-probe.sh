@@ -1221,6 +1221,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(printf '%s' "$RSTRAND" | grep -oF "select 'restorestrand'" | wc -l)" = "1" ] || { echo "selfcheck fail: restore-strand arm emitted twice"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF "m.body like 'unblocked: all subtasks terminal → %'" || { echo "selfcheck fail: restore-strand arm lost the single-writer body"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF "a.payload->>'kind' = 'STATUS'" || { echo "selfcheck fail: restore-strand arm lost the payload-kind predicate"; exit 1; }
+  printf '%s' "$RSTRAND" | grep -qF "a.payload->>'autoUnblocked' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the restore identity"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF "a.payload->>'reviewStrand' = 'true'" || { echo "selfcheck fail: restore-strand arm lost the detector record predicate"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF 'as ids' || { echo "selfcheck fail: restore-strand arm lost the dedupe id aggregate"; exit 1; }
   printf '%s' "$RSTRAND" | grep -qF 'as task_ids' || { echo "selfcheck fail: restore-strand arm lost the task-id aggregate"; exit 1; }
@@ -1228,6 +1229,7 @@ if [ "${1:-}" = "--selfcheck" ]; then
   [ "$(grep -cE '^[[:space:]]*RSSQL=\$\(restore_strand_sql' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand arm call missing from the live pass"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*anom\+=\("restorestrand: a restore left a live review decision' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand alert line missing"; exit 1; }
   [ "$(grep -cE '^[[:space:]]*echo "\$RSIDS" > "\$PROBE_STATE/restorestrand\.alerted"' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand dedupe write missing"; exit 1; }
+  [ "$(grep -cE '^[[:space:]]*for rid in \$\(echo "\$RSIDS" \| tr' "$0" 2>/dev/null || true)" = "1" ] || { echo "selfcheck fail: restore-strand unseen-id loop missing"; exit 1; }
   # READY-ROUND arm (#443): floor matrix + the SQL's own clauses. BELOW the floor the
   # note-dispatch bounce produces the shape legally (a send on a parked task), so the arm
   # must be ABSENT there — a misattributed alert on a pre-fix image is worse than silence.
@@ -2216,10 +2218,18 @@ if restore_strand_floor_met "$V"; then
     RSIDS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $2}')
     RSTASKS=$(echo "$RSOUT" | awk -F'|' '/^restorestrand/{print $3}')
     if [ -n "${RSIDS:-}" ] && [ "$RSIDS" != "none" ]; then
-      if [ "$(cat "$PROBE_STATE/restorestrand.alerted" 2>/dev/null || echo none)" != "$RSIDS" ]; then
+      # alert only on a RECORD id not alerted before: the 120-day window's edge can SHRINK
+      # the set without a new strand, and that must not re-alert a standing fault; a new
+      # record (even on an already-alerted task) changes the set and alerts.
+      ALERTED=$(cat "$PROBE_STATE/restorestrand.alerted" 2>/dev/null || echo "")
+      UNSEEN=""
+      for rid in $(echo "$RSIDS" | tr ',' ' '); do
+        case ",$ALERTED," in *",$rid,"*) ;; *) UNSEEN="$rid" ;; esac
+      done
+      if [ -n "$UNSEEN" ]; then
         anom+=("restorestrand: a restore left a live review decision behind a re-keyed block home [$RSTASKS] — the review round cannot land (#500)")
-        echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
       fi
+      echo "$RSIDS" > "$PROBE_STATE/restorestrand.alerted"
     else
       rm -f "$PROBE_STATE/restorestrand.alerted"
     fi

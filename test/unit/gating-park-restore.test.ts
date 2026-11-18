@@ -881,7 +881,14 @@ describe('borrowed-restore deferral (#479)', () => {
   });
 
   it('a PARKED restore never runs the strand detector (the park half is out by declaration)', async () => {
-    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    // pre_block_status is SET too (a park landing on a gated row): the parked guard, not a
+    // null home, is the only thing keeping the detector out of this restore
+    row('p', {
+      status: STATUS.blocked,
+      preBlockStatus: STATUS.inReview,
+      parkFromStatus: STATUS.inReview,
+      parkRearmAfter: new Date(Date.now() - 1000),
+    });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
