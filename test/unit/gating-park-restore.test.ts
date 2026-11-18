@@ -29,7 +29,7 @@ const h = vi.hoisted(() => ({
   roundLive: true,
   blockRecord: null as { category: string; at: Date } | null,
   parkRecord: null as { category: string; at: Date } | null,
-  postVerdict: false,
+  verdictAt: null as Date | null,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
@@ -175,7 +175,9 @@ vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
     newestBlockHomeRecord: async () => h.blockRecord,
     // #502: the park half reads its OWN record (the park note's homeCategoryAtPark)
     newestParkHomeRecord: async () => h.parkRecord,
-    hasVerdictAfter: async () => h.postVerdict,
+    // ANCHOR-AWARE (#502 r4): the real read is `decided_at > record.at`, so the double
+    // must compare timestamps too — a constant boolean cannot pin the anchor
+    hasVerdictAfter: async (_taskId: string, at: Date) => h.verdictAt !== null && h.verdictAt.getTime() > at.getTime(),
     hasLiveReviewRow: async () => h.roundLive,
   };
 });
@@ -230,7 +232,7 @@ beforeEach(() => {
   h.roundLive = true;
   h.blockRecord = null;
   h.parkRecord = null;
-  h.postVerdict = false;
+  h.verdictAt = null;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
   h.onChildrenQuery = null;
@@ -806,7 +808,7 @@ describe('borrowed-restore deferral (#479)', () => {
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = false;
-    h.postVerdict = true;
+    h.verdictAt = new Date(Date.now() - 30_000); // newer than the 60s-old record
     await refreshParentGating('p');
     const note = h.notes.find((n) => n.meta.reviewStrand === true);
     expect(note?.meta).toMatchObject({ lateVerdict: true, liveRound: false });
@@ -818,7 +820,7 @@ describe('borrowed-restore deferral (#479)', () => {
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = false;
-    h.postVerdict = false;
+    h.verdictAt = null;
     await refreshParentGating('p');
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
@@ -848,7 +850,7 @@ describe('borrowed-restore deferral (#479)', () => {
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = true;
-    h.postVerdict = true;
+    h.verdictAt = new Date(Date.now() - 30_000); // newer than the 60s-old record
     await refreshParentGating('p');
     expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
       liveRound: true,
@@ -923,12 +925,39 @@ describe('borrowed-restore deferral (#479)', () => {
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'cancelled' } : s));
     h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = false;
-    h.postVerdict = true;
+    h.verdictAt = new Date(Date.now() - 30_000); // newer than the 60s-old record
     await refreshParentGating('p');
     expect(h.notes.find((n) => n.meta.reviewStrand === true)?.meta).toMatchObject({
       lateVerdict: true,
       landingCategory: 'cancelled',
     });
+  });
+
+  it('a re-keyed PARK home with NO live decision stays silent (#502 r4)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = false;
+    h.verdictAt = null;
+    await refreshParentGating('p');
+    // the round-evidence term is a REQUIRED conjunct: a re-key with nothing owed is legal
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+    expect(h.notes.find((n) => n.meta.parkResumed === true)?.meta.restored, 'the control restored').toBe(
+      STATUS.inReview,
+    );
+  });
+
+  it('a verdict OLDER than the park record is not a post-record verdict (#502 r4)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
+    h.roundLive = false;
+    // decided BEFORE the park: the park's own record is the anchor (the episode residual, #506)
+    h.verdictAt = new Date(Date.now() - 120_000);
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
 
   it('a legal park restore (home still in-review) writes no strand record (#502)', async () => {
