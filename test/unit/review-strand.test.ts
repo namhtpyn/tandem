@@ -7,6 +7,7 @@ import { isRestoreStrand } from '../../server/domains/tasks/review-strand';
 
 const base = {
   recordedCategory: 'in_review',
+  homeCategory: 'done',
   landingCategory: 'done',
   liveRound: true,
   postRecordVerdict: false,
@@ -25,16 +26,31 @@ describe('restore-strand detector (#500)', () => {
     expect(isRestoreStrand({ ...base, liveRound: false })).toBe(false);
   });
 
-  it('stays silent when the recorded category matches the landing one (#423, manual moves)', () => {
+  it('stays silent when the recorded category matches the home current one (#423, manual moves)', () => {
     expect(isRestoreStrand({ ...base, recordedCategory: 'done' })).toBe(false);
-    expect(isRestoreStrand({ ...base, landingCategory: 'in_review' })).toBe(false);
+    expect(isRestoreStrand({ ...base, recordedCategory: 'cancelled', homeCategory: 'cancelled' })).toBe(false);
+  });
+
+  it('stays silent on a legal WORKING-home demotion (#88: recorded == home, landing is to-do)', () => {
+    expect(
+      isRestoreStrand({
+        ...base,
+        recordedCategory: 'working',
+        homeCategory: 'working',
+        landingCategory: 'ready',
+      }),
+    ).toBe(false);
+  });
+
+  it('stays silent when the home still resolves into review', () => {
+    expect(isRestoreStrand({ ...base, homeCategory: 'in_review', landingCategory: 'in_review' })).toBe(false);
   });
 
   it('stays silent without a floored block record (pre-floor note cannot split the row)', () => {
     expect(isRestoreStrand({ ...base, recordedCategory: null })).toBe(false);
   });
 
-  it('stays silent when the landing status does not resolve (dangling home is the ORPHAN-HOME arm)', () => {
-    expect(isRestoreStrand({ ...base, landingCategory: undefined })).toBe(false);
+  it('stays silent when the recorded home no longer resolves (dangling home is the ORPHAN-HOME arm)', () => {
+    expect(isRestoreStrand({ ...base, homeCategory: undefined })).toBe(false);
   });
 });

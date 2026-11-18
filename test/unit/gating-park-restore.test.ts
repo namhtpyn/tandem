@@ -787,6 +787,7 @@ describe('borrowed-restore deferral (#479)', () => {
       restored: STATUS.inReview,
       reviewStrand: true,
       recordedCategory: 'in_review',
+      homeCategory: 'done',
       landingCategory: 'done',
       liveRound: true,
       lateVerdict: false,
@@ -823,6 +824,16 @@ describe('borrowed-restore deferral (#479)', () => {
     h.blockRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = true;
     await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('a legal WORKING-home demotion is not a strand (#88: landing differs, the HOME did not)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.doing });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.blockRecord = { category: 'working', at: new Date(Date.now() - 60_000) };
+    h.roundLive = true;
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.todo); // the legal demotion still lands
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
 

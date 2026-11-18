@@ -102,6 +102,7 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
       autoUnblocked: true,
       reviewStrand: true,
       recordedCategory: 'in_review',
+      homeCategory: 'done',
       landingCategory: 'done',
       liveRound: true,
     });

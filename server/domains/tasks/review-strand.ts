@@ -67,6 +67,11 @@ export async function hasVerdictAfter(taskId: string, at: Date, ex: DbExecutor):
 export type RestoreStrandInput = {
   /** the block record's category; null (no floored record) disables the detector */
   recordedCategory: string | null;
+  /** the category the recorded home (pre_block_status) carries NOW — the re-key test's
+   *  second term, mirroring the RE-KEYED-HOME arm. Never derived from the landing status:
+   *  a WORKING home legally demotes to to-do (#88), so comparing against the landing would
+   *  misread every demotion as a re-key. */
+  homeCategory: string | undefined;
   /** the category the restore actually lands on (resolveRestoreTarget already applied) */
   landingCategory: string | undefined;
   /** a PENDING reviewer row in the task's max round at restore time */
@@ -77,17 +82,19 @@ export type RestoreStrandInput = {
 
 /** The detector's contract (SPEC "Probe versioning", RESTORE-STRAND): a restore that lands
  *  a task OUTSIDE the in-review category while its recorded block home was re-keyed
- *  (recorded category ≠ landing category) AND the task carries a live review decision
- *  (a PENDING row, or a verdict newer than the record) is a strand — the review was
- *  requested and can never land. Every legal shape is excluded by the category equality:
- *  #423's settle-then-reblock records the already-terminal category, a manual terminal move
- *  keeps the category it blocks from, and an in-view restore re-enters the flow. */
+ *  (recorded category ≠ the home's CURRENT category) AND the task carries a live review
+ *  decision (a PENDING row, or a verdict newer than the record) is a strand — the review
+ *  was requested and can never land. Every legal shape is excluded: #423's
+ *  settle-then-reblock records the already-terminal category, a manual terminal move keeps
+ *  the category it blocks from, a legal working-home demotion records the home it blocks
+ *  from (equal), and an in-view restore re-enters the flow. */
 export function isRestoreStrand(input: RestoreStrandInput): boolean {
   return (
     input.recordedCategory !== null &&
+    input.homeCategory !== undefined &&
+    input.homeCategory !== input.recordedCategory &&
     input.landingCategory !== undefined &&
     input.landingCategory !== CATEGORY.IN_REVIEW &&
-    input.landingCategory !== input.recordedCategory &&
     (input.liveRound || input.postRecordVerdict)
   );
 }

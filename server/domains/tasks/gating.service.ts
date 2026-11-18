@@ -136,7 +136,6 @@ async function restoreUnblocked(
   ex: DbExecutor,
   afterCommit?: AfterCommitQueue,
 ): Promise<'restored' | 'lost' | 'withheld'> {
-  const d = asDb(ex);
   // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
   // recorded pre-park status even with no pre_block_status — pure parks stranded here
   // forever before. Park origin outranks a stale pre_block_status (a gate that
@@ -159,35 +158,53 @@ async function restoreUnblocked(
   // RESTORE-STRAND DETECTOR (#500): a block home re-keyed while the task sat blocked is
   // invisible to the probe's live-round clause — the drop happens HERE, when the restore
   // resolves the re-keyed home and lands the task outside the review flow with its round
-  // still owed. The restore is the one moment the recorded category, the landing category
-  // and the round are all readable; the verdict rides the restore's OWN record
-  // (`reviewStrand` in the unblock note payload), atomic with the note. The PARK half is
-  // out by declaration (a park's origin resolves in-review by construction; the SPEC's
-  // category term excludes it), and a pre-floor block note carries no category -> null ->
-  // silent (the pre-block residual #491 (c) must not be re-labelled by half a record).
-  let strand: { recordedCategory: string; landingCategory: string; liveRound: boolean; lateVerdict: boolean } | null =
-    null;
+  // still owed. The restore is the one moment the recorded category, the home's category
+  // and the landing category are all readable; the verdict rides the restore's OWN record
+  // (`reviewStrand` in the unblock note payload), atomic with the note. The re-key test is
+  // RECORDED vs the home's CURRENT category (the arm's rule), never vs the landing status:
+  // a WORKING home legally demotes to to-do (#88), so a landing comparison would misread
+  // every legal demotion as a re-key. The PARK half is out by declaration (a park note
+  // carries no category record; the SPEC's category term excludes it), and a pre-floor
+  // block note carries no category -> null -> silent (the pre-block residual #491 (c)
+  // must not be re-labelled by half a record).
+  let strand: {
+    recordedCategory: string;
+    homeCategory: string;
+    landingCategory: string;
+    liveRound: boolean;
+    lateVerdict: boolean;
+  } | null = null;
   if (!parked && cur.preBlockStatus) {
-    const blockRecord = await newestBlockHomeRecord(cur.id, ex);
-    if (blockRecord) {
-      const liveRound = await openRoundLive(cur.id);
-      const postRecordVerdict = liveRound ? false : await hasVerdictAfter(cur.id, blockRecord.at, ex);
-      const landingCategory = known.get(restore);
-      if (
-        isRestoreStrand({
-          recordedCategory: blockRecord.category,
-          landingCategory,
-          liveRound,
-          postRecordVerdict,
-        })
-      ) {
-        strand = {
-          recordedCategory: blockRecord.category,
-          landingCategory: nonNull(landingCategory),
-          liveRound,
-          lateVerdict: postRecordVerdict,
-        };
+    // DETECTOR-ONLY (#500): the restore must land exactly where the pre-change law lands
+    // it — a detector read that throws is logged and the restore proceeds (a detector that
+    // can block the write it watches is an availability regression, not a watchdog).
+    try {
+      const blockRecord = await newestBlockHomeRecord(cur.id, ex);
+      if (blockRecord) {
+        const liveRound = await openRoundLive(cur.id);
+        const postRecordVerdict = liveRound ? false : await hasVerdictAfter(cur.id, blockRecord.at, ex);
+        const homeCategory = known.get(cur.preBlockStatus);
+        const landingCategory = known.get(restore);
+        if (
+          isRestoreStrand({
+            recordedCategory: blockRecord.category,
+            homeCategory,
+            landingCategory,
+            liveRound,
+            postRecordVerdict,
+          })
+        ) {
+          strand = {
+            recordedCategory: blockRecord.category,
+            homeCategory: nonNull(homeCategory),
+            landingCategory: nonNull(landingCategory),
+            liveRound,
+            lateVerdict: postRecordVerdict,
+          };
+        }
       }
+    } catch (e) {
+      log.warn(`gating: restore-strand detector failed for task ${cur.id}:`, e instanceof Error ? e.message : e);
     }
   }
   // GUARDED GATING WRITE (#208): atomic on the row still being BLOCKED (same pattern
@@ -199,44 +216,61 @@ async function restoreUnblocked(
   // able on a blocked row (STATUS-ORIGIN MEMORY LAW, #432, re-homes a home whose status
   // is deleted), and an unpinned restore would write the STALE target it resolved from
   // the pre-rewrite id — a deleted status id (a ghost task) or the #88 to-do demotion.
-  const restored = await d
-    .update(tasks)
-    .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
-    .where(
-      and(
-        eq(tasks.id, cur.id),
-        eq(tasks.status, BLOCKED_STATUS),
-        parked
-          ? eq(tasks.parkFromStatus, nonNull(cur.parkFromStatus))
-          : and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(cur.preBlockStatus))),
-      ),
-    )
-    .returning({ id: tasks.id });
-  if (restored.length === 0) return 'lost';
-  // the restore note rides the SAME executor as the restore write; a borrowed caller
-  // transaction defers the events to its own commit (#397/#466)
-  await logActivity(
-    cur.id,
-    strand
-      ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} was re-keyed to ${strand.landingCategory}; the ${strand.liveRound ? 'live' : 'decided'} review round cannot land`
-      : `unblocked: all subtasks terminal → ${restore}`,
-    {
-      autoUnblocked: true,
-      restored: restore,
-      ...(parked ? { parkResumed: true } : {}),
-      ...(strand
-        ? {
-            reviewStrand: true,
-            recordedCategory: strand.recordedCategory,
-            landingCategory: strand.landingCategory,
-            liveRound: strand.liveRound,
-            lateVerdict: strand.lateVerdict,
-          }
-        : {}),
-    },
-    ex,
-    { publish: ex === db },
-  );
+  // ATOMIC RECORD (#466/#500): on the own-pool path the restore flip and its flow record
+  // commit in ONE transaction (the block arm's pattern) — a crash can never leave a landed
+  // restore without its note, and a strand without its detector record. A borrowed caller
+  // transaction is RIDDEN, never nested; its events wait for that commit (#397).
+  const flipAndRecord = async (exec: DbExecutor): Promise<boolean> => {
+    const rows = await asDb(exec)
+      .update(tasks)
+      .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(tasks.id, cur.id),
+          eq(tasks.status, BLOCKED_STATUS),
+          parked
+            ? eq(tasks.parkFromStatus, nonNull(cur.parkFromStatus))
+            : and(isNull(tasks.parkFromStatus), eq(tasks.preBlockStatus, nonNull(cur.preBlockStatus))),
+        ),
+      )
+      .returning({ id: tasks.id });
+    if (rows.length === 0) return false;
+    await logActivity(
+      cur.id,
+      strand
+        ? `unblocked: all subtasks terminal → ${restore} — REVIEW STRAND: the recorded home category ${strand.recordedCategory} was re-keyed to ${strand.homeCategory}; restoring to ${strand.landingCategory} strands the ${strand.liveRound ? 'live' : 'decided'} review round`
+        : `unblocked: all subtasks terminal → ${restore}`,
+      {
+        autoUnblocked: true,
+        restored: restore,
+        ...(parked ? { parkResumed: true } : {}),
+        ...(strand
+          ? {
+              reviewStrand: true,
+              recordedCategory: strand.recordedCategory,
+              homeCategory: strand.homeCategory,
+              landingCategory: strand.landingCategory,
+              liveRound: strand.liveRound,
+              lateVerdict: strand.lateVerdict,
+            }
+          : {}),
+      },
+      exec,
+      { publish: false },
+    );
+    return true;
+  };
+  let landed: boolean;
+  if (ex === db) {
+    landed = await db.transaction((tx) => flipAndRecord(tx));
+    if (landed) {
+      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    }
+  } else {
+    landed = await flipAndRecord(ex);
+  }
+  if (!landed) return 'lost';
   // unblock-resume parity (#202) + #365 + #419: replay a restored LADDER park's turn,
   // settle a restore that lands in-review with no live voter (leaf helper).
   // BORROWED-RESTORE DEFERRAL (#479): these side effects are NOT transactional, so on a
