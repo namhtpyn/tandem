@@ -890,9 +890,10 @@ describe('borrowed-restore deferral (#479)', () => {
   it('a re-keyed PARK home with a live round records the strand (#502)', async () => {
     row('p', {
       status: STATUS.blocked,
-      // the parked guard still arbitrates: a park landing on a gated row keeps
-      // pre_block_status out of the decision — the PARK record is the one consulted
-      preBlockStatus: STATUS.inReview,
+      // REACHABLE shape: the park flip clears pre_block_status, so a parked row carries the
+      // park origin ONLY — the pin therefore goes red if the detector reads the block origin
+      // (evidence would be null) instead of park_from_status
+      preBlockStatus: null,
       parkFromStatus: STATUS.inReview,
       parkRearmAfter: new Date(Date.now() - 1000),
     });

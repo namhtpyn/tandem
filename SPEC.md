@@ -1255,16 +1255,19 @@ non-positive deltas render no duration.
   DECLARED residual (audit #506): a verdict that landed while the task was BLOCKED and
   whose settle flip was lost, then parked (the park records the home afresh), is ordered
   against the park record only — so a pre-park verdict under a home re-keyed during the
-  park is silent; separating it needs an EPISODE-scoped anchor (whether the newest block
-  record belongs to the park's own gating episode), which no record declares yet. #423 stays
+  park is silent. The anchor IS derivable — a park note whose `fromStatus` differs from
+  `park_from_status` superseded a block, so the newest block note is that episode's record
+  — but the term does not read it yet (audit #506). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
   half needs the record and stays silent — and the PARK half's category is RECORDED from
   `2.78.43` (`homeCategoryAtPark`) but feeds the RESTORE-STRAND detector only: the ARM's
-  category term stays block-only by declaration, because a paused row's strand is still
-  catchable at its restore (the landing is knowable there) while the arm's ordering term
-  is unchanged.
+  category term stays block-only by declaration. For a LADDER-owned park the strand is
+  caught at its restore (the landing is knowable there) and a DECISION/FINAL park's
+  terminal-category re-key stays with the arm's ordering term — but a DECISION/FINAL park
+  whose home is re-keyed into a NON-terminal category (working) after a late verdict has
+  no automatic restore to catch it and no arm term reads it: the declared residual #507.
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
@@ -1331,8 +1334,10 @@ non-positive deltas render no duration.
   the category its recorded home (the blocked task's `pre_block_status` for the block half,
   the parked task's `park_from_status` for the park half) carries at that
   read — or that home no longer resolves at the restore while its block record carried a
-  category (`deleted under the block`: the ghost-race producer; ORPHAN-HOME covers the
-  no-PENDING variant, this term the live-decision one) — and the landing category is NOT
+  category (the BLOCK half only: `deleted under the block` is the ghost-race producer, and
+  ORPHAN-HOME covers the no-PENDING variant while this term takes the live-decision one; a
+  PARK home that no longer resolves falls back to in-review at the restore, so the landing
+  is in review and no strand is named) — and the landing category is NOT
   `in_review`, the task carries a live review decision, the restore writes `reviewStrand`,
   `recordedCategory`, `homeCategory`, `landingCategory`, `liveRound` and `lateVerdict` into
   its own `unblocked: all subtasks terminal → …` note payload (1:1 `kind='STATUS'`, its
