@@ -1269,18 +1269,26 @@ non-positive deltas render no duration.
   that status keeps its category, so a re-categorized seeded row lands outside `in_review`
   and FIRES, while a DELETED one leaves the landing category unknown and the row silent
   (the flip writes the dangling id — the #62 class, declared), and a pre-floor park note
-  carries no record and stays silent — the declared residual below `2.78.43`. The park half's
-  DECLARED residual (audit #506): a verdict that landed BEFORE the park — a settle throw in
-  review, or a lost settle while blocked — is ordered against the park record only, so when
-  no PENDING reviewer row survives it is silent (a surviving PENDING REVIEWER row keeps the
+  carries no record and stays silent — the declared residual below `2.78.43`. From `2.78.45`
+  (PARK EPISODE-ANCHOR FLOOR, #506) a park that supersedes an auto-block records the block
+  record it superseded in its own note payload (`episodeBlock: { id, at }` — the newest
+  `auto-blocked:` home record, read in the park's transaction and written atomically with
+  the park flip), and the park half orders the round's verdicts against that record when
+  present, falling back to the park record's own stamp for a park that superseded no block:
+  a verdict that landed while the task sat BLOCKED and whose settle flip was lost (newer
+  than the episode's block record, older than the park record) now FIRES at the restore,
+  while a legal re-opened round keeps an old block note invisible — a park from `in_review`
+  records no episode block. The membership is RECORDED at park time, never derived from
+  `fromStatus` vs `park_from_status`: a `statuses.remove` re-home rewrites `park_from_status`
+  while the note keeps the dead `fromStatus`, so that derivation would launder a legal
+  re-home into a false block episode. A pre-floor park note carries no `episodeBlock` and
+  keeps the previous park-record ordering (the declared residual below `2.78.45`). A
+  surviving PENDING REVIEWER row keeps the
   live-round term firing; a VOID row, `reviewer_id` NULL, is not live, and an unredeemed
   ESCALATED referral — not decided, not PENDING — is silent too, the REFERRAL-OWED boundary
-  declared above). The anchor IS
-  derivable — a park note whose `fromStatus` differs from `park_from_status` superseded a
-  block, so the newest block note is that episode's record — with one caveat a future term
-  must handle: a `statuses.remove` re-home rewrites `park_from_status` while the note keeps
-  the dead `fromStatus`, so the derivation must also see that no status delete re-homed the
-  park since. The term does not read `fromStatus` yet. #423 stays
+  declared above. The variant whose verdict closed the round BEFORE the park (a settle
+  throw in review) records no episode block — there was none — and stays the DECIDED-ROUND
+  HEAL's shape, not this term's (declared residual, #431). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
@@ -1297,7 +1305,8 @@ non-positive deltas render no duration.
   round carries a verdict NEWER than the park record (a round closed BEFORE its park is the
   arm's declared MIRROR-ORDER / waiver boundary above), the NON-terminal landing is read by
   the park category term under that same ordering, and with a PENDING row no term reads it
-  (the declared residual #506). A park note carrying no record (pre-floor episode) falls
+  (the #506 class's non-restore boundary: a DECISION/FINAL park never restores, so no
+  restore-time record exists — the owner's resolution owns the round). A park note carrying no record (pre-floor episode) falls
   back to the terminal-only scope, and the FINAL variant of the terminal re-key is surfaced
   as exhaustion by the rearm-exhaustion arm.
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
@@ -1362,7 +1371,8 @@ non-positive deltas render no duration.
   as the DECISION-PARK arm's record) and the round's review
   evidence (a PENDING reviewer row in ANY round — a superseded max round must not hide an
   older owed vote, #445 — or a verdict NEWER than the HALF'S OWN record: the block note for
-  the `pre_block_status` half, the park note for the park half) as ADVISORY evidence
+  the `pre_block_status` half; the park half's `episodeBlock` anchor when its note records
+  one (PARK EPISODE-ANCHOR FLOOR, `2.78.45`, #506), else the park note) as ADVISORY evidence
   on the pool before the write — a failed evidence read is logged and never blocks the
   restore — and reads the DECISIVE categories inside the restore's transaction immediately
   before the guarded write, so the target follows the category map the write is about to
