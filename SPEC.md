@@ -1278,8 +1278,12 @@ non-positive deltas render no duration.
   a verdict that landed while the task sat BLOCKED and whose settle flip was lost (newer
   than the episode's block record, older than the park record) now FIRES at the restore,
   while a legal re-opened round keeps an old block note invisible — a park from `in_review`
-  records no episode block. The membership is RECORDED at park time, never derived from
-  `fromStatus` vs `park_from_status`: a `statuses.remove` re-home rewrites `park_from_status`
+  records no episode block, and with it the park-stamp ordering stands: a verdict that
+  landed BEFORE such a park (a settle throw in review) is ordered against the park record
+  only and, with no surviving PENDING reviewer row, stays silent — the park half's
+  pre-existing residual (declared, #431). The membership is RECORDED at park time, never
+  derived from `fromStatus` vs `park_from_status`: a `statuses.remove` re-home rewrites
+  `park_from_status`
   while the note keeps the dead `fromStatus`, so that derivation would launder a legal
   re-home into a false block episode. A park note from before `2.78.45` carries no
   `episodeBlock`: one carrying its `2.78.43` category record keeps the previous
@@ -1293,10 +1297,11 @@ non-positive deltas render no duration.
   declared above. A verdict that closed the round BEFORE the episode's block is NOT
   covered by this anchor: when an auto-block lands between that verdict and the park, the
   recorded anchor is the LATER block and the verdict reads as pre-episode. The
-  DECIDED-ROUND HEAL cannot reach it either (its paused arm requires `park_from_status IS
-  NULL`, and the lost-settle sweep parks after two ~5s ticks while the heal waits out its
-  60s grace), so the shape stays a DECLARED residual (audit #514; the #431 parked-round
-  boundary). #423 stays
+  DECIDED-ROUND HEAL cannot reach it either: its closed-round scan requires NO PENDING
+  reviewer row, while a park inside this shape needs a still-live reviewer's failure arm
+  (or a dispatch failure) — a PENDING row — and once the park lands
+  `reviewFlowOwnsTaskSql` excludes the row anyway. The shape stays a DECLARED residual
+  (audit #514; the #431 parked-round boundary). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal

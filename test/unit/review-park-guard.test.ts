@@ -293,6 +293,9 @@ describe('parkRound in-review guard (#199)', () => {
     ];
     h.blockRecord = null;
     expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(true);
+    // pins the SPREAD (no key when the read returns no record); the read's own pre-floor
+    // selection — a key-less newest note beside an older floored one — is pinned against
+    // real rows by the restore-strand e2e pre-floor control
     expect(h.activities[0]?.payload.episodeBlock).toBeUndefined();
   });
 
