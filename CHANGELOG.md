@@ -1,3 +1,14 @@
+## [2.78.44](https://github.com/namhtpyn/tandem/compare/v2.78.43...v2.78.44) (2026-11-19)
+
+
+### Bug Fixes
+
+* **gating:** [#503](https://github.com/namhtpyn/tandem/issues/503) ghost-at-block — a floored null home category is a strand record ([3b515be](https://github.com/namhtpyn/tandem/commit/3b515be58ecf0d2b44bcc0d1f57575fb30a822bb))
+* **review:** [#503](https://github.com/namhtpyn/tandem/issues/503) r1 — SPEC precision on the record read + payload, key-presence pin ([ec5865e](https://github.com/namhtpyn/tandem/commit/ec5865ef6902ef2cefac57141442d41c6fb6e689))
+* **review:** [#503](https://github.com/namhtpyn/tandem/issues/503) r2 — blank is not a ghost, newest-note pin, term-floor naming ([c8a7896](https://github.com/namhtpyn/tandem/commit/c8a7896249b1ed136c6c340fa41bc55e9a15b678))
+* **review:** [#503](https://github.com/namhtpyn/tandem/issues/503) r3 — SPEC declares blank non-record and the arm overlap ([2b54040](https://github.com/namhtpyn/tandem/commit/2b5404039f668c07d3c4f1fe3f90de1b54d15af2))
+* **review:** [#503](https://github.com/namhtpyn/tandem/issues/503) r4 — false-side ghost pin, older-note control, episode residual declared ([ad25cf6](https://github.com/namhtpyn/tandem/commit/ad25cf62194f75006393492c103f7b380f0b0da4))
+
 ## [2.78.43](https://github.com/namhtpyn/tandem/compare/v2.78.42...v2.78.43) (2026-11-18)
 
 
