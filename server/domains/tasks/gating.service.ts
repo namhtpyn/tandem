@@ -182,8 +182,12 @@ async function restoreUnblocked(
       if (homeRecord) {
         const liveRound = await hasLiveReviewRow(cur.id, db);
         // report BOTH facts: the strand is an OR, but the record's `lateVerdict` must be
-        // true whenever a verdict landed after the block, even beside a live pending row
-        const lateVerdict = await hasVerdictAfter(cur.id, homeRecord.at, db);
+        // true whenever a verdict landed after the block, even beside a live pending row.
+        // PARK EPISODE-ANCHOR (#506): a park that superseded an auto-block orders the
+        // round's verdicts against that block record, so a lost settle that landed while
+        // the task sat blocked (older than the park note) still reads as late.
+        const episodeAnchor = parked && 'episodeBlockAt' in homeRecord ? (homeRecord.episodeBlockAt ?? null) : null;
+        const lateVerdict = await hasVerdictAfter(cur.id, episodeAnchor ?? homeRecord.at, db);
         evidence = {
           originStatusId: evidenceOrigin,
           recordedCategory: homeRecord.category,

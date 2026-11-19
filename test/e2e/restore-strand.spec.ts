@@ -413,6 +413,103 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     const multiRecords = await strandRecord(parkedMulti.id);
     expect(multiRecords, 'the newest park note is the record, not the oldest').toHaveLength(1);
     expect(multiRecords[0]!.payload).toMatchObject({ reviewStrand: true, recordedCategory: 'in_review' });
+    // 4e. EPISODE ANCHOR (#506): a verdict that landed while the task sat BLOCKED (after
+    // the episode's block record) and whose settle flip was lost, followed by a park that
+    // records the home afresh — the verdict is OLDER than the park note, so only the
+    // recorded episode anchor can read it as late.
+    const seedParkedSettled = async (
+      name: string,
+      opts: { episode: boolean; verdictMinutesAgo: number; fromStatus: string },
+    ) => {
+      const statusId = await save({ name: `${name}-${tag}`, position: 91, category: 'in_review' });
+      createdStatuses.push(statusId);
+      const id = await createTask(`${name}-${tag}`);
+      await sql.unsafe(
+        `update tasks set status = $2, park_from_status = $3, park_rearm_after = now() + interval '1 hour',
+                updated_at = now()
+          where id = $1`,
+        [id, BLOCKED, statusId],
+      );
+      const blockId = `blk-${id}`;
+      const blockAt = new Date(Date.now() - 20 * 60_000);
+      await sql.unsafe(
+        `insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'auto-blocked: 1 subtask(s) open', $3)`,
+        [blockId, id, blockAt],
+      );
+      await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+        blockId,
+        { kind: 'STATUS', autoBlocked: true, open: 1, homeCategory: 'in_review' },
+      ]);
+      await sql.unsafe(
+        `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at)
+         values ($1, $2, $3, 1, 'APPROVED', null, $4)`,
+        [`rev-506-${id}`, id, reviewer, new Date(Date.now() - opts.verdictMinutesAgo * 60_000)],
+      );
+      const parkId = `park-${id}`;
+      await sql.unsafe(
+        `insert into task_messages (id, task_id, author_id, body, created_at)
+         values ($1, $2, null, 'review parked — lost settle', now() - interval '5 minutes')`,
+        [parkId, id],
+      );
+      await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+        parkId,
+        {
+          kind: 'STATUS',
+          reviewParked: true,
+          why: 'lost settle',
+          fromStatus: opts.fromStatus,
+          homeCategoryAtPark: 'in_review',
+          ...(opts.episode ? { episodeBlock: { id: blockId, at: blockAt.toISOString() } } : {}),
+        },
+      ]);
+      await sql.unsafe(`update task_statuses set category = 'done' where id = $1`, [statusId]);
+      const child = await createTask(`${name}-child-${tag}`, id);
+      return { id, statusId, child };
+    };
+
+    const parkedLost = await seedParkedSettled('PARK506', {
+      episode: true,
+      verdictMinutesAgo: 15,
+      fromStatus: BLOCKED,
+    });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedLost.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    const lostRecords = await strandRecord(parkedLost.id);
+    expect(lostRecords, 'the recorded episode anchor reads the pre-park verdict').toHaveLength(1);
+    expect(lostRecords[0]!.payload).toMatchObject({ reviewStrand: true, lateVerdict: true, liveRound: false });
+
+    // 4f. a verdict that closed the round BEFORE this episode's block stays silent
+    const parkedPreEpisode = await seedParkedSettled('PARK506PRE', {
+      episode: true,
+      verdictMinutesAgo: 25,
+      fromStatus: BLOCKED,
+    });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', {
+          data: { json: { id: parkedPreEpisode.child, status: DONE } },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(parkedPreEpisode.id), 'a pre-episode verdict is not late').toHaveLength(0);
+
+    // 4g. NO anchor on the note keeps the park-record ordering — an old block note on the
+    // task is never read post hoc (the statuses.remove re-home could launder a legal park)
+    const parkedPure = await seedParkedSettled('PARK506PURE', {
+      episode: false,
+      verdictMinutesAgo: 15,
+      fromStatus: 'in_review',
+    });
+    expect(
+      (
+        await page.request.post('/rpc/tasks/setStatus', { data: { json: { id: parkedPure.child, status: DONE } } })
+      ).status(),
+    ).toBe(200);
+    expect(await strandRecord(parkedPure.id), 'no episode anchor, no post-hoc block read').toHaveLength(0);
   } finally {
     // the per-test fixture sweeps tasks AFTER this block, but status removal refuses while
     // any task still references the status — remove this spec's rows first (tag-scoped),

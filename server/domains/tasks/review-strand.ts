@@ -17,10 +17,17 @@ import { taskMessageActivities, taskMessages, taskReviews } from '../../db/schem
 /** A home CATEGORY recorded on a gating note at write time + when that note landed. */
 export type HomeRecord = { category: string; at: Date };
 
+/** A PARK home record (#502) plus the block record the park superseded (#506): a park that
+ *  originates from an auto-block records the newest `auto-blocked:` record in force at park
+ *  time, so the detector can order the round's verdicts against the episode that owned the
+ *  round while it sat blocked. Both fields are null on a park that superseded no block (a
+ *  park from `in_review`) and on a pre-floor park note (declared residual below 2.78.45). */
+export type ParkHomeRecord = HomeRecord & { episodeBlockId?: string | null; episodeBlockAt?: Date | null };
+
 /** The block note's record — same shape, but the category can be NULL: a floored note
  *  whose block committed against a home that already named no `task_statuses` row (the
  *  ghost-task race) recorded the ABSENCE, which is a record, not a missing one (#503). */
-export type BlockHomeRecord = { category: string | null; at: Date };
+export type BlockHomeRecord = { id: string; category: string | null; at: Date };
 
 const VERDICT_STATUSES = [REVIEW_STATUS.APPROVED, REVIEW_STATUS.CHANGE_REQUESTED, REVIEW_STATUS.REJECTED];
 
@@ -34,6 +41,7 @@ const VERDICT_STATUSES = [REVIEW_STATUS.APPROVED, REVIEW_STATUS.CHANGE_REQUESTED
 export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Promise<BlockHomeRecord | null> {
   const rows = await asDb(ex)
     .select({
+      id: taskMessages.id,
       category: sql<string | null>`${taskMessageActivities.payload}->>'homeCategory'`,
       keyed: sql<boolean>`jsonb_exists(${taskMessageActivities.payload}, 'homeCategory')`,
       at: taskMessages.createdAt,
@@ -51,17 +59,22 @@ export async function newestBlockHomeRecord(taskId: string, ex: DbExecutor): Pro
     .limit(1);
   const row = rows[0];
   if (!row || !row.keyed || row.category === '') return null;
-  return { category: row.category, at: row.at };
+  return { id: row.id, category: row.category, at: row.at };
 }
 
 /** The newest `review parked` note carrying the park home's CATEGORY (PARK-CATEGORY
  *  RECORD FLOOR, 2.78.43, #502). A pre-floor park note carries no `homeCategoryAtPark`
  *  key and returns null — the detector's park half stays silent on it, the declared
- *  residual below the floor (same shape as the block half's pre-floor fallback). */
-export async function newestParkHomeRecord(taskId: string, ex: DbExecutor): Promise<HomeRecord | null> {
+ *  residual below the floor (same shape as the block half's pre-floor fallback).
+ *  PARK EPISODE-ANCHOR FLOOR, 2.78.45 (#506): a park that superseded an auto-block also
+ *  carries `episodeBlock {id, at}` — the block record it recorded at park time. An absent
+ *  or malformed payload leaves both fields null (fallback = the park stamp; same residual). */
+export async function newestParkHomeRecord(taskId: string, ex: DbExecutor): Promise<ParkHomeRecord | null> {
   const rows = await asDb(ex)
     .select({
       category: sql<string | null>`${taskMessageActivities.payload}->>'homeCategoryAtPark'`,
+      episodeBlockId: sql<string | null>`${taskMessageActivities.payload}->'episodeBlock'->>'id'`,
+      episodeBlockAt: sql<string | null>`${taskMessageActivities.payload}->'episodeBlock'->>'at'`,
       at: taskMessages.createdAt,
     })
     .from(taskMessages)
@@ -77,7 +90,13 @@ export async function newestParkHomeRecord(taskId: string, ex: DbExecutor): Prom
     .limit(1);
   const row = rows[0];
   if (!row || row.category === null || row.category === '') return null;
-  return { category: row.category, at: row.at };
+  const episodeAt = row.episodeBlockAt ? new Date(row.episodeBlockAt) : null;
+  return {
+    category: row.category,
+    at: row.at,
+    episodeBlockId: row.episodeBlockId || null,
+    episodeBlockAt: episodeAt && Number.isFinite(episodeAt.getTime()) ? episodeAt : null,
+  };
 }
 
 /** A verdict NEWER than the block record: the round was live at block time and closed

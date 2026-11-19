@@ -28,7 +28,12 @@ const h = vi.hoisted(() => ({
   answerSignature: true,
   roundLive: true,
   blockRecord: null as { category: string; at: Date } | null,
-  parkRecord: null as { category: string; at: Date } | null,
+  parkRecord: null as {
+    category: string;
+    at: Date;
+    episodeBlockId?: string | null;
+    episodeBlockAt?: Date | null;
+  } | null,
   verdictAt: null as Date | null,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
@@ -954,8 +959,52 @@ describe('borrowed-restore deferral (#479)', () => {
     h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
     h.parkRecord = { category: 'in_review', at: new Date(Date.now() - 60_000) };
     h.roundLive = false;
-    // decided BEFORE the park: the park's own record is the anchor (the episode residual, #506)
+    // decided BEFORE the park with NO episode anchor on the note: the park's own record is
+    // the fallback anchor (a #506-era park records the block record it superseded; this
+    // one records none — a park from in_review or a pre-floor note)
     h.verdictAt = new Date(Date.now() - 120_000);
+    await refreshParentGating('p');
+    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
+  });
+
+  it('a lost settle while BLOCKED then parked FIRES via the episode anchor (#506)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    // the verdict landed while the task sat blocked (after the episode's block record) and
+    // the settle flip was lost; the park then recorded the home afresh, so the verdict is
+    // OLDER than the park note — only the episode anchor can see it
+    h.parkRecord = {
+      category: 'in_review',
+      at: new Date(Date.now() - 5_000),
+      episodeBlockId: 'blk-1',
+      episodeBlockAt: new Date(Date.now() - 60_000),
+    };
+    h.roundLive = false;
+    h.verdictAt = new Date(Date.now() - 30_000);
+    await refreshParentGating('p');
+    const note = h.notes.find((n) => n.meta.reviewStrand === true);
+    expect(note, 'the episode anchor reads the pre-park verdict').toBeTruthy();
+    expect(note?.meta).toMatchObject({
+      lateVerdict: true,
+      liveRound: false,
+      homeCategory: 'done',
+      landingCategory: 'done',
+    });
+  });
+
+  it('a verdict OLDER than the episode anchor stays silent (#506: the anchor is not any-verdict)', async () => {
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
+    h.parkRecord = {
+      category: 'in_review',
+      at: new Date(Date.now() - 5_000),
+      episodeBlockId: 'blk-1',
+      episodeBlockAt: new Date(Date.now() - 60_000),
+    };
+    h.roundLive = false;
+    h.verdictAt = new Date(Date.now() - 120_000); // closed the round BEFORE this episode's block
     await refreshParentGating('p');
     expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
   });
