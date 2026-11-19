@@ -993,22 +993,6 @@ describe('borrowed-restore deferral (#479)', () => {
     });
   });
 
-  it('a verdict OLDER than the episode anchor stays silent (#506: the anchor is not any-verdict)', async () => {
-    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
-    h.childrenByParent.set('p', [{ status: STATUS.done }]);
-    h.statusRows = SEED_STATUSES.map((s) => (s.id === STATUS.inReview ? { ...s, category: 'done' } : s));
-    h.parkRecord = {
-      category: 'in_review',
-      at: new Date(Date.now() - 5_000),
-      episodeBlockId: 'blk-1',
-      episodeBlockAt: new Date(Date.now() - 60_000),
-    };
-    h.roundLive = false;
-    h.verdictAt = new Date(Date.now() - 120_000); // closed the round BEFORE this episode's block
-    await refreshParentGating('p');
-    expect(h.notes.some((n) => n.meta.reviewStrand === true)).toBe(false);
-  });
-
   it('a legal park restore (home still in-review) writes no strand record (#502)', async () => {
     row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview, parkRearmAfter: new Date(Date.now() - 1000) });
     h.childrenByParent.set('p', [{ status: STATUS.done }]);

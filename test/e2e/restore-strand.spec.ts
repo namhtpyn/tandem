@@ -482,12 +482,25 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
     expect(lostRecords, 'the recorded episode anchor reads the pre-park verdict').toHaveLength(1);
     expect(lostRecords[0]!.payload).toMatchObject({ reviewStrand: true, lateVerdict: true, liveRound: false });
 
-    // 4f. a verdict that closed the round BEFORE this episode's block stays silent
+    // 4f. the anchor is the RECORDED episode record, never an older block note on the task:
+    // a re-opened round keeps a previous episode's `auto-blocked:` note, and a verdict that
+    // landed after THAT note but before the current episode's block is legal — a naive
+    // "earliest block note" anchor would false-fire it.
     const parkedPreEpisode = await seedParkedSettled('PARK506PRE', {
       episode: true,
-      verdictMinutesAgo: 25,
+      verdictMinutesAgo: 60,
       fromStatus: BLOCKED,
     });
+    const staleBlockId = `blk-old-${parkedPreEpisode.id}`;
+    await sql.unsafe(
+      `insert into task_messages (id, task_id, author_id, body, created_at)
+       values ($1, $2, null, 'auto-blocked: 1 subtask(s) open', now() - interval '90 minutes')`,
+      [staleBlockId, parkedPreEpisode.id],
+    );
+    await sql.unsafe(`insert into task_message_activities (message_id, payload) values ($1, $2)`, [
+      staleBlockId,
+      { kind: 'STATUS', autoBlocked: true, open: 1, homeCategory: 'in_review' },
+    ]);
     expect(
       (
         await page.request.post('/rpc/tasks/setStatus', {

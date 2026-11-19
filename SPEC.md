@@ -1281,8 +1281,12 @@ non-positive deltas render no duration.
   records no episode block. The membership is RECORDED at park time, never derived from
   `fromStatus` vs `park_from_status`: a `statuses.remove` re-home rewrites `park_from_status`
   while the note keeps the dead `fromStatus`, so that derivation would launder a legal
-  re-home into a false block episode. A pre-floor park note carries no `episodeBlock` and
-  keeps the previous park-record ordering (the declared residual below `2.78.45`). A
+  re-home into a false block episode. A park note from before `2.78.45` carries no
+  `episodeBlock`: one carrying its `2.78.43` category record keeps the previous
+  park-record ordering, while a pre-`2.78.43` note has no record and stays silent
+  (declared above). A BLOCK note from before `2.78.41` carries no home record, so a park
+  that supersedes one records no anchor — the ordering residual below `2.78.45` for tasks
+  already blocked when that floor shipped. A
   surviving PENDING REVIEWER row keeps the
   live-round term firing; a VOID row, `reviewer_id` NULL, is not live, and an unredeemed
   ESCALATED referral — not decided, not PENDING — is silent too, the REFERRAL-OWED boundary
