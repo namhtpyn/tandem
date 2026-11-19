@@ -1182,8 +1182,12 @@ non-positive deltas render no duration.
   flip the re-key then refused could not land — fires; an all-older round is the round's
   own legal stop, a park note WITHOUT the record falls back to the terminal-only scope, and
   a TERMINAL landing keeps the ordering-only scope it always had (a recorded `in_review`
-  against a terminal home stays the declared ordering-only boundary, never this term). A terminal home
-  cannot host the hold-landing class;
+  against a terminal home stays the declared ordering-only boundary, never this term). A
+  LIVE re-arm ladder park (`park_rearm_after` set) is EXCLUDED — its re-arm owns the row,
+  and an exhausted ladder turns FINAL (the column clears), so the term picks it up then —
+  and a parked round that still OWES A REFERRAL VOTE is excluded exactly like the
+  parkclosed arm's (the escalated row names a target with no row of its own: the round is
+  not decided). A terminal home cannot host the hold-landing class;
   the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
@@ -1287,7 +1291,8 @@ non-positive deltas render no duration.
   terminal landing keeps the ordering-only scope it always had — a recorded `in_review`
   against a terminal home stays the declared ordering-only boundary, not this term). For a LADDER-owned
   park the strand is caught at its restore (the landing is knowable there, and the arm's
-  closed-round clause keeps its live round out). For a DECISION/FINAL park (no restore ever
+  closed-round clause plus its no-live-rearm term keep the ladder out — an exhausted
+  ladder clears `park_rearm_after` and the arm reads the FINAL row). For a DECISION/FINAL park (no restore ever
   runs) the terminal-category re-key is read by the arm's ordering term only while the
   round carries a verdict NEWER than the park record (a round closed BEFORE its park is the
   arm's declared MIRROR-ORDER / waiver boundary above), the NON-terminal landing is read by

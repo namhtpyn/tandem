@@ -557,6 +557,8 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
 
     const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
     try {
+      const adminId = String((await sql.unsafe('select id from "user" order by created_at limit 1'))[0]?.id ?? '');
+      expect(adminId, 'the e2e boot admin must exist for a live-reviewer seed').not.toBe('');
       const tag = crypto.randomUUID();
       const late = `probe-parkcat-late-${tag}`; // FIRES: home re-keyed working, verdict NEWER than the park record
       const older = `probe-parkcat-older-${tag}`; // silent: the round closed BEFORE its park — the round's own legal stop
@@ -566,12 +568,22 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const live = `probe-parkcat-live-${tag}`; // silent: a PENDING row in max(round)
       const terminalOlder = `probe-parkcat-term-older-${tag}`; // silent: a TERMINAL landing keeps the ordering-only scope
       const terminalLate = `probe-parkcat-term-late-${tag}`; // fires: the terminal landing's own ordering term (unchanged)
+      const rearmable = `probe-parkcat-rearm-${tag}`; // silent: a LIVE re-arm ladder park is left to its re-arm
+      const referralOwed = `probe-parkcat-referral-${tag}`; // silent: the round owes a referral vote (not decided)
+      const twoEpisodePark = `probe-parkcat-two-episode-${tag}`; // silent: the NEWEST park note carries no record
 
-      const seedTask = async (id: string, park: string, writtenMinutesAgo: number) => {
+      const seedTask = async (
+        id: string,
+        park: string,
+        writtenMinutesAgo: number,
+        rearmMinutes: number | null = null,
+      ) => {
         await sql.unsafe(
-          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
-           values ($1, $2, $3, null, $4, now(), now() - ($5::int * interval '1 minute'))`,
-          [id, id, BLOCKED, park, writtenMinutesAgo],
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, park_rearm_after, created_at, updated_at)
+           values ($1, $2, $3, null, $4,
+                   case when $6::int is null then null else now() + ($6::int * interval '1 minute') end,
+                   now(), now() - ($5::int * interval '1 minute'))`,
+          [id, id, BLOCKED, park, writtenMinutesAgo, rearmMinutes],
         );
       };
       const seedRecord = async (id: string, minutesAgo: number, meta: Record<string, unknown> | null) => {
@@ -637,6 +649,35 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedTask(terminalLate, DONE, 5);
       await seedRecord(terminalLate, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
       await seedVerdict(terminalLate, 1);
+      // a LIVE re-arm ladder park is left to its re-arm: the same shape with a pending
+      // re-arm stays silent, so the term cannot pre-empt the ladder's own reader
+      await seedTask(rearmable, DOING, 5, 5);
+      await seedRecord(rearmable, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(rearmable, 1);
+      // a parked round that still OWES A REFERRAL VOTE is not decided: the escalated row
+      // names a target with no row of its own — the same exclusion the parkclosed arm has
+      await seedTask(referralOwed, DOING, 5);
+      await seedRecord(referralOwed, 5, {
+        reviewParked: true,
+        fromStatus: IN_REVIEW,
+        homeCategoryAtPark: 'in_review',
+      });
+      await seedVerdict(referralOwed, 1);
+      await sql.unsafe(
+        `insert into task_reviews (id, task_id, round, status, reviewer_id, referral_target_id, created_at, decided_at)
+         values ($1, $2, 1, 'ESCALATED', null, $3, now() - interval '2 minutes', now() - interval '2 minutes')`,
+        [`rev-${crypto.randomUUID()}`, referralOwed, adminId],
+      );
+      // the record is the NEWEST park note: an older note carrying the record must not
+      // outvote the newest record-less episode (the binding is max(created_at))
+      await seedTask(twoEpisodePark, DOING, 5);
+      await seedRecord(twoEpisodePark, 30, {
+        reviewParked: true,
+        fromStatus: IN_REVIEW,
+        homeCategoryAtPark: 'in_review',
+      });
+      await seedRecord(twoEpisodePark, 5, { reviewParked: true, fromStatus: IN_REVIEW });
+      await seedVerdict(twoEpisodePark, 1);
 
       const armOf = async (probeSql: string) => {
         const rows = (await sql.unsafe(probeSql)) as Record<string, unknown>[];
@@ -666,6 +707,12 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         terminalOlder,
       );
       expect(post, "the terminal landing's own late-verdict term is unchanged").toContain(terminalLate);
+      expect(post, 'a LIVE re-arm ladder park is left to its re-arm, never this term').not.toContain(rearmable);
+      expect(post, 'a round still owing a referral vote is not decided').not.toContain(referralOwed);
+      expect(
+        post,
+        'the term reads the NEWEST park note: an older record must not outvote a record-less episode',
+      ).not.toContain(twoEpisodePark);
     } finally {
       await sql.end();
     }

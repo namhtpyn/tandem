@@ -278,6 +278,10 @@ rekey_nonterminal_half() {
 # the settle flip the re-key then refused) fires — an all-older round is the round's own
 # legal stop, the declared MIRROR-ORDER boundary. A park note WITHOUT the record (pre-floor
 # episode) returns nothing, so that row falls back to the terminal-only scope byte-for-byte.
+# Two exclusions keep the term off shapes another reader owns: a LIVE re-arm ladder park
+# (`park_rearm_after` set) is left to its re-arm and surfaces as exhaustion once the ladder
+# ends (a FINAL park has the column null again), and a parked round that still OWES A
+# REFERRAL VOTE is not decided at all (the same exclusion the parkclosed arm carries).
 PARK_CATEGORY_FLOOR=2.78.43
 park_floor_met() {
   [ "$(at_least "$PARK_CATEGORY_FLOOR" "${1:-}")" = "1" ]
@@ -290,7 +294,7 @@ park_floor_met() {
 # terminal landing keeps the ordering-only scope it always had.
 park_category_term() {
   park_floor_met "${1:-}" || return 1
-  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'review parked %%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategoryAtPark' is not null and ah.payload->>'homeCategoryAtPark' <> '' and exists (select 1 from task_statuses op where op.id = t.park_from_status and op.category not in ('done', 'cancelled', 'in_review')) and not exists (select 1 from task_statuses oc where oc.id = t.park_from_status and oc.category = ah.payload->>'homeCategoryAtPark') and mh.created_at = %s)" "$(park_record_ts)"
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'review parked %%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategoryAtPark' is not null and ah.payload->>'homeCategoryAtPark' <> '' and t.park_rearm_after is null and not exists (select 1 from task_reviews e where e.task_id = t.id and e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED' and e.referral_target_id is not null and not exists (select 1 from task_reviews x where x.task_id = t.id and x.round = e.round and x.reviewer_id = e.referral_target_id)) and exists (select 1 from task_statuses op where op.id = t.park_from_status and op.category not in ('done', 'cancelled', 'in_review')) and not exists (select 1 from task_statuses oc where oc.id = t.park_from_status and oc.category = ah.payload->>'homeCategoryAtPark') and mh.created_at = %s)" "$(park_record_ts)"
 }
 # the park-origin half of the RE-KEYED-HOME arm: the terminal resolve under the per-verdict
 # ordering term, OR a non-terminal resolve carrying the park category record, under the SAME
@@ -1272,7 +1276,9 @@ if [ "${1:-}" = "--selfcheck" ]; then
   printf '%s' "$(park_category_term 2.78.43)" | grep -qF "mh.body like 'review parked %'" || { echo "selfcheck fail: park-category term reads another flow record"; exit 1; }
   printf '%s' "$(park_category_term 2.78.43)" | grep -qF "op.category not in ('done', 'cancelled', 'in_review')" || { echo "selfcheck fail: park-category term lost its non-terminal scope"; exit 1; }
   printf '%s' "$(park_category_term 2.78.43)" | grep -qF "not exists (select 1 from task_statuses oc where oc.id = t.park_from_status and oc.category = ah.payload->>'homeCategoryAtPark')" || { echo "selfcheck fail: park-category term lost the recorded-vs-current test"; exit 1; }
-  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "o.category in ('done', 'cancelled')" && { echo "selfcheck fail: park-category term covers the terminal landing"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "in ('done', 'cancelled')" && { echo "selfcheck fail: park-category term covers the terminal landing"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "t.park_rearm_after is null" || { echo "selfcheck fail: park-category term lost the no-live-rearm scope"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "not exists (select 1 from task_reviews e where e.task_id = t.id and e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED'" || { echo "selfcheck fail: park-category term lost the referral-owed exclusion"; exit 1; }
   printf '%s' "$(rekey_park_half 2.78.42)" | grep -qF "homeCategoryAtPark" && { echo "selfcheck fail: park half reads the record below its floor"; exit 1; }
   printf '%s' "$(rekey_park_half 2.78.42)" | grep -qF "((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and case when" || { echo "selfcheck fail: pre-floor park half is not the terminal-only expression"; exit 1; }
   printf '%s' "$(rekey_park_half 2.78.43)" | grep -qF "homeCategoryAtPark" || { echo "selfcheck fail: park half lost the park-category term"; exit 1; }
