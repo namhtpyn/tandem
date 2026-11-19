@@ -22,6 +22,9 @@ const h = vi.hoisted(() => ({
   // status read (the gate's), the window a concurrent re-key can land in
   liveCategory: 'in_review',
   onStatusQuery: null as null | (() => void),
+  // #506: the block record the park's paused branch reads to stamp `episodeBlock`
+  blockRecord: null as { id: string; category: string | null; at: Date } | null,
+  blockReadCalls: [] as Array<{ taskId: string; via: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -100,6 +103,21 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   return { ...mod, publishChange: async () => {} };
 });
 
+// #506: the paused branch reads the block record it supersedes to stamp `episodeBlock`.
+// The SQL selection (newest auto-block HOME note) is pinned against real rows by the
+// restore-strand e2e's newest-note control; this spec pins the PRODUCER wiring — the task
+// id it reads for and that the read rides the park transaction handle.
+vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/review-strand')>();
+  return {
+    ...mod,
+    newestBlockHomeRecord: async (taskId: string, ex?: { __tx?: boolean }) => {
+      h.blockReadCalls.push({ taskId, via: ex?.__tx === true ? 'tx' : 'pool' });
+      return h.blockRecord;
+    },
+  };
+});
+
 import { parkRound } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
@@ -108,6 +126,8 @@ beforeEach(() => {
   h.activities = [];
   h.liveCategory = 'in_review';
   h.onStatusQuery = null;
+  h.blockRecord = null;
+  h.blockReadCalls = [];
 });
 
 describe('parkRound in-review guard (#199)', () => {
@@ -229,6 +249,54 @@ describe('parkRound in-review guard (#199)', () => {
     // must not let a stale home persist)
     expect(flat).toContain('"tasks"."pre_block_status" =');
     expect(rendered.params).toEqual(['task-1', STATUS.blocked, STATUS.inReview]);
+  });
+
+  it('a park that supersedes an auto-block records the block record it was ordered against (#506)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.blocked,
+        ownerId: 'u1',
+        rearmAttempts: 0,
+        parkFromStatus: null,
+        preBlockStatus: STATUS.inReview,
+      },
+    ];
+    const at = new Date('2026-11-19T04:00:00.000Z');
+    h.blockRecord = { id: 'blk-1', category: 'in_review', at };
+    expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(true);
+    // EPISODE ANCHOR (#506): the restore detector orders the round's verdicts against this
+    // record, so a lost settle that landed while the task sat blocked still reads as late
+    expect(h.activities[0]?.payload.episodeBlock).toEqual({ id: 'blk-1', at: at.toISOString() });
+    // producer wiring: the read is for THIS task and rides the park's transaction handle
+    expect(h.blockReadCalls).toEqual([{ taskId: 'task-1', via: 'tx' }]);
+  });
+
+  it('a park from in_review never stamps an OLD episode block record (#506)', async () => {
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
+    // an old auto-block note from an earlier episode is still on the task — a post-hoc
+    // "newest block note" read would anchor verdicts to it and false-fire
+    h.blockRecord = { id: 'blk-old', category: 'in_review', at: new Date('2026-11-01T00:00:00.000Z') };
+    expect(await parkRound('task-1', 'verdict-less review — re-dispatch exhausted')).toBe(true);
+    expect(h.activities[0]?.payload.episodeBlock).toBeUndefined();
+    expect(h.blockReadCalls, 'a park from in_review never reads a block record').toEqual([]);
+  });
+
+  it('a pre-floor block note leaves episodeBlock absent — declared residual below 2.78.45 (#506)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.blocked,
+        ownerId: 'u1',
+        rearmAttempts: 0,
+        parkFromStatus: null,
+        preBlockStatus: STATUS.inReview,
+      },
+    ];
+    h.blockRecord = null;
+    expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(true);
+    // pins the SPREAD (no key when the read returns no record); the read's own pre-floor
+    // selection — a key-less newest note beside an older floored one — is pinned against
+    // real rows by the restore-strand e2e pre-floor control
+    expect(h.activities[0]?.payload.episodeBlock).toBeUndefined();
   });
 
   it('a GATING auto-block from a NON-review origin never parks (#419)', async () => {

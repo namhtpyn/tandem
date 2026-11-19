@@ -39,6 +39,7 @@ import {
   hasPendingAnswerHolder,
   cancelOrphanAnswerObligations,
 } from './obligations.service';
+import { newestBlockHomeRecord } from './review-strand';
 import { dispatchTask, replayLostSettle, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
@@ -3331,6 +3332,17 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
       )
       .returning({ id: tasks.id });
     if (parkedRows.length === 0) return false;
+    // PARK EPISODE-ANCHOR FLOOR (#506): a park that supersedes an auto-block records the
+    // block record it superseded, so the restore detector can order the round's verdicts
+    // against the episode that owned the round while it sat blocked (a lost settle there
+    // predates the park note and would otherwise read as legal). Read + written inside the
+    // SAME transaction as the park flip. Membership is RECORDED, never derived from
+    // `fromStatus` vs `park_from_status` — a statuses.remove re-home rewrites
+    // `park_from_status` while the note keeps the dead `fromStatus`, which would launder a
+    // legal re-home into a false block episode. A park from `in_review`, a pre-floor block
+    // note, or no block record leaves it absent: the detector falls back to the park stamp
+    // (declared residual below 2.78.45).
+    const episodeBlock = taskCategory === CATEGORY.PAUSED ? await newestBlockHomeRecord(taskId, ex) : null;
     await logActivity(
       taskId,
       ACTIVITY_KIND.STATUS,
@@ -3341,6 +3353,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
         why,
         fromStatus: task.status,
         homeCategoryAtPark: parkOriginCategory,
+        ...(episodeBlock ? { episodeBlock: { id: episodeBlock.id, at: episodeBlock.at.toISOString() } } : {}),
         ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
       },
       ex,
