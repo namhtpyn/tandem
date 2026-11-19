@@ -264,6 +264,53 @@ rekey_nonterminal_half() {
   [ -n "$cat" ] || return 1
   printf " or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review')) and %s))" "$cat"
 }
+# PARK-CATEGORY NON-TERMINAL half (#507, floor 2.78.43): the park's `review parked` note
+# payload carries the category its park gate RESOLVED (`homeCategoryAtPark`; `in_review` by
+# construction, since both park branches admit a home only at that category). A DECISION or
+# FINAL park has NO automatic restore — the round is the round's own stop and the
+# RESTORE-STRAND park half never runs for it — so a home re-keyed into a NON-terminal
+# category AFTER the park leaves the round unable to land with no arm reading it:
+# `parkclosed` needs the home to resolve in_review and the park branch's terminal test needs
+# done/cancelled. The recorded category vs the home's CURRENT one is the discriminator
+# (a legal decision park records the in_review home it parked from; a re-keyed home no
+# longer carries it), and the branch's per-verdict ordering stays the timing discriminator:
+# only a verdict NEWER than the park record (the round was LIVE when the park landed, i.e.
+# the settle flip the re-key then refused) fires — an all-older round is the round's own
+# legal stop, the declared MIRROR-ORDER boundary. A park note WITHOUT the record (pre-floor
+# episode) returns nothing, so that row falls back to the terminal-only scope byte-for-byte.
+# Two exclusions keep the term off shapes another reader owns: a LIVE re-arm ladder park
+# (`park_rearm_after` set) is left to its re-arm and surfaces as exhaustion once the ladder
+# ends (a FINAL park has the column null again), and a parked round that still OWES A
+# REFERRAL VOTE is not decided at all (the same exclusion the parkclosed arm carries).
+PARK_CATEGORY_FLOOR=2.78.43
+park_floor_met() {
+  [ "$(at_least "$PARK_CATEGORY_FLOOR" "${1:-}")" = "1" ]
+}
+# the park origin's recorded-at-park category, read from the park's OWN newest
+# `review parked` record (never the task-wide newest gating note): a recorded category that
+# DIFFERS from the category the recorded park home carries NOW means the home was re-keyed
+# AFTER the park. Scoped to a home that resolves NON-terminal (in_review is the arm's own
+# origin exclusion, done/cancelled is the terminal test the branch already owns) — the
+# terminal landing keeps the ordering-only scope it always had.
+park_category_term() {
+  park_floor_met "${1:-}" || return 1
+  printf "exists (select 1 from task_messages mh join task_message_activities ah on ah.message_id = mh.id where mh.task_id = t.id and mh.body like 'review parked %%' and ah.payload->>'kind' = 'STATUS' and ah.payload->>'homeCategoryAtPark' is not null and ah.payload->>'homeCategoryAtPark' <> '' and t.park_rearm_after is null and not exists (select 1 from task_reviews e where e.task_id = t.id and e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED' and e.referral_target_id is not null and not exists (select 1 from task_reviews x where x.task_id = t.id and x.round = e.round and x.reviewer_id = e.referral_target_id)) and exists (select 1 from task_statuses op where op.id = t.park_from_status and op.category not in ('done', 'cancelled', 'in_review')) and not exists (select 1 from task_statuses oc where oc.id = t.park_from_status and oc.category = ah.payload->>'homeCategoryAtPark') and mh.created_at = %s)" "$(park_record_ts)"
+}
+# the park-origin half of the RE-KEYED-HOME arm: the terminal resolve under the per-verdict
+# ordering term, OR a non-terminal resolve carrying the park category record, under the SAME
+# ordering (the late verdict is what separates a still-live round from the round's own
+# legal stop). Below the park-category floor the expression is the terminal half alone,
+# byte-identical to the pre-#507 arm.
+rekey_park_half() {
+  local order cat
+  order=$(paused_order_any "${1:-}" "$(park_record_ts)") || return 1
+  cat=$(park_category_term "${1:-}")
+  if [ -n "$cat" ]; then
+    printf "((t.park_from_status is not null and ((exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) or %s)) and %s)" "$cat" "$order"
+  else
+    printf "((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and %s)" "$order"
+  fi
+}
 # READY-ROUND arm (#443, task-wide per #445): a ready/working-category task owning a
 # PENDING row of ANY round for a LIVE AI reviewer, with NO running run on the task — the
 # parked/stranded round a legal egress or a teardown regression left behind. The note-dispatch
@@ -390,7 +437,16 @@ strand_sql() {
   # block-state-home guard's read->upsert window, or a guard regression) — the block's
   # note records the NON-terminal category it read, the home resolves terminal now, the
   # pending turn is superseded by the owner-settled teardown and every verdict predates
-  # the note, so the ordering term is blind and `home_category_term` fires. PRE-BLOCK
+  # the note, so the ordering term is blind and `home_category_term` fires. PARK
+  # NON-TERMINAL re-key (#507, floor 2.78.43): a DECISION or FINAL park has no automatic
+  # restore, so the RESTORE-STRAND park half never runs for it, and its home re-keyed into
+  # a NON-terminal category is read by NO other term (`parkclosed` needs an in_review home,
+  # the park branch here needs a terminal one). From the PARK-CATEGORY RECORD FLOOR the
+  # park note carries `homeCategoryAtPark` (`in_review` by construction), so a recorded
+  # category the home no longer carries splits the re-key — under the SAME per-verdict
+  # ordering, because a decision park's round is legally closed BEFORE its park and only a
+  # verdict NEWER than the park record (the round was LIVE when the park landed, and the
+  # settle flip the re-key then refused could not land) is the strand. PRE-BLOCK
   # re-key (residual (c)): re-keyed BEFORE the task blocks, so the note records the
   # ALREADY-terminal category and the row is SQL-identical to #423 — silent by
   # declaration, and closing it needs the home's IDENTITY at the round's OWN verdict time,
@@ -425,7 +481,7 @@ strand_sql() {
   # every arm that reads park_from_status (#325).
   rekey=""
   if [ "${2:-}" = "2" ]; then
-    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")$(rekey_nonterminal_half "${1:-}")) or ((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and $(paused_order_any "${1:-}" "$(park_record_ts)")))) x), 'none')"
+    rekey=" union all select 'rekeyhome', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and not exists (select 1 from task_statuses o where o.category = 'in_review' and (o.id = t.pre_block_status or o.id = t.park_from_status)) and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING' and r.round = (select max(r3.round) from task_reviews r3 where r3.task_id = t.id)) and (((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category in ('done', 'cancelled'))) and $(rekey_pre_half "${1:-}")$(rekey_nonterminal_half "${1:-}")) or $(rekey_park_half "${1:-}"))) x), 'none')"
   fi
   # FINAL-PARK arm (#431) — the DECISION-class park (park_rearm_after IS NULL with
   # park_rearm_attempts = 0 — an exhausted ladder always carries attempts = 5 and is the
@@ -1204,6 +1260,31 @@ if [ "${1:-}" = "--selfcheck" ]; then
   # not as a detached conjunct (a detached AND would narrow the TERMINAL half instead)
   printf '%s' "$(strand_rekey_arm 2.78.41 2)" | grep -qF ")) or ((t.pre_block_status is not null and exists (select 1 from task_statuses o where o.id = t.pre_block_status and o.category not in ('done', 'cancelled', 'in_review'))" || { echo "selfcheck fail: non-terminal half not wired as an OR branch"; exit 1; }
   printf '%s' "$(rekey_nonterminal_half 2.78.41)" | grep -qF "decided_at" && { echo "selfcheck fail: non-terminal half carries a dead ordering conjunct"; exit 1; }
+  # PARK-CATEGORY non-terminal half (#507, floor 2.78.43): a DECISION/FINAL park has no
+  # automatic restore, so the arm's park half must read the recorded category; the branch's
+  # own per-verdict ordering stays the timing discriminator (the late verdict), and the
+  # TERMINAL landing keeps its ordering-only scope (a recorded in_review vs a terminal home
+  # is NOT this term — that class stays the declared ordering-only boundary).
+  park_floor_met 2.78.42 && { echo "selfcheck fail: park floor met below 2.78.43"; exit 1; }
+  park_floor_met 2.78.43 || { echo "selfcheck fail: park floor off at its floor"; exit 1; }
+  park_floor_met 2.78.100 || { echo "selfcheck fail: park floor off above the floor"; exit 1; }
+  park_floor_met 3.0.0 || { echo "selfcheck fail: park floor off at the next major"; exit 1; }
+  park_floor_met '' && { echo "selfcheck fail: park floor met on an empty version"; exit 1; }
+  park_floor_met 2.78.43-rc1 && { echo "selfcheck fail: park floor met on a pre-release"; exit 1; }
+  park_category_term 2.78.42 && { echo "selfcheck fail: park-category term emitted below its floor"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "homeCategoryAtPark" || { echo "selfcheck fail: park-category term lost the record read"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "mh.body like 'review parked %'" || { echo "selfcheck fail: park-category term reads another flow record"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "op.category not in ('done', 'cancelled', 'in_review')" || { echo "selfcheck fail: park-category term lost its non-terminal scope"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "not exists (select 1 from task_statuses oc where oc.id = t.park_from_status and oc.category = ah.payload->>'homeCategoryAtPark')" || { echo "selfcheck fail: park-category term lost the recorded-vs-current test"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "in ('done', 'cancelled')" && { echo "selfcheck fail: park-category term covers the terminal landing"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "t.park_rearm_after is null" || { echo "selfcheck fail: park-category term lost the no-live-rearm scope"; exit 1; }
+  printf '%s' "$(park_category_term 2.78.43)" | grep -qF "not exists (select 1 from task_reviews e where e.task_id = t.id and e.round = (select max(r4.round) from task_reviews r4 where r4.task_id = t.id) and e.status = 'ESCALATED'" || { echo "selfcheck fail: park-category term lost the referral-owed exclusion"; exit 1; }
+  printf '%s' "$(rekey_park_half 2.78.42)" | grep -qF "homeCategoryAtPark" && { echo "selfcheck fail: park half reads the record below its floor"; exit 1; }
+  printf '%s' "$(rekey_park_half 2.78.42)" | grep -qF "((t.park_from_status is not null and exists (select 1 from task_statuses o where o.id = t.park_from_status and o.category in ('done', 'cancelled'))) and case when" || { echo "selfcheck fail: pre-floor park half is not the terminal-only expression"; exit 1; }
+  printf '%s' "$(rekey_park_half 2.78.43)" | grep -qF "homeCategoryAtPark" || { echo "selfcheck fail: park half lost the park-category term"; exit 1; }
+  printf '%s' "$(rekey_park_half 2.78.43)" | grep -qF "coalesce(r.decided_at, r.created_at) > (select max(m.created_at) from task_messages m where m.task_id = t.id and m.body like 'review parked %'" || { echo "selfcheck fail: park half lost the late-verdict ordering"; exit 1; }
+  [ "$(printf '%s' "$(strand_rekey_arm 2.78.43 2)" | grep -oF "homeCategoryAtPark" | wc -l)" = "3" ] || { echo "selfcheck fail: park-category term not emitted exactly once in the arm"; exit 1; }
+  printf '%s' "$(strand_rekey_arm 2.78.42 2)" | grep -qF "homeCategoryAtPark" && { echo "selfcheck fail: park-category term on a pre-floor arm"; exit 1; }
   # and it must never ride the wedge slice, whose clause counts assume one branch set
   printf '%s' "$WEDGE_OFF" | grep -qF "orphanhome" && { echo "selfcheck fail: orphan arm leaked into the wedge slice"; exit 1; }
   # RESTORE-STRAND arm (#500, floor 2.78.42): CONSUMER-FIRST — the arm is only shippable if

@@ -1172,7 +1172,22 @@ non-positive deltas render no duration.
   while the task sat blocked is in scope, and the home a legal hold-landing block records —
   a repair round re-opened on a ready/working status and then gating-blocked, which the
   unblock restore heals — stays SILENT because it records the category it RESOLVES
-  (recorded == resolved). A terminal home cannot host the hold-landing class;
+  (recorded == resolved). From `2.78.43` (PARK-CATEGORY RECORD FLOOR, #502) the
+  `park_from_status` half reads its own NON-terminal resolve the same way — the park note
+  records `homeCategoryAtPark` (`in_review` by construction), so a park home re-keyed into
+  a non-terminal category afterwards is in scope — but under the branch's OWN per-verdict
+  ordering: a DECISION/FINAL park's round is legally closed before its park (no automatic
+  restore ever runs for it, so the landing is knowable nowhere else), and only a verdict
+  NEWER than the park record — the round was still LIVE when the park landed and the settle
+  flip the re-key then refused could not land — fires; an all-older round is the round's
+  own legal stop, a park note WITHOUT the record falls back to the terminal-only scope, and
+  a TERMINAL landing keeps the ordering-only scope it always had (a recorded `in_review`
+  against a terminal home stays the declared ordering-only boundary, never this term). A
+  LIVE re-arm ladder park (`park_rearm_after` set) is EXCLUDED — its re-arm owns the row,
+  and an exhausted ladder turns FINAL (the column clears), so the term picks it up then —
+  and a parked round that still OWES A REFERRAL VOTE is excluded exactly like the
+  parkclosed arm's (the escalated row names a target with no row of its own: the round is
+  not decided). A terminal home cannot host the hold-landing class;
   the OTHER legal class a terminal home DOES host is the #423 re-block after a settle — the task settles
   to a terminal status, a still-open child re-blocks it, and the block records the
   settled status as its home with the applied verdict necessarily OLDER than the
@@ -1270,15 +1285,21 @@ non-positive deltas render no duration.
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
   half needs the record and stays silent — and the PARK half's category is RECORDED from
-  `2.78.43` (`homeCategoryAtPark`) but feeds the RESTORE-STRAND detector only: the ARM's
-  category term stays block-only by declaration. For a LADDER-owned park the strand is
-  caught at its restore (the landing is knowable there). For a DECISION park the
-  terminal-category re-key is read by the arm's ordering term only while the round carries
-  a verdict NEWER than the park record (a round closed BEFORE its park is the arm's declared
-  MIRROR-ORDER / waiver boundary above); with a PENDING row no term reads it, and a re-key
-  into a NON-terminal category after a late verdict is caught by no term either: the
-  declared residual #507 (the FINAL variant is surfaced as exhaustion by the
-  rearm-exhaustion arm).
+  `2.78.43` (`homeCategoryAtPark`) and feeds BOTH the RESTORE-STRAND detector and this
+  arm's park half: the arm reads a recorded category the park home no longer carries when
+  that home resolves NON-terminal, under the branch's own per-verdict ordering (the
+  terminal landing keeps the ordering-only scope it always had — a recorded `in_review`
+  against a terminal home stays the declared ordering-only boundary, not this term). For a LADDER-owned
+  park the strand is caught at its restore (the landing is knowable there, and the arm's
+  closed-round clause plus its no-live-rearm term keep the ladder out — an exhausted
+  ladder clears `park_rearm_after` and the arm reads the FINAL row). For a DECISION/FINAL park (no restore ever
+  runs) the terminal-category re-key is read by the arm's ordering term only while the
+  round carries a verdict NEWER than the park record (a round closed BEFORE its park is the
+  arm's declared MIRROR-ORDER / waiver boundary above), the NON-terminal landing is read by
+  the park category term under that same ordering, and with a PENDING row no term reads it
+  (the declared residual #506). A park note carrying no record (pre-floor episode) falls
+  back to the terminal-only scope, and the FINAL variant of the terminal re-key is surfaced
+  as exhaustion by the rearm-exhaustion arm.
   The SECOND producer is the PRE-BLOCK re-key, a DECLARED false negative (#491): the
   status is re-keyed terminal BEFORE the task blocks, so the block records the
   ALREADY-terminal category and the row is SQL-identical to the legal #423 shape (the
