@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   onStatusQuery: null as null | (() => void),
   // #506: the block record the park's paused branch reads to stamp `episodeBlock`
   blockRecord: null as { id: string; category: string | null; at: Date } | null,
+  blockReadCalls: [] as Array<{ taskId: string; via: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -102,11 +103,19 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   return { ...mod, publishChange: async () => {} };
 });
 
-// #506: the paused branch reads the block record it supersedes to stamp `episodeBlock`;
-// the read itself is DB-level (newest auto-block note), pinned by the e2e producer test.
+// #506: the paused branch reads the block record it supersedes to stamp `episodeBlock`.
+// The SQL selection (newest auto-block HOME note) is pinned against real rows by the
+// restore-strand e2e's newest-note control; this spec pins the PRODUCER wiring — the task
+// id it reads for and that the read rides the park transaction handle.
 vi.mock('../../server/domains/tasks/review-strand', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review-strand')>();
-  return { ...mod, newestBlockHomeRecord: async () => h.blockRecord };
+  return {
+    ...mod,
+    newestBlockHomeRecord: async (taskId: string, ex?: { __tx?: boolean }) => {
+      h.blockReadCalls.push({ taskId, via: ex?.__tx === true ? 'tx' : 'pool' });
+      return h.blockRecord;
+    },
+  };
 });
 
 import { parkRound } from '../../server/domains/tasks/review.service';
@@ -118,6 +127,7 @@ beforeEach(() => {
   h.liveCategory = 'in_review';
   h.onStatusQuery = null;
   h.blockRecord = null;
+  h.blockReadCalls = [];
 });
 
 describe('parkRound in-review guard (#199)', () => {
@@ -257,6 +267,8 @@ describe('parkRound in-review guard (#199)', () => {
     // EPISODE ANCHOR (#506): the restore detector orders the round's verdicts against this
     // record, so a lost settle that landed while the task sat blocked still reads as late
     expect(h.activities[0]?.payload.episodeBlock).toEqual({ id: 'blk-1', at: at.toISOString() });
+    // producer wiring: the read is for THIS task and rides the park's transaction handle
+    expect(h.blockReadCalls).toEqual([{ taskId: 'task-1', via: 'tx' }]);
   });
 
   it('a park from in_review never stamps an OLD episode block record (#506)', async () => {
@@ -266,6 +278,7 @@ describe('parkRound in-review guard (#199)', () => {
     h.blockRecord = { id: 'blk-old', category: 'in_review', at: new Date('2026-11-01T00:00:00.000Z') };
     expect(await parkRound('task-1', 'verdict-less review — re-dispatch exhausted')).toBe(true);
     expect(h.activities[0]?.payload.episodeBlock).toBeUndefined();
+    expect(h.blockReadCalls, 'a park from in_review never reads a block record').toEqual([]);
   });
 
   it('a pre-floor block note leaves episodeBlock absent — declared residual below 2.78.45 (#506)', async () => {

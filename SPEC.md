@@ -1290,9 +1290,13 @@ non-positive deltas render no duration.
   surviving PENDING REVIEWER row keeps the
   live-round term firing; a VOID row, `reviewer_id` NULL, is not live, and an unredeemed
   ESCALATED referral — not decided, not PENDING — is silent too, the REFERRAL-OWED boundary
-  declared above. The variant whose verdict closed the round BEFORE the park (a settle
-  throw in review) records no episode block — there was none — and stays the DECIDED-ROUND
-  HEAL's shape, not this term's (declared residual, #431). #423 stays
+  declared above. A verdict that closed the round BEFORE the episode's block is NOT
+  covered by this anchor: when an auto-block lands between that verdict and the park, the
+  recorded anchor is the LATER block and the verdict reads as pre-episode. The
+  DECIDED-ROUND HEAL cannot reach it either (its paused arm requires `park_from_status IS
+  NULL`, and the lost-settle sweep parks after two ~5s ticks while the heal waits out its
+  60s grace), so the shape stays a DECLARED residual (audit #514; the #431 parked-round
+  boundary). #423 stays
   silent: its recorded category IS the home's current one, exactly as every legal block's
   is (the hold-landing class included). A block note carrying no
   category (pre-floor row) falls back to the ordering-only TERMINAL term — the non-terminal
