@@ -382,7 +382,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const tag = crypto.randomUUID();
       const lateRekey = `probe-homecat-rekey-${tag}`; // FIRES: recorded in_review, resolves done, all-older
       const preBlockRekey = `probe-homecat-settle-${tag}`; // silent: the re-key predates the block, so it records done
-      const parkRecorded = `probe-homecat-park-${tag}`; // silent: the park half carries no category term
+      const parkRecorded = `probe-homecat-park-${tag}`; // silent: a TERMINAL park landing keeps the ordering-only scope (#507 term is non-terminal-only)
       const noteLessOld = `probe-homecat-noteless-old-${tag}`; // silent: MIN fallback, verdict older than the stamp
       const noteLessNew = `probe-homecat-noteless-new-${tag}`; // fires: the fallback's own counterexample
       const recordedLive = `probe-homecat-live-${tag}`; // silent: a PENDING row in max(round)
@@ -436,9 +436,10 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         homeCategory: 'done',
       });
       await seedVerdict(preBlockRekey, 10);
-      // the park origin records no category: the term must not ride it (declared boundary)
+      // a TERMINAL park landing keeps the ordering-only scope: even a valid park record
+      // with an all-older round is the round's own legal stop, never the #507 term
       await seedTask(parkRecorded, null, DONE, 5);
-      await seedRecord(parkRecorded, 5, 'review parked — infra down', { homeCategory: 'in_review' });
+      await seedRecord(parkRecorded, 5, 'review parked — infra down', { homeCategoryAtPark: 'in_review' });
       await seedVerdict(parkRecorded, 10);
       // a note-less row keeps the ordering-only fallback: older verdict silent, newer fires
       await seedTask(noteLessOld, DONE, null, 5);
@@ -507,7 +508,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         post,
         'the PRE-BLOCK re-key records the already-terminal category and stays the DECLARED residual (#491(c))',
       ).not.toContain(preBlockRekey);
-      expect(post, 'the park origin carries no category record: a terminal park home is not this term').not.toContain(
+      expect(post, 'a TERMINAL park landing keeps the ordering-only scope: an all-older round is legal').not.toContain(
         parkRecorded,
       );
       expect(post, 'a note-less row falls back to the ordering term: older verdict stays silent').not.toContain(
@@ -528,6 +529,139 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
         terminalRekey,
       );
       expect(post, 'the decided round is max(round): a torn-down current round stays silent').not.toContain(tornRound);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  // #507: the PARK-CATEGORY non-terminal half. A DECISION/FINAL park has NO automatic
+  // restore, so the RESTORE-STRAND park half never runs for it, and its home re-keyed into
+  // a NON-terminal category is read by NO other term (`parkclosed` needs the home to
+  // resolve in_review; the re-key arm's park branch needs done/cancelled). The park's
+  // `review parked` record carries `homeCategoryAtPark` (`in_review` by construction) from
+  // 2.78.43: a recorded category the home no longer carries, under the branch's OWN
+  // per-verdict ordering — a verdict NEWER than the park record means the round was LIVE
+  // when the park landed and the settle flip the re-key then refused could not land — FIRES.
+  // An all-older round is the round's own legal stop; a note WITHOUT the record falls back
+  // to the terminal-only scope; a TERMINAL landing keeps the ordering-only scope (a
+  // recorded in_review vs a terminal home is the declared legal class, never this term).
+  test('park-category record closes the DECISION-park non-terminal re-key (#507)', async () => {
+    const below = await $`bash ${script} --strand-sql 2.78.42 2`.nothrow().quiet();
+    expect(below.exitCode, below.stderr.toString()).toBe(0);
+    expect(below.stdout.toString(), 'the park-category term must not exist below its floor').not.toContain(
+      'homeCategoryAtPark',
+    );
+    const at = await $`bash ${script} --strand-sql 2.78.43 2`.nothrow().quiet();
+    expect(at.exitCode, at.stderr.toString()).toBe(0);
+    expect(at.stdout.toString()).toContain("ah.payload->>'homeCategoryAtPark'");
+
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      const tag = crypto.randomUUID();
+      const late = `probe-parkcat-late-${tag}`; // FIRES: home re-keyed working, verdict NEWER than the park record
+      const older = `probe-parkcat-older-${tag}`; // silent: the round closed BEFORE its park — the round's own legal stop
+      const noRecord = `probe-parkcat-norecord-${tag}`; // silent: a pre-floor note carries no record — terminal-only fallback
+      const equal = `probe-parkcat-equal-${tag}`; // silent: the recorded category EQUALS the one the home carries
+      const inReview = `probe-parkcat-inreview-${tag}`; // silent: no re-key (the arm's origin exclusion owns it)
+      const live = `probe-parkcat-live-${tag}`; // silent: a PENDING row in max(round)
+      const terminalOlder = `probe-parkcat-term-older-${tag}`; // silent: a TERMINAL landing keeps the ordering-only scope
+      const terminalLate = `probe-parkcat-term-late-${tag}`; // fires: the terminal landing's own ordering term (unchanged)
+
+      const seedTask = async (id: string, park: string, writtenMinutesAgo: number) => {
+        await sql.unsafe(
+          `insert into tasks (id, title, status, pre_block_status, park_from_status, created_at, updated_at)
+           values ($1, $2, $3, null, $4, now(), now() - ($5::int * interval '1 minute'))`,
+          [id, id, BLOCKED, park, writtenMinutesAgo],
+        );
+      };
+      const seedRecord = async (id: string, minutesAgo: number, meta: Record<string, unknown> | null) => {
+        const msgId = `msg-${crypto.randomUUID()}`;
+        await sql.unsafe(
+          `insert into task_messages (id, task_id, author_id, body, created_at)
+           values ($1, $2, null, $3, now() - ($4::int * interval '1 minute'))`,
+          [msgId, id, 'review parked — waiting on owner', minutesAgo],
+        );
+        await sql.unsafe('insert into task_message_activities (message_id, payload) values ($1, $2)', [
+          msgId,
+          { kind: 'STATUS', ...(meta ?? {}) },
+        ]);
+      };
+      const seedVerdict = async (id: string, minutesAgo: number, status = 'APPROVED', round = 1) => {
+        await sql.unsafe(
+          `insert into task_reviews (id, task_id, round, status, reviewer_id, created_at, decided_at)
+           values ($1, $2, $4, $3, null, now() - ($5::int * interval '1 minute'), now() - ($5::int * interval '1 minute'))`,
+          [`rev-${crypto.randomUUID()}`, id, status, round, minutesAgo],
+        );
+      };
+
+      // the strand: DECISION park (no re-arm ladder), home re-keyed working, the settling
+      // verdict landed AFTER the park record
+      await seedTask(late, DOING, 5);
+      await seedRecord(late, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(late, 1);
+      // the round's own legal stop: every verdict predates the park record
+      await seedTask(older, DOING, 5);
+      await seedRecord(older, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(older, 10);
+      // a pre-floor park note carries no record: the terminal-only scope is all the row had
+      await seedTask(noRecord, DOING, 5);
+      await seedRecord(noRecord, 5, { reviewParked: true, fromStatus: IN_REVIEW });
+      await seedVerdict(noRecord, 1);
+      // the recorded-vs-current EQUALITY is the discriminator: a note recording the category
+      // the home carries now must stay silent even with a late verdict
+      await seedTask(equal, DOING, 5);
+      await seedRecord(equal, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'working' });
+      await seedVerdict(equal, 1);
+      // no re-key at all: the arm's in_review origin exclusion owns the shape
+      await seedTask(inReview, IN_REVIEW, 5);
+      await seedRecord(inReview, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(inReview, 1);
+      // a live round (PENDING in max(round)) is the ladder-owned shape, never this term
+      await seedTask(live, DOING, 5);
+      await seedRecord(live, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(live, 10);
+      await seedVerdict(live, 1, 'PENDING');
+      // a TERMINAL park landing keeps the ordering-only scope: all-older is the legal class
+      await seedTask(terminalOlder, DONE, 5);
+      await seedRecord(terminalOlder, 5, {
+        reviewParked: true,
+        fromStatus: IN_REVIEW,
+        homeCategoryAtPark: 'in_review',
+      });
+      await seedVerdict(terminalOlder, 10);
+      // ... and its own late-verdict firing is unchanged by this term
+      await seedTask(terminalLate, DONE, 5);
+      await seedRecord(terminalLate, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
+      await seedVerdict(terminalLate, 1);
+
+      const armOf = async (probeSql: string) => {
+        const rows = (await sql.unsafe(probeSql)) as Record<string, unknown>[];
+        const arm = rows.map((r) => Object.values(r) as string[]).find((v) => v[0] === 'rekeyhome');
+        expect(arm, 'the emitted SQL must carry the re-keyed-home arm').toBeTruthy();
+        return new Set(String(arm?.[1] ?? 'none').split(','));
+      };
+
+      const pre = await armOf(below.stdout.toString().trim());
+      expect(pre, 'the non-terminal park half is FLOORED: no term below 2.78.43').not.toContain(late);
+      expect(pre, 'the terminal landing keeps its pre-floor firing').toContain(terminalLate);
+
+      const post = await armOf(at.stdout.toString().trim());
+      expect(
+        post,
+        'a DECISION park whose park home was re-keyed non-terminal over a late verdict is the strand',
+      ).toContain(late);
+      expect(
+        post,
+        "an all-older round under a decision park is the round's own legal stop (the ordering discriminator)",
+      ).not.toContain(older);
+      expect(post, 'a park note without the record falls back to the terminal-only scope').not.toContain(noRecord);
+      expect(post, 'the recorded-vs-current equality keeps a matching-category note silent').not.toContain(equal);
+      expect(post, 'a home that still resolves in_review is no re-key').not.toContain(inReview);
+      expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(live);
+      expect(post, 'a TERMINAL landing keeps the ordering-only scope: all-older stays legal').not.toContain(
+        terminalOlder,
+      );
+      expect(post, "the terminal landing's own late-verdict term is unchanged").toContain(terminalLate);
     } finally {
       await sql.end();
     }
