@@ -562,7 +562,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       const older = `probe-parkcat-older-${tag}`; // silent: the round closed BEFORE its park — the round's own legal stop
       const noRecord = `probe-parkcat-norecord-${tag}`; // silent: a pre-floor note carries no record — terminal-only fallback
       const equal = `probe-parkcat-equal-${tag}`; // silent: the recorded category EQUALS the one the home carries
-      const inReview = `probe-parkcat-inreview-${tag}`; // silent: no re-key (the arm's origin exclusion owns it)
+      const inReview = `probe-parkcat-inreview-${tag}`; // silent: a legal decision park still resolving in_review (contract control)
       const live = `probe-parkcat-live-${tag}`; // silent: a PENDING row in max(round)
       const terminalOlder = `probe-parkcat-term-older-${tag}`; // silent: a TERMINAL landing keeps the ordering-only scope
       const terminalLate = `probe-parkcat-term-late-${tag}`; // fires: the terminal landing's own ordering term (unchanged)
@@ -612,14 +612,18 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       await seedTask(equal, DOING, 5);
       await seedRecord(equal, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'working' });
       await seedVerdict(equal, 1);
-      // no re-key at all: the arm's in_review origin exclusion owns the shape
+      // no re-key at all: a legal decision park whose home still resolves in_review is the
+      // contract's silent control (the arm-level origin exclusion AND the term's own
+      // non-terminal scope both hold it — over-determined by construction, no single pin)
       await seedTask(inReview, IN_REVIEW, 5);
       await seedRecord(inReview, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
       await seedVerdict(inReview, 1);
-      // a live round (PENDING in max(round)) is the ladder-owned shape, never this term
+      // a live round (PENDING in max(round)) is the ladder-owned shape, never this term —
+      // the DECIDED verdict sits NEWER than the park record so the PENDING conjunct is the
+      // only thing keeping the row out (removing it must turn this row red, not silent)
       await seedTask(live, DOING, 5);
       await seedRecord(live, 5, { reviewParked: true, fromStatus: IN_REVIEW, homeCategoryAtPark: 'in_review' });
-      await seedVerdict(live, 10);
+      await seedVerdict(live, 1);
       await seedVerdict(live, 1, 'PENDING');
       // a TERMINAL park landing keeps the ordering-only scope: all-older is the legal class
       await seedTask(terminalOlder, DONE, 5);
@@ -656,7 +660,7 @@ test.describe('prod probe re-keyed-home arm (#435)', () => {
       ).not.toContain(older);
       expect(post, 'a park note without the record falls back to the terminal-only scope').not.toContain(noRecord);
       expect(post, 'the recorded-vs-current equality keeps a matching-category note silent').not.toContain(equal);
-      expect(post, 'a home that still resolves in_review is no re-key').not.toContain(inReview);
+      expect(post, 'a legal decision park whose home still resolves in_review stays silent').not.toContain(inReview);
       expect(post, 'a PENDING row in max(round) is a live round, not this strand').not.toContain(live);
       expect(post, 'a TERMINAL landing keeps the ordering-only scope: all-older stays legal').not.toContain(
         terminalOlder,
