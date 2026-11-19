@@ -442,8 +442,8 @@ test('a restore into a re-keyed home with a live round records the strand (#500)
         { kind: 'STATUS', autoBlocked: true, open: 1, homeCategory: 'in_review' },
       ]);
       await sql.unsafe(
-        `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at)
-         values ($1, $2, $3, 1, 'APPROVED', null, $4)`,
+        `insert into task_reviews (id, task_id, reviewer_id, round, status, source, created_at, decided_at)
+         values ($1, $2, $3, 1, 'APPROVED', null, $4, $4)`,
         [`rev-506-${id}`, id, reviewer, new Date(Date.now() - opts.verdictMinutesAgo * 60_000)],
       );
       const parkId = `park-${id}`;
